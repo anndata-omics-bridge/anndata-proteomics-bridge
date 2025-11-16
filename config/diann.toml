@@ -1,0 +1,39 @@
+# DIA-NN to AnnData Column Mapping Configuration
+# Adapted from ProteoBench parse_settings_diann.toml
+
+[mapper]
+# Maps DIA-NN column names to standardized internal names
+"Modified.Sequence" = "sequence"
+"Run" = "run"
+"File.Name" = "file_name"
+"Protein.Names" = "proteins"
+"Genes" = "genes"
+"Precursor.Charge" = "charge"
+"Precursor.Normalised" = "intensity"
+"Precursor.Quantity" = "quantity"
+"Q.Value" = "qvalue"
+"PG.Q.Value" = "protein_qvalue"
+"Global.Q.Value" = "global_qvalue"
+"PEP" = "pep"
+
+[modifications_parser]
+# Configuration for converting DIA-NN modification notation to ProForma
+parse_column = "sequence"
+before_aa = false
+isalpha = true
+isupper = true
+pattern = "\\(([^()]*)\\)"
+
+[modifications_parser.modification_dict]
+# Common UniMod modifications - extend as needed
+"(unimod:35)" = "Oxidation"
+"(unimod:1)" = "Acetyl"
+"(unimod:4)" = "Carbamidomethyl"
+"(unimod:7)" = "Deamidated"
+"(unimod:21)" = "Phospho"
+
+[general]
+# General processing flags
+contaminant_flag = "Cont_"  # Prefix for contaminant proteins
+decoy_flag = false  # DIA-NN doesn't have explicit decoy column, use Q-values instead
+data_format = "long"  # DIA-NN outputs long format (one row per precursor per run)

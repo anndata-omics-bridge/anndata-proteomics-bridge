@@ -1,0 +1,39 @@
+# Spectronaut to AnnData Column Mapping Configuration
+# Adapted from ProteoBench parse_settings_spectronaut.toml
+
+[mapper]
+# Maps Spectronaut column names to standardized internal names
+"FG.LabeledSequence" = "sequence"
+"R.FileName" = "run"
+"R.Condition" = "condition"
+"FG.Charge" = "charge"
+"EG.TotalQuantity (Settings)" = "intensity"
+"FG.Quantity" = "fragment_quantity"
+"PG.ProteinGroups" = "proteins"
+"PG.Genes" = "genes"
+"EG.Qvalue" = "qvalue"
+"FG.Qvalue" = "fragment_qvalue"
+"PG.Qvalue" = "protein_qvalue"
+
+[modifications_parser]
+# Configuration for converting Spectronaut modification notation to ProForma
+parse_column = "sequence"
+before_aa = false
+isalpha = true
+isupper = true
+pattern = "\\[(.*?)\\]"
+
+[modifications_parser.modification_dict]
+# Common Spectronaut modifications - extend as needed
+"[oxidation (m)]" = "Oxidation"
+"[acetyl (protein n-term)]" = "Acetyl"
+"[carbamidomethyl (c)]" = "Carbamidomethyl"
+"[deamidated (n)]" = "Deamidated"
+"[deamidated (q)]" = "Deamidated"
+"[phospho (sty)]" = "Phospho"
+
+[general]
+# General processing flags
+contaminant_flag = "Cont_"  # Prefix for contaminant proteins
+decoy_flag = true  # Spectronaut may have decoy column
+data_format = "long"  # Spectronaut outputs long format (one row per fragment/precursor per run)
