@@ -36,3 +36,5 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+__marimo__/
+.claude/

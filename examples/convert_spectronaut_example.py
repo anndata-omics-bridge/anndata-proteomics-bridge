@@ -6,12 +6,12 @@ This example uses test data from ProteoBench to demonstrate the conversion workf
 
 import sys
 from pathlib import Path
+from diann_converter import proteomics_to_anndata
 
 # Add src to path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from diann_converter import proteomics_to_anndata
 
 # Paths
 DATA_PATH = "/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DIA_AIF/Spectronaut_test_sample_default_PG.tsv"

@@ -163,10 +163,8 @@ def proteomics_to_anndata(
         label_cols = []
 
     # Create intensity matrix (precursors × samples)
-    X_raw = pivot_df.values
-
-    # Handle missing values
-    X_raw = np.nan_to_num(X_raw, nan=0.0)
+    # Keep NaN for missing values - DIA-NN only reports detected precursors
+    X_raw = pivot_df.values.astype(np.float64)
 
     # Log2 transform for X
     if log2_transform:
