@@ -38,3 +38,12 @@ htmlcov/
 Thumbs.db
 __marimo__/
 .claude/
+
+# Downloaded test data
+test_data/
+temp_results/
+benchmark_data/
+
+# Generated example outputs
+examples/*.h5ad
+examples/results/

@@ -1,39 +1,42 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "diann-converter"
+name = "anndata-proteomics"
 version = "0.1.0"
-description = "Convert DIANN proteomics output to AnnData format"
+description = "Convert proteomics software output to AnnData format"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Witold Wolski", email = "wew@fgcz.ethz.ch"}
 ]
-keywords = ["proteomics", "diann", "anndata", "mass-spectrometry"]
+keywords = ["proteomics", "anndata", "mass-spectrometry", "diann", "maxquant"]
 
 dependencies = [
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
-    "anndata>=0.10.0",
-    "pyarrow>=10.0.0",
+    "pandas",
+    "numpy",
+    "anndata",
+    "pyarrow",
+    "requests",
+    "beautifulsoup4",
+    "toml",
+    "cyclopts",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "black>=23.0",
-    "ruff>=0.1.0",
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
 ]
 
 [project.scripts]
-diann2anndata = "diann_converter.cli:main"
+diann2anndata = "anndata_proteomics.cli:main"
+download_data = "anndata_proteomics.download_benchmark:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.black]
 line-length = 100
@@ -48,3 +51,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "integration: mark test as integration test (requires network)",
+]

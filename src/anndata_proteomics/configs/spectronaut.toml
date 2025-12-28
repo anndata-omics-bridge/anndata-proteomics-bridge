@@ -1,0 +1,20 @@
+# Spectronaut ProForma conversion configuration
+
+[software]
+name = "Spectronaut"
+
+[modifications]
+# Spectronaut modification notation (lowercase keys for case-insensitive matching)
+"[oxidation (m)]" = "Oxidation"
+"[acetyl (protein n-term)]" = "Acetyl"
+"[carbamidomethyl (c)]" = "Carbamidomethyl"
+"[deamidated (n)]" = "Deamidated"
+"[deamidated (q)]" = "Deamidated"
+"[phospho (sty)]" = "Phospho"
+
+[patterns]
+# Spectronaut uses [Modification] notation
+pattern = "\\[(.*?)\\]"
+before_aa = false
+isalpha = true
+isupper = true

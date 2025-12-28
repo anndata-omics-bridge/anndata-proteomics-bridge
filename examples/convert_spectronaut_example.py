@@ -6,7 +6,7 @@ This example uses test data from ProteoBench to demonstrate the conversion workf
 
 import sys
 from pathlib import Path
-from diann_converter import proteomics_to_anndata
+from anndata_proteomics import proteomics_to_anndata
 
 # Add src to path
 src_path = Path(__file__).parent.parent / "src"
