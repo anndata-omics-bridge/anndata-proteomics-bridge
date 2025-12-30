@@ -19,6 +19,7 @@ class SpectronautStrategy:
     """
 
     name = "Spectronaut"
+    level = "ion"
 
     # Columns that indicate this is a Spectronaut file
     DETECTION_COLUMNS = ["FG.LabeledSequence", "R.FileName", "FG.Quantity"]

@@ -1,5 +1,5 @@
 """
-Test data downloader for proteomics benchmark datasets.
+Benchmark data loader for proteomics datasets.
 
 Downloads test data from ProteoBench repositories for testing converters.
 Based on proteobench.utils.server_io.
@@ -153,7 +153,16 @@ class BenchmarkDataLoader:
         if max_per_software:
             df = df.groupby("software_name").head(max_per_software)
 
-        self._download_datasets(df["intermediate_hash"].tolist())
+        # Build list of datasets with software info for organized folder structure
+        datasets = [
+            {
+                "hash": row["intermediate_hash"],
+                "software": row["software_name"],
+                "version": str(row["software_version"]),
+            }
+            for _, row in df.iterrows()
+        ]
+        self._download_datasets(datasets)
 
         df["local_dir"] = df["intermediate_hash"].map(
             lambda h: str(self._hash_to_dir.get(h, ""))
@@ -162,15 +171,15 @@ class BenchmarkDataLoader:
 
         return df
 
-    def _download_datasets(self, hashes: list[str]) -> None:
-        """Download datasets for given hashes."""
+    def _download_datasets(self, datasets: list[dict]) -> None:
+        """Download datasets organized by software/version."""
         available = self._fetch_available_folders()
-        to_download = [h for h in hashes if h in available]
+        to_download = [d for d in datasets if d["hash"] in available]
 
         print(f"Found {len(to_download)} datasets to process")
 
-        for i, hash_id in enumerate(to_download, 1):
-            self._download_single(hash_id, i, len(to_download))
+        for i, dataset in enumerate(to_download, 1):
+            self._download_single(dataset, i, len(to_download))
 
     def _fetch_available_folders(self) -> set[str]:
         """Get list of available dataset folders from server."""
@@ -183,16 +192,21 @@ class BenchmarkDataLoader:
             if link.get("href", "").endswith("/")
         }
 
-    def _download_single(self, hash_id: str, current: int, total: int) -> None:
-        """Download a single dataset."""
-        extract_dir = self.output_dir / hash_id
+    def _download_single(self, dataset: dict, current: int, total: int) -> None:
+        """Download a single dataset to software/version folder."""
+        hash_id = dataset["hash"]
+        software = dataset["software"]
+        version = dataset["version"]
+
+        # Organize by software/version instead of hash
+        extract_dir = self.output_dir / software / version
 
         if extract_dir.exists() and any(extract_dir.iterdir()):
-            print(f"[{current}/{total}] Already exists: {hash_id[:12]}...")
+            print(f"[{current}/{total}] Already exists: {software}/{version}")
             self._hash_to_dir[hash_id] = extract_dir
             return
 
-        print(f"[{current}/{total}] Downloading: {hash_id[:12]}...")
+        print(f"[{current}/{total}] Downloading: {software}/{version}")
         folder_url = f"{self.data_url}{hash_id}/"
 
         for zip_url in self._find_zip_files(folder_url):
@@ -231,7 +245,6 @@ class BenchmarkDataLoader:
         return str(input_file) if input_file.exists() else None
 
 
-# Convenience functions for backwards compatibility
 def list_available_software(benchmark: str = "dda_qexactive") -> dict[str, list[str]]:
     """List available software and versions in a benchmark."""
     return BenchmarkDataLoader(benchmark).list_software()
@@ -246,14 +259,3 @@ def get_test_datasets(
     """Get test datasets for specific software tools."""
     loader = BenchmarkDataLoader(benchmark, output_dir)
     return loader.get_datasets(software_filter, max_per_software)
-
-
-if __name__ == "__main__":
-    print("Available benchmark repositories:")
-    for key, info in BENCHMARK_REPOS.items():
-        print(f"  {key}: {info['name']}")
-
-    print("\nExample usage:")
-    print("  loader = BenchmarkDataLoader('dda_qexactive')")
-    print("  loader.list_software()")
-    print("  df = loader.get_datasets(software_filter=['MaxQuant'], max_per_software=1)")

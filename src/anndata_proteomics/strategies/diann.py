@@ -19,6 +19,7 @@ class DIANNStrategy:
     """
 
     name = "DIA-NN"
+    level = "ion"
 
     # Columns that indicate this is a DIA-NN file
     DETECTION_COLUMNS = ["Modified.Sequence", "Run", "Precursor.Quantity", "Precursor.Id"]

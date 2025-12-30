@@ -20,6 +20,7 @@ class MaxQuantStrategy:
     """
 
     name = "MaxQuant"
+    level = "ion"
 
     # Columns that indicate this is a MaxQuant file
     DETECTION_COLUMNS = ["Modified sequence", "Raw file", "Intensity", "Proteins"]

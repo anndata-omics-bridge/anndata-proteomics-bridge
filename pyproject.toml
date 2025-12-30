@@ -34,8 +34,8 @@ dev = [
 ]
 
 [project.scripts]
-diann2anndata = "anndata_proteomics.cli:main"
-download_data = "anndata_proteomics.download_benchmark:main"
+prot2ad = "anndata_proteomics.cli:main"
+download_data = "anndata_proteomics.benchmarks.cli:main"
 
 
 [tool.black]

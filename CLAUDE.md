@@ -91,6 +91,11 @@ ProteoBench test data:
 - `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DIA_AIF/`
 - `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DDA_QExactive/`
 
+## Coding Rules
+
+- **No code in `__init__.py`** - Only imports and `__all__`. Put classes/functions in separate modules.
+- Keep `__init__.py` minimal: just re-export from submodules
+
 ## Development
 
 ```bash

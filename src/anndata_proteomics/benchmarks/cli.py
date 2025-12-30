@@ -5,7 +5,7 @@ from typing import Annotated, Optional
 
 import cyclopts
 
-from .test_data import BENCHMARK_REPOS, BenchmarkDataLoader
+from .loader import BENCHMARK_REPOS, BenchmarkDataLoader
 
 app = cyclopts.App(
     name="download-benchmark",

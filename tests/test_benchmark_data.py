@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from anndata_proteomics.test_data import BENCHMARK_REPOS, BenchmarkDataLoader
+from anndata_proteomics.benchmarks.loader import BENCHMARK_REPOS, BenchmarkDataLoader
 
 
 class TestBenchmarkDataLoaderInit:
