@@ -47,3 +47,5 @@ benchmark_data/
 # Generated example outputs
 examples/*.h5ad
 examples/results/
+*.snakemake.log
+.snakemake/

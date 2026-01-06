@@ -68,7 +68,8 @@ class BenchmarkDataLoader:
         self.benchmark = benchmark
         self.config = BENCHMARK_REPOS[benchmark]
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.benchmark_dir = self.output_dir / benchmark
+        self.benchmark_dir.mkdir(parents=True, exist_ok=True)
 
         self._metadata: Optional[pd.DataFrame] = None
         self._hash_to_dir: dict[str, Path] = {}
@@ -99,7 +100,7 @@ class BenchmarkDataLoader:
         response.raise_for_status()
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
-            zip_ref.extractall(self.output_dir)
+            zip_ref.extractall(self.benchmark_dir)
 
         json_data = self._parse_json_files()
         self._metadata = pd.json_normalize(json_data)
@@ -108,7 +109,7 @@ class BenchmarkDataLoader:
 
     def _parse_json_files(self) -> list[dict]:
         """Parse all JSON files from extracted repo."""
-        base_path = self.output_dir / f"{self.repo_name}-main"
+        base_path = self.benchmark_dir / f"{self.repo_name}-main"
         results = []
 
         for json_file in base_path.rglob("*.json"):
@@ -198,8 +199,8 @@ class BenchmarkDataLoader:
         software = dataset["software"]
         version = dataset["version"]
 
-        # Organize by software/version instead of hash
-        extract_dir = self.output_dir / software / version
+        # Organize by benchmark/software/version
+        extract_dir = self.benchmark_dir / software / version
 
         if extract_dir.exists() and any(extract_dir.iterdir()):
             print(f"[{current}/{total}] Already exists: {software}/{version}")
