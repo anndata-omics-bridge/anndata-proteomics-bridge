@@ -1,0 +1,206 @@
+"""Tests for the pydantic ParseRule schema."""
+
+from __future__ import annotations
+
+import tomllib
+
+import pytest
+from pydantic import ValidationError
+
+from anndata_proteomics.rules.schema import ParseRule
+
+
+LONG_EXAMPLE = """
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+software_version = "1.9.1"
+input_shape = "long"
+
+[axis]
+obs_keys = ["Run"]
+var_keys = ["Modified.Sequence", "Precursor.Charge"]
+x_layer = "Precursor_Normalised"
+
+[columns.obs]
+File_Name = "File.Name"
+Run = "Run"
+
+[columns.var]
+Modified_Sequence = "Modified.Sequence"
+Protein_Ids = "Protein.Ids"
+Precursor_Charge = "Precursor.Charge"
+Genes = "Genes"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
+[[layers]]
+name = "Q_Value"
+source_column = "Q.Value"
+
+[[layers]]
+name = "RT"
+source_column = "RT"
+
+[[layers]]
+name = "Ms1_Area"
+source_column = "Ms1.Area"
+
+[duplicates]
+mode = "error"
+"""
+
+
+WIDE_EXAMPLE = """
+schema_version = "0.1"
+file_version = "1"
+software_name = "FragPipe"
+software_version = "23.0"
+input_shape = "wide"
+
+[axis]
+obs_keys = ["sample"]
+var_keys = ["Modified Sequence", "Charge"]
+x_layer = "Intensity"
+
+[columns.obs]
+sample = "<sample>"
+
+[columns.var]
+Peptide_Sequence = "Peptide Sequence"
+Modified_Sequence = "Modified Sequence"
+Charge = "Charge"
+Protein_ID = "Protein ID"
+Gene = "Gene"
+
+[[layers]]
+name = "Intensity"
+column_pattern = "^(?P<sample>.+) Intensity$"
+
+[[layers]]
+name = "Spectral_Count"
+column_pattern = "^(?P<sample>.+) Spectral Count$"
+
+[[layers]]
+name = "Match_Type"
+column_pattern = "^(?P<sample>.+) Match Type$"
+encoding_mode = "factor"
+categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
+
+[[layers]]
+name = "Localization"
+column_pattern = "^(?P<sample>.+) Localization$"
+encoding_mode = "factor"
+categories = { "Localized" = 1, "Ambiguous" = 0 }
+
+[sample_name_cleanup]
+pattern = ""
+
+[duplicates]
+mode = "error"
+"""
+
+
+def _parse(toml_str: str) -> ParseRule:
+    return ParseRule.model_validate(tomllib.loads(toml_str))
+
+
+def test_long_example_validates():
+    rule = _parse(LONG_EXAMPLE)
+    assert rule.input_shape == "long"
+    assert rule.software_name == "DIA-NN"
+    assert len(rule.layers) == 4
+    assert rule.axis.x_layer == "Precursor_Normalised"
+    assert rule.duplicates.mode == "error"
+
+
+def test_wide_example_validates():
+    rule = _parse(WIDE_EXAMPLE)
+    assert rule.input_shape == "wide"
+    match_type = next(layer for layer in rule.layers if layer.name == "Match_Type")
+    assert match_type.encoding_mode == "factor"
+    assert match_type.categories == {"unmatched": 0, "MS/MS": 1, "MBR": 2}
+
+
+def test_long_layer_missing_source_column():
+    bad = LONG_EXAMPLE.replace('source_column = "RT"', "")
+    with pytest.raises(ValidationError, match="source_column"):
+        _parse(bad)
+
+
+def test_long_layer_with_column_pattern_rejected():
+    bad = LONG_EXAMPLE.replace(
+        'name = "RT"\nsource_column = "RT"',
+        'name = "RT"\nsource_column = "RT"\ncolumn_pattern = "^.+ RT$"',
+    )
+    with pytest.raises(ValidationError, match="column_pattern"):
+        _parse(bad)
+
+
+def test_wide_layer_missing_column_pattern():
+    bad = WIDE_EXAMPLE.replace('column_pattern = "^(?P<sample>.+) Intensity$"', "")
+    with pytest.raises(ValidationError, match="column_pattern"):
+        _parse(bad)
+
+
+def test_wide_layer_with_source_column_rejected():
+    bad = WIDE_EXAMPLE.replace(
+        'name = "Intensity"\ncolumn_pattern = "^(?P<sample>.+) Intensity$"',
+        'name = "Intensity"\ncolumn_pattern = "^(?P<sample>.+) Intensity$"\n'
+        'source_column = "Intensity"',
+    )
+    with pytest.raises(ValidationError, match="source_column"):
+        _parse(bad)
+
+
+def test_factor_requires_categories():
+    bad = WIDE_EXAMPLE.replace(
+        'categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }', ""
+    )
+    with pytest.raises(ValidationError, match="categories"):
+        _parse(bad)
+
+
+def test_x_layer_must_exist():
+    bad = LONG_EXAMPLE.replace(
+        'x_layer = "Precursor_Normalised"', 'x_layer = "DoesNotExist"'
+    )
+    with pytest.raises(ValidationError, match="x_layer"):
+        _parse(bad)
+
+
+def test_invalid_duplicates_mode():
+    bad = LONG_EXAMPLE.replace('mode = "error"', 'mode = "wrong"')
+    with pytest.raises(ValidationError):
+        _parse(bad)
+
+
+def test_unknown_top_level_key_rejected():
+    bad = LONG_EXAMPLE + '\nfoo = "bar"\n'
+    with pytest.raises(ValidationError, match="foo"):
+        _parse(bad)
+
+
+def test_sample_name_cleanup_rejected_for_long():
+    bad = LONG_EXAMPLE + '\n[sample_name_cleanup]\npattern = "(.+)"\n'
+    with pytest.raises(ValidationError, match="sample_name_cleanup"):
+        _parse(bad)
+
+
+def test_json_schema_export_has_expected_top_level_properties():
+    schema = ParseRule.model_json_schema()
+    expected = {
+        "schema_version",
+        "file_version",
+        "software_name",
+        "software_version",
+        "input_shape",
+        "axis",
+        "columns",
+        "layers",
+        "duplicates",
+        "sample_name_cleanup",
+    }
+    assert set(schema["properties"]) == expected

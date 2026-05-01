@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "Axis": {
+      "additionalProperties": false,
+      "properties": {
+        "obs_keys": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Obs Keys",
+          "type": "array"
+        },
+        "var_keys": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Var Keys",
+          "type": "array"
+        },
+        "x_layer": {
+          "title": "X Layer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "obs_keys",
+        "var_keys",
+        "x_layer"
+      ],
+      "title": "Axis",
+      "type": "object"
+    },
+    "Columns": {
+      "additionalProperties": false,
+      "properties": {
+        "obs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Obs",
+          "type": "object"
+        },
+        "var": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Var",
+          "type": "object"
+        }
+      },
+      "required": [
+        "obs",
+        "var"
+      ],
+      "title": "Columns",
+      "type": "object"
+    },
+    "Duplicates": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "default": "error",
+          "enum": [
+            "error",
+            "aggregate",
+            "keep_first",
+            "keep_all_as_raw_table"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "Duplicates",
+      "type": "object"
+    },
+    "Layer": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "encoding_mode": {
+          "default": "numeric",
+          "enum": [
+            "numeric",
+            "factor"
+          ],
+          "title": "Encoding Mode",
+          "type": "string"
+        },
+        "categories": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Categories"
+        },
+        "source_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Column"
+        },
+        "column_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column Pattern"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Layer",
+      "type": "object"
+    },
+    "SampleNameCleanup": {
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "default": "",
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "title": "SampleNameCleanup",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "file_version": {
+      "title": "File Version",
+      "type": "string"
+    },
+    "software_name": {
+      "title": "Software Name",
+      "type": "string"
+    },
+    "software_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Software Version"
+    },
+    "input_shape": {
+      "enum": [
+        "long",
+        "wide"
+      ],
+      "title": "Input Shape",
+      "type": "string"
+    },
+    "axis": {
+      "$ref": "#/$defs/Axis"
+    },
+    "columns": {
+      "$ref": "#/$defs/Columns"
+    },
+    "layers": {
+      "items": {
+        "$ref": "#/$defs/Layer"
+      },
+      "minItems": 1,
+      "title": "Layers",
+      "type": "array"
+    },
+    "duplicates": {
+      "$ref": "#/$defs/Duplicates"
+    },
+    "sample_name_cleanup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SampleNameCleanup"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "schema_version",
+    "file_version",
+    "software_name",
+    "input_shape",
+    "axis",
+    "columns",
+    "layers"
+  ],
+  "title": "ParseRule",
+  "type": "object"
+}
