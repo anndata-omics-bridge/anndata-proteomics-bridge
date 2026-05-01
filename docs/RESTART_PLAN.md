@@ -41,7 +41,9 @@ This project should stop at:
 - ✅ Six packaged TOMLs committed in `parsing_rules/` (commit `29c773c`):
   `diann`, `spectronaut`, `maxquant` (long, ion); `fragpipe`, `peaks` (wide, ion);
   `wombat` (wide, peptidoform). `proteome_discoverer` still TODO — no test data downloaded.
-- ⏭️ Next: `rules/loader.py` + `rules/validate.py` (step 3 of "First Implementation Order")
+- ✅ `rules/loader.py` + `rules/registry.py` + `rules/validate.py`, plus the
+  `validate-rules` console script (step 3 done).
+- ⏭️ Next: `readers/dispatch.py` + `readers/tabular.py` (step 5 of "First Implementation Order")
 
 ## Proposed Package Layout
 
@@ -202,8 +204,10 @@ Recommended test split:
 ```text
 tests/
 ├── test_rule_models.py        # pydantic schema (in place; commit acd64d8)
-├── test_packaged_rules.py     # validates every parsing_rules/*/parse_*.toml + filename ↔ field check (commit 29c773c)
-├── test_rule_loader.py        # TODO: rules/loader.py
+├── test_packaged_rules.py     # filename ↔ field, long/wide coverage (commit 29c773c)
+├── test_rule_loader.py        # rules/loader.py (in place)
+├── test_rule_registry.py      # rules/registry.py (in place)
+├── test_rule_validate.py      # rules/validate.py + main() exit code (in place)
 ├── test_long_conversion.py    # TODO: converters/long.py
 ├── test_wide_conversion.py    # TODO: converters/wide.py
 ├── test_factors.py            # TODO: converters/factors.py
@@ -226,10 +230,11 @@ Reason:
 
 1. ✅ Clean the existing package structure without touching out-of-scope parts. (`a4dec1c`)
 2. ✅ Add `rules/schema.py` with `pydantic` models. (`acd64d8`)
-3. ⏭️ Add `rules/loader.py` and `rules/validate.py`. **next**
+3. ✅ Add `rules/loader.py` and `rules/validate.py` (plus `rules/registry.py` and the
+   `validate-rules` console script).
 4. 🟡 Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/`. (6/7 vendors in;
    `proteome_discoverer` pending.) (`29c773c`)
-5. Add generic tabular reading in `readers/`.
+5. ⏭️ Add generic tabular reading in `readers/`. **next**
 6. Implement `converters/recognize.py`.
 7. Implement `converters/long.py`.
 8. Implement `converters/wide.py`.

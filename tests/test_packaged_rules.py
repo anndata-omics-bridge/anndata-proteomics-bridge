@@ -1,4 +1,4 @@
-"""Validate every packaged parse_*.toml against the ParseRule schema."""
+"""Verify every packaged parse_*.toml validates and matches its filename."""
 
 from __future__ import annotations
 
@@ -7,49 +7,33 @@ from pathlib import Path
 
 import pytest
 
+from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.rules.validate import validate_all_packaged
 
 
-PARSING_RULES_ROOT = (
-    Path(__file__).resolve().parent.parent
-    / "src"
-    / "anndata_proteomics"
-    / "parsing_rules"
-)
-
-
-def _packaged_rule_files() -> list[Path]:
-    return sorted(PARSING_RULES_ROOT.glob("*/parse_*.toml"))
-
-
-@pytest.mark.parametrize(
-    "toml_path",
-    _packaged_rule_files(),
-    ids=lambda p: f"{p.parent.name}/{p.name}",
-)
-def test_packaged_rule_validates(toml_path: Path) -> None:
-    data = tomllib.loads(toml_path.read_text())
-    ParseRule.model_validate(data)
+def test_all_packaged_rules_validate() -> None:
+    results = validate_all_packaged()
+    failed = [r for r in results if not r.ok]
+    assert not failed, "\n".join(f"{r.path}: {r.error}" for r in failed)
 
 
 def test_at_least_one_long_and_one_wide_rule() -> None:
-    files = _packaged_rule_files()
-    shapes = {
-        f.parent.name: ParseRule.model_validate(tomllib.loads(f.read_text())).input_shape
-        for f in files
-    }
-    assert "long" in shapes.values(), f"no long rule found: {shapes}"
-    assert "wide" in shapes.values(), f"no wide rule found: {shapes}"
+    rules = [
+        ParseRule.model_validate(tomllib.loads(p.read_text()))
+        for p in iter_packaged_rules()
+    ]
+    shapes = {r.input_shape for r in rules}
+    assert "long" in shapes, f"no long rule found: {shapes}"
+    assert "wide" in shapes, f"no wide rule found: {shapes}"
 
 
 @pytest.mark.parametrize(
     "toml_path",
-    _packaged_rule_files(),
+    list(iter_packaged_rules()),
     ids=lambda p: f"{p.parent.name}/{p.name}",
 )
 def test_filename_quant_level_matches_toml(toml_path: Path) -> None:
-    # Filename convention: parse_<software_tokens...>_<level>_<file_version>.toml
-    # The level is always the second-to-last underscore-separated token of the stem.
     parts = toml_path.stem.split("_")
     filename_level = parts[-2]
     rule = ParseRule.model_validate(tomllib.loads(toml_path.read_text()))
