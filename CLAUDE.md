@@ -2,6 +2,13 @@
 
 Convert proteomics software output to AnnData format.
 
+Design lives in the sibling docs repo [anndata_omics_bridge](../anndata_omics_bridge/):
+- **[conventions.md](../anndata_omics_bridge/docs/conventions.md)** — column / layer name sanitisation rules (apply on `obs.columns`, `var.columns`, layer names; **not** on `obs_names`/`var_names`/`uns` keys)
+- **[adr_tool_specific_views.md](../anndata_omics_bridge/docs/adr_tool_specific_views.md)** — per-tool `uns['<app_name>']['column_roles']` schema (authoritative ADR)
+- **[proteomics_rationale.md](../anndata_omics_bridge/docs/proteomics_rationale.md)** — why AnnData for proteomics; ProteoBench / prolfquapp synergies
+
+In-repo docs: [docs/toml_schema.md](docs/toml_schema.md), [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md).
+
 ## Current Scope
 
 **Ion/precursor level quantification only:**
@@ -93,8 +100,7 @@ ProteoBench test data:
 
 ## Coding Rules
 
-- **No code in `__init__.py`** - Only imports and `__all__`. Put classes/functions in separate modules.
-- Keep `__init__.py` minimal: just re-export from submodules
+- **Keep `__init__.py` files empty** (a single module docstring is acceptable). Put classes/functions in separate modules and import them directly from those modules.
 
 ## Development
 

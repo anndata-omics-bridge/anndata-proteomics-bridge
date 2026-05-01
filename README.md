@@ -1,48 +1,40 @@
-# DIANN to AnnData Converter
+# anndata_proteomics_bridge
 
-Convert DIANN (DIA-NN) proteomics output to AnnData format for downstream analysis with exploreDE, prolfqua, and other tools.
+Convert proteomics software output to AnnData format.
 
-## Features
+Currently supported (ion / precursor level only):
 
-- ✅ Convert DIANN parquet/TSV files to AnnData `.h5ad` format
-- ✅ Support protein-level, peptide-level, and precursor-level data
-- ✅ Follows AnnData Omics Bridge specification
-- ✅ Compatible with exploreDE and prolfqua
-- ✅ Built-in quality control and filtering
-- ✅ Automatic validation of output files
+- DIA-NN (`report.tsv`)
+- MaxQuant (`evidence.txt`)
+- Spectronaut (precursor exports)
 
-## Installation
+Design rationale, role separation, naming conventions, and the per-tool `uns['<app_name>']['column_roles']` schema live in the sibling docs repo: [anndata_omics_bridge](../anndata_omics_bridge/).
+
+## Install
 
 ```bash
-# Clone the repository
-cd ~/projects/diann_to_anndata
-
-# Install with uv (recommended)
 uv venv
 source .venv/bin/activate
 uv pip install -e .
-
-# Or with pip
-pip install -e .
 ```
 
-## Quick Start
+## Quick start
 
 ```python
-from diann_converter import convert_diann
+from anndata_proteomics.builder import ConverterBuilder
 
-# Convert DIANN output to AnnData
-adata = convert_diann(
-    diann_file='diann_report.parquet',
-    annotation_file='samples.csv',
-    output_file='proteomics.h5ad',
-    level='protein'  # 'protein', 'peptide', or 'precursor'
-)
+# Auto-detect format
+converter = ConverterBuilder.from_file("report.tsv")
+adata = converter.convert("report.tsv", "annotation.csv")
+
+# Explicit software
+converter = ConverterBuilder.for_software("diann")
+adata = converter.convert("report.tsv", "annotation.csv")
 ```
 
-## Sample Annotation File
+## Sample annotation file
 
-Create a CSV file with your experimental design:
+A CSV with at least one column matching the software's run identifier (e.g. DIA-NN's `Run` or `File.Name`):
 
 ```csv
 sample_id,condition,batch,replicate
@@ -52,22 +44,17 @@ sample_003,treated,batch1,1
 sample_004,treated,batch1,2
 ```
 
-**Important**: The `sample_id` column must match DIANN's `Run` or `File.Name` column.
+## Tests
+
+```bash
+pytest tests/
+```
 
 ## Documentation
 
-- **Mapping Guide**: See `docs/DIANN_to_AnnData_mapping.md` for detailed column mapping
-- **Specification**: Based on `/Users/wolski/projects/anndata_omics_bridge/docs/AnnData_Omics_Bridge_spec.qmd`
-
-## Requirements
-
-- Python ≥ 3.9
-- pandas
-- numpy
-- anndata
-- pyarrow (for parquet support)
-- omicsbridge (for validation)
-
-## License
-
-MIT License
+- **[anndata_omics_bridge/docs/conventions.md](../anndata_omics_bridge/docs/conventions.md)** — column / layer name sanitisation rules
+- **[anndata_omics_bridge/docs/adr_tool_specific_views.md](../anndata_omics_bridge/docs/adr_tool_specific_views.md)** — per-tool `uns` design (authoritative ADR)
+- **[anndata_omics_bridge/docs/proteomics_rationale.md](../anndata_omics_bridge/docs/proteomics_rationale.md)** — why AnnData for proteomics
+- **[docs/diann_mapping.md](docs/diann_mapping.md)** — DIA-NN-specific conversion details
+- **[docs/toml_schema.md](docs/toml_schema.md)** — TOML rules schema for per-tool parsers
+- **[docs/RESTART_PLAN.md](docs/RESTART_PLAN.md)** — current implementation roadmap

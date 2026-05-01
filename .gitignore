@@ -44,6 +44,19 @@ test_data/
 temp_results/
 benchmark_data/
 
+# test_data_download generated artifacts (52GB cache, all regenerable via Makefile)
+test_data_download/json_dir/
+test_data_download/raw_file_db_full.csv
+test_data_download/raw_file_db_selected.csv
+test_data_download/raw_file_db_downloaded.csv
+test_data_download/raw_file_db.csv
+test_data_download/marimo/temp_results/
+test_data_download/marimo/Results_quant_ion_*/
+test_data_download/marimo/*.html
+test_data_download/marimo/proteobench_reports_*.zip
+test_data_download/Untitled
+test_data_download/marimo/Untitled
+
 # Generated example outputs
 examples/*.h5ad
 examples/results/
