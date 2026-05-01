@@ -16,87 +16,22 @@ In-repo docs: [docs/toml_schema.md](docs/toml_schema.md), [docs/RESTART_PLAN.md]
 - MaxQuant (`evidence.txt`)
 - Spectronaut (precursor exports)
 
-## Usage
+## Status
 
-```python
-from anndata_proteomics.builder import ConverterBuilder
-
-# Auto-detect format
-converter = ConverterBuilder.from_file("report.tsv")
-adata = converter.convert("report.tsv", "annotation.csv")
-
-# Explicit software
-converter = ConverterBuilder.for_software("diann")
-adata = converter.convert("report.tsv", "annotation.csv")
-```
-
-## Project Structure
-
-```
-src/anndata_proteomics/
-├── builder.py          # ConverterBuilder (auto-detect, for_software)
-├── core.py             # Converter (pivot to AnnData)
-├── annotation.py       # Sample annotation loading/matching
-├── proforma.py         # ProForma sequence conversion
-├── utils.py            # Utilities
-├── strategies/         # One file per software
-│   ├── diann.py
-│   ├── maxquant.py
-│   └── spectronaut.py
-└── configs/            # ProForma TOML configs
-    ├── diann.toml
-    ├── maxquant.toml
-    └── spectronaut.toml
-```
-
-## Strategy Interface
-
-Each strategy defines:
-- `name` - Software name (e.g., "DIA-NN")
-- `obs_id` - Column identifying samples
-- `var_id` - Column identifying precursors
-- `VAR_COLUMNS` - Columns to include in var metadata
-- `LAYER_COLUMNS` - Columns to include as layers (first = default X)
-- `detect(path)` - Check if file matches this format
-- `load(path)` - Load file to DataFrame
-- `get_obs(df)` - Return obs DataFrame
-- `get_var(df)` - Return var DataFrame
-- `get_layers(df)` - Return DataFrame with obs_id, var_id, and layer columns
-
-## Adding a New Strategy
-
-1. Create `strategies/newsoftware.py`:
-```python
-class NewSoftwareStrategy:
-    name = "NewSoftware"
-    obs_id = "Run"
-    var_id = "precursor_id"
-    DETECTION_COLUMNS = ["RequiredCol1", "RequiredCol2"]
-    VAR_COLUMNS = ["Sequence", "Charge", "Protein"]
-    LAYER_COLUMNS = ["Intensity", "Score"]
-
-    def detect(self, path): ...
-    def load(self, path): ...
-    def get_obs(self, df): ...
-    def get_var(self, df): ...
-    def get_layers(self, df): ...
-```
-
-2. Add import to `builder.py`:
-```python
-from .strategies.newsoftware import NewSoftwareStrategy
-
-STRATEGY_REGISTRY = {
-    ...
-    _normalize_software_name(NewSoftwareStrategy.name): NewSoftwareStrategy,
-}
-```
+The pre-restart `src/` was deleted on 2026-05-01. The package is being rebuilt against [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md) — that doc is the authoritative target architecture (`rules/`, `readers/`, `converters/`, `parsing_rules/<vendor>/`) and implementation order. The TOML rule schema lives in [docs/toml_schema.md](docs/toml_schema.md). Old code is recoverable from git history (last full commit before deletion: `f6bffda`).
 
 ## Test Data
 
 ProteoBench test data:
 - `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DIA_AIF/`
 - `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DDA_QExactive/`
+
+## Workflow Rules
+
+- **Plans live in the project `TODO/` folder, and that file is the source of truth.**
+  - **Writing.** When entering plan mode (or when asked to "plan" / "analyze"), write the plan to `TODO/PLAN_YYYYMMDD_<short-slug>.md` at the project root, using today's date and a 2–4 word kebab-case slug (e.g. `TODO/PLAN_20260501_consolidate-agents-claude.md`). Create `TODO/` if it doesn't exist. Claude Code will additionally write its own copy under `~/.claude/plans/`; treat that copy as ephemeral.
+  - **Reading / implementing.** When the user asks to implement a plan, read `TODO/PLAN_*.md` from the project root — that is the authoritative file, because the user may have edited it after planning. Do **not** read or rely on `~/.claude/plans/`. If the user references "the plan" without naming a file, use the most recent `TODO/PLAN_*.md` by date in the filename, unless they say otherwise.
+  - **If they differ, the project file wins.** Never overwrite the project file from the `~/.claude/plans/` copy — the user's edits to `TODO/PLAN_*.md` are intentional. If you make material plan revisions during a session, update the project file before exiting plan mode.
 
 ## Coding Rules
 
