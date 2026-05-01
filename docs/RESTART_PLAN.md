@@ -28,7 +28,20 @@ This project should stop at:
 - Ship required TOMLs inside `src/anndata_proteomics/parsing_rules/`
 - Group TOMLs by vendor, not by wide/long
 - Keep wide vs long as a TOML property: `input_shape`
+- Encode quantification level (`ion` / `peptidoform` / `peptide` / `protein`) both as a TOML
+  field (`quantification_level`) **and** as a token in the filename
+  (`parse_<software>_<level>_<file_version>.toml`); a test enforces the two stay in sync
 - Do not implement second-stage `obs` annotation here
+
+## Status (2026-05-01)
+
+- ✅ Pre-restart `src/` cleared (commit `a4dec1c`)
+- ✅ `rules/schema.py` with pydantic `ParseRule` + JSON Schema export to
+  `parsing_rules/_schema/parse_rule.schema.json` (commit `acd64d8`)
+- ✅ Six packaged TOMLs committed in `parsing_rules/` (commit `29c773c`):
+  `diann`, `spectronaut`, `maxquant` (long, ion); `fragpipe`, `peaks` (wide, ion);
+  `wombat` (wide, peptidoform). `proteome_discoverer` still TODO — no test data downloaded.
+- ⏭️ Next: `rules/loader.py` + `rules/validate.py` (step 3 of "First Implementation Order")
 
 ## Proposed Package Layout
 
@@ -45,12 +58,14 @@ anndata_proteomics_bridge/
         ├── __init__.py
         ├── cli.py
         ├── parsing_rules/
+        │   ├── _schema/             # generated parse_rule.schema.json (committed)
         │   ├── diann/
         │   ├── fragpipe/
         │   ├── maxquant/
+        │   ├── peaks/
         │   ├── spectronaut/
         │   ├── wombat/
-        │   └── proteome_discoverer/
+        │   └── proteome_discoverer/  # TODO: no test data yet
         ├── rules/
         │   ├── __init__.py
         │   ├── loader.py
@@ -84,13 +99,18 @@ vendor.
 
 ```text
 parsing_rules/
-├── diann/
-├── fragpipe/
-├── maxquant/
-├── spectronaut/
-├── wombat/
-└── proteome_discoverer/
+├── _schema/             # generated parse_rule.schema.json (commit acd64d8)
+├── diann/               # parse_diann_ion_1.toml
+├── fragpipe/            # parse_fragpipe_ion_1.toml
+├── maxquant/            # parse_maxquant_ion_1.toml
+├── peaks/               # parse_peaks_ion_1.toml
+├── spectronaut/         # parse_spectronaut_ion_1.toml
+├── wombat/              # parse_wombat_peptidoform_1.toml
+└── proteome_discoverer/ # TODO
 ```
+
+Filename convention: `parse_<software>_<quantification_level>_<file_version>.toml`. The level
+must match the in-TOML `quantification_level` field — `tests/test_packaged_rules.py` enforces it.
 
 ## `src/anndata_proteomics/rules/`
 
@@ -100,7 +120,9 @@ coherent subsystem instead of splitting schema models into a separate top-level 
 ### `src/anndata_proteomics/rules/schema.py`
 
 Formal `pydantic` schema for the TOML files. It should define the common rule structure, the long
-and wide variants, and the conditional validation rules.
+and wide variants, and the conditional validation rules. A side script (`_export_schema.py`) emits
+`parsing_rules/_schema/parse_rule.schema.json` so editors that combine TOML with JSON Schema get
+live validation in `.toml` files. Pydantic is the single source of truth; JSON Schema is derived.
 
 ### `src/anndata_proteomics/rules/loader.py`
 
@@ -179,12 +201,13 @@ Recommended test split:
 
 ```text
 tests/
-├── test_rule_models.py
-├── test_rule_loader.py
-├── test_long_conversion.py
-├── test_wide_conversion.py
-├── test_factors.py
-└── test_cli.py
+├── test_rule_models.py        # pydantic schema (in place; commit acd64d8)
+├── test_packaged_rules.py     # validates every parsing_rules/*/parse_*.toml + filename ↔ field check (commit 29c773c)
+├── test_rule_loader.py        # TODO: rules/loader.py
+├── test_long_conversion.py    # TODO: converters/long.py
+├── test_wide_conversion.py    # TODO: converters/wide.py
+├── test_factors.py            # TODO: converters/factors.py
+└── test_cli.py                # TODO: cli.py
 ```
 
 ## TOML Organization
@@ -201,10 +224,11 @@ Reason:
 
 ## First Implementation Order
 
-1. Clean the existing package structure without touching out-of-scope parts.
-2. Add `rules/schema.py` with `pydantic` models.
-3. Add `rules/loader.py` and `rules/validate.py`.
-4. Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/`.
+1. ✅ Clean the existing package structure without touching out-of-scope parts. (`a4dec1c`)
+2. ✅ Add `rules/schema.py` with `pydantic` models. (`acd64d8`)
+3. ⏭️ Add `rules/loader.py` and `rules/validate.py`. **next**
+4. 🟡 Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/`. (6/7 vendors in;
+   `proteome_discoverer` pending.) (`29c773c`)
 5. Add generic tabular reading in `readers/`.
 6. Implement `converters/recognize.py`.
 7. Implement `converters/long.py`.
