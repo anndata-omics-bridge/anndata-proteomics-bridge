@@ -1,0 +1,43 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "PEAKS"
+software_version = "13"
+input_shape = "wide"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["sample"]
+var_keys = ["Peptide", "z"]
+x_layer = "Normalized_Area"
+
+[columns.obs]
+sample = "<sample>"
+
+[columns.var]
+Peptide = "Peptide"
+Charge = "z"
+Mz = "m/z"
+RT_Range = "RT range"
+Quality = "Quality"
+Significance = "Significance"
+Avg_Area = "Avg. Area"
+Accession = "Accession"
+
+[[layers]]
+name = "Normalized_Area"
+column_pattern = "^(?P<sample>LFQ.+) Normalized Area$"
+
+[[layers]]
+name = "Sample_Mz"
+column_pattern = "^(?P<sample>LFQ.+) m/z$"
+
+[[layers]]
+name = "Sample_RT_Mean"
+column_pattern = "^(?P<sample>LFQ.+) RT mean$"
+
+[[layers]]
+name = "AScore"
+column_pattern = "^(?P<sample>LFQ.+) AScore$"
+
+[duplicates]
+mode = "error"

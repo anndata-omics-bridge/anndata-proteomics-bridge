@@ -1,0 +1,29 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "WOMBAT"
+software_version = "0.9.11"
+input_shape = "wide"
+quantification_level = "peptidoform"
+
+[axis]
+obs_keys = ["sample"]
+var_keys = ["modified_peptide"]
+x_layer = "Abundance"
+
+[columns.obs]
+sample = "<sample>"
+
+[columns.var]
+modified_peptide = "modified_peptide"
+protein_group = "protein_group"
+
+[[layers]]
+name = "Abundance"
+column_pattern = "^abundance_(?P<sample>[AB]_[123])$"
+
+[[layers]]
+name = "Number_Of_Psms"
+column_pattern = "^number_of_psms_(?P<sample>[AB]_[123])$"
+
+[duplicates]
+mode = "error"

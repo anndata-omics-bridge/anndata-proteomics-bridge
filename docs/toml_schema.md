@@ -59,9 +59,11 @@ Examples:
 
 Filename convention:
 
-- `parse_<softwareName>_<fileVersion>.toml`
+- `parse_<softwareName>_<quantificationLevel>_<fileVersion>.toml`
 
 Here `fileVersion` means the parsing-rule version, not the vendor software version.
+`quantificationLevel` is one of `ion`, `peptidoform`, `peptide`, `protein` and must match the
+in-TOML `quantification_level` field. The packaged-rules test enforces this.
 
 ### Formal validation
 
@@ -134,6 +136,12 @@ These entries are valid for both long and wide rules.
   Type: string
   Allowed values: `"long"`, `"wide"`
 
+- `quantification_level`
+  Purpose: declares the level of quantification the rule produces
+  Type: string
+  Allowed values: `"ion"`, `"peptidoform"`, `"peptide"`, `"protein"`
+  Note: must match the level token encoded in the TOML filename.
+
 - `[axis]`
   Purpose: defines the AnnData axes and the primary quantitative matrix
 
@@ -204,6 +212,7 @@ file_version = "1"
 software_name = "DIA-NN"
 software_version = "1.9.1"
 input_shape = "long"
+quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
@@ -278,6 +287,7 @@ file_version = "1"
 software_name = "FragPipe"
 software_version = "23.0"
 input_shape = "wide"
+quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]

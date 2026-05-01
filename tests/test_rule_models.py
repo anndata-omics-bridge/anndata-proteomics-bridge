@@ -16,6 +16,7 @@ file_version = "1"
 software_name = "DIA-NN"
 software_version = "1.9.1"
 input_shape = "long"
+quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
@@ -59,6 +60,7 @@ file_version = "1"
 software_name = "FragPipe"
 software_version = "23.0"
 input_shape = "wide"
+quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]
@@ -197,6 +199,7 @@ def test_json_schema_export_has_expected_top_level_properties():
         "software_name",
         "software_version",
         "input_shape",
+        "quantification_level",
         "axis",
         "columns",
         "layers",
@@ -204,3 +207,17 @@ def test_json_schema_export_has_expected_top_level_properties():
         "sample_name_cleanup",
     }
     assert set(schema["properties"]) == expected
+
+
+def test_invalid_quantification_level():
+    bad = LONG_EXAMPLE.replace(
+        'quantification_level = "ion"', 'quantification_level = "wrong"'
+    )
+    with pytest.raises(ValidationError):
+        _parse(bad)
+
+
+def test_missing_quantification_level():
+    bad = LONG_EXAMPLE.replace('quantification_level = "ion"\n', "")
+    with pytest.raises(ValidationError, match="quantification_level"):
+        _parse(bad)

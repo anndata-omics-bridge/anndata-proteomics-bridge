@@ -1,0 +1,45 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "FragPipe"
+software_version = "22.1-build02"
+input_shape = "wide"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["sample"]
+var_keys = ["Modified Sequence", "Charge"]
+x_layer = "Intensity"
+
+[columns.obs]
+sample = "<sample>"
+
+[columns.var]
+Peptide_Sequence = "Peptide Sequence"
+Modified_Sequence = "Modified Sequence"
+Charge = "Charge"
+M_Z = "M/Z"
+Protein = "Protein"
+Protein_ID = "Protein ID"
+Gene = "Gene"
+Assigned_Modifications = "Assigned Modifications"
+
+[[layers]]
+name = "Intensity"
+column_pattern = "^(?P<sample>LFQ_.+) Intensity$"
+
+[[layers]]
+name = "Spectral_Count"
+column_pattern = "^(?P<sample>LFQ_.+) Spectral Count$"
+
+[[layers]]
+name = "Apex_Retention_Time"
+column_pattern = "^(?P<sample>LFQ_.+) Apex Retention Time$"
+
+[[layers]]
+name = "Match_Type"
+column_pattern = "^(?P<sample>LFQ_.+) Match Type$"
+encoding_mode = "factor"
+categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
+
+[duplicates]
+mode = "error"

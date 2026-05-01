@@ -184,6 +184,16 @@
       "title": "Input Shape",
       "type": "string"
     },
+    "quantification_level": {
+      "enum": [
+        "ion",
+        "peptidoform",
+        "peptide",
+        "protein"
+      ],
+      "title": "Quantification Level",
+      "type": "string"
+    },
     "axis": {
       "$ref": "#/$defs/Axis"
     },
@@ -218,6 +228,7 @@
     "file_version",
     "software_name",
     "input_shape",
+    "quantification_level",
     "axis",
     "columns",
     "layers"

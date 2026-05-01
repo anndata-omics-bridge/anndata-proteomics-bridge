@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 InputShape = Literal["long", "wide"]
+QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein"]
 EncodingMode = Literal["numeric", "factor"]
 DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_table"]
 
@@ -56,6 +57,7 @@ class ParseRule(_Strict):
     software_name: str
     software_version: str | None = None
     input_shape: InputShape
+    quantification_level: QuantificationLevel
     axis: Axis
     columns: Columns
     layers: list[Layer] = Field(min_length=1)

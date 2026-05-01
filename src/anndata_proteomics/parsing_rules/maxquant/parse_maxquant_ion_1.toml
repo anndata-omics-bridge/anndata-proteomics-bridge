@@ -1,0 +1,48 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "MaxQuant"
+software_version = "2.6.7.0"
+input_shape = "long"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["Raw file"]
+var_keys = ["Modified sequence", "Charge"]
+x_layer = "Intensity"
+
+[columns.obs]
+Raw_File = "Raw file"
+Experiment = "Experiment"
+Fraction = "Fraction"
+
+[columns.var]
+Sequence = "Sequence"
+Modified_Sequence = "Modified sequence"
+Modifications = "Modifications"
+Charge = "Charge"
+Mass = "Mass"
+Proteins = "Proteins"
+Leading_Razor_Protein = "Leading razor protein"
+
+[[layers]]
+name = "Intensity"
+source_column = "Intensity"
+
+[[layers]]
+name = "MS_MS_Count"
+source_column = "MS/MS count"
+
+[[layers]]
+name = "Retention_Time"
+source_column = "Retention time"
+
+[[layers]]
+name = "Score"
+source_column = "Score"
+
+[[layers]]
+name = "PEP"
+source_column = "PEP"
+
+[duplicates]
+mode = "error"

@@ -1,0 +1,48 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "Spectronaut"
+software_version = "20.0.250602.92449"
+input_shape = "long"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["R.FileName"]
+var_keys = ["EG.ModifiedSequence", "FG.Charge"]
+x_layer = "FG_Quantity"
+
+[columns.obs]
+R_FileName = "R.FileName"
+R_Condition = "R.Condition"
+R_Replicate = "R.Replicate"
+R_Label = "R.Label"
+
+[columns.var]
+PEP_StrippedSequence = "PEP.StrippedSequence"
+EG_ModifiedSequence = "EG.ModifiedSequence"
+EG_ModifiedPeptide = "EG.ModifiedPeptide"
+FG_Charge = "FG.Charge"
+PG_ProteinGroups = "PG.ProteinGroups"
+PG_ProteinAccessions = "PG.ProteinAccessions"
+
+[[layers]]
+name = "FG_Quantity"
+source_column = "FG.Quantity"
+
+[[layers]]
+name = "FG_Mass"
+source_column = "FG.Mass"
+
+[[layers]]
+name = "FG_Qvalue"
+source_column = "FG.Qvalue"
+
+[[layers]]
+name = "EG_ApexRT"
+source_column = "EG.ApexRT"
+
+[[layers]]
+name = "EG_Qvalue"
+source_column = "EG.Qvalue"
+
+[duplicates]
+mode = "error"

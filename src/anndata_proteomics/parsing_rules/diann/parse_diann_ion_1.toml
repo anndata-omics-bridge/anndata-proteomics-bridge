@@ -1,0 +1,48 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+software_version = "2.3.0"
+input_shape = "long"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["Run"]
+var_keys = ["Modified.Sequence", "Precursor.Charge"]
+x_layer = "Precursor_Normalised"
+
+[columns.obs]
+File_Name = "File.Name"
+Run = "Run"
+
+[columns.var]
+Modified_Sequence = "Modified.Sequence"
+Stripped_Sequence = "Stripped.Sequence"
+Precursor_Charge = "Precursor.Charge"
+Precursor_Id = "Precursor.Id"
+Protein_Group = "Protein.Group"
+Protein_Ids = "Protein.Ids"
+Protein_Names = "Protein.Names"
+Genes = "Genes"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
+[[layers]]
+name = "Precursor_Quantity"
+source_column = "Precursor.Quantity"
+
+[[layers]]
+name = "Ms1_Area"
+source_column = "Ms1.Area"
+
+[[layers]]
+name = "Q_Value"
+source_column = "Q.Value"
+
+[[layers]]
+name = "RT"
+source_column = "RT"
+
+[duplicates]
+mode = "error"
