@@ -100,7 +100,7 @@ Future flow (not implemented): `ParseRule + vendor data file → readers → con
 
 **Depends on** — `rules.schema`, stdlib `json`.
 
-**Tests** — covered indirectly by `test_rule_models.test_json_schema_export_has_expected_top_level_properties`.
+**Tests** — covered indirectly by `test_rule_models.test_json_schema_export_has_expected_top_level_properties`. [tests/test_json_schema_validation.py](../tests/test_json_schema_validation.py) additionally round-trips every packaged TOML through `jsonschema.validate(...)` against the generated schema (structural-parity smoke test). Pydantic remains the only source of truth for cross-field rules — JSON Schema is strictly weaker, by design.
 
 ### `parsing_rules/`
 
