@@ -25,11 +25,17 @@ uv pip install -e '.[dev]'
 
 ## Quick start
 
-Validate every packaged rule:
+The umbrella CLI is `anndata-proteomics`:
 
 ```bash
-validate-rules
+anndata-proteomics validate                                # walks all packaged rules
+anndata-proteomics validate path/to/your_rule.toml         # validates a single TOML
+anndata-proteomics list                                    # show packaged rules
+anndata-proteomics export-schema                           # regenerate parse_rule.schema.json
+anndata-proteomics convert data.tsv rule.toml              # STUB until step 5+ lands
 ```
+
+Exit codes: `0` all pass, `1` validation failed, `2` not yet implemented (e.g. `convert`).
 
 Load a packaged rule from Python:
 
@@ -41,7 +47,7 @@ print(rule.software_name, rule.input_shape, rule.axis.x_layer)
 # DIA-NN long Precursor_Normalised
 ```
 
-Validate a custom TOML rule (e.g. one you authored locally):
+Validate a custom TOML rule programmatically:
 
 ```python
 from anndata_proteomics.rules.validate import validate_file
@@ -51,11 +57,7 @@ if not result.ok:
     print(result.error)
 ```
 
-Regenerate the JSON Schema after editing the pydantic models:
-
-```bash
-export-rule-schema
-```
+Older bulk-walk scripts (`validate-rules`, `export-rule-schema`) still work and are equivalent to `anndata-proteomics validate` and `anndata-proteomics export-schema` respectively.
 
 ## Tests
 

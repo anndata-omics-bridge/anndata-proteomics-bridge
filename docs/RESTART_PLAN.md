@@ -44,6 +44,10 @@ This project should stop at:
   the ProteoBench catalog (`raw_file_db_full.csv`).
 - ✅ `rules/loader.py` + `rules/registry.py` + `rules/validate.py`, plus the
   `validate-rules` console script (step 3 done).
+- ✅ JSON Schema round-trip tests in `tests/test_json_schema_validation.py` (commit `4f4f252`).
+- ✅ `scripts/cli.py` — `anndata-proteomics` umbrella CLI with `validate / list /
+  export-schema / convert (stub)` subcommands (cli.py skeleton in place; `convert`
+  remains a stub until readers/converters land).
 - ⏭️ Next: `readers/dispatch.py` + `readers/tabular.py` (step 5 of "First Implementation Order")
 
 ## Proposed Package Layout

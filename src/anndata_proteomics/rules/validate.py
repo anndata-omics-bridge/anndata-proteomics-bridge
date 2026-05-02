@@ -36,10 +36,13 @@ def validate_all_packaged() -> list[ValidationResult]:
     return [validate_file(p) for p in iter_packaged_rules()]
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Console entrypoint: PASS/FAIL per rule, summary line, exit 1 if any failed."""
+def _print_and_exit_code(results: list[ValidationResult]) -> int:
+    """Print PASS/FAIL per result and a summary line; return 0 if all ok else 1.
+
+    Shared by `validate-rules` and the `anndata-proteomics validate` subcommand
+    so both produce identical output formats.
+    """
     pkg_parent = packaged_rules_root().parent
-    results = validate_all_packaged()
     for r in results:
         rel = r.path.relative_to(pkg_parent) if r.path.is_relative_to(pkg_parent) else r.path
         if r.ok:
@@ -48,8 +51,13 @@ def main(argv: list[str] | None = None) -> int:
             err_summary = (r.error or "(no error message)").splitlines()[0]
             print(f"FAIL  {rel}: {err_summary}")
     failed = sum(1 for r in results if not r.ok)
-    print(f"{len(results)} packaged rule(s) checked, {failed} failed.")
+    print(f"{len(results)} rule(s) checked, {failed} failed.")
     return 0 if failed == 0 else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Console entrypoint: validate every packaged rule; exit 1 if any failed."""
+    return _print_and_exit_code(validate_all_packaged())
 
 
 if __name__ == "__main__":

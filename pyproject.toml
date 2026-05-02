@@ -27,6 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
+anndata-proteomics = "anndata_proteomics.scripts.cli:main"
 export-rule-schema = "anndata_proteomics.rules._export_schema:main"
 validate-rules = "anndata_proteomics.rules.validate:main"
 

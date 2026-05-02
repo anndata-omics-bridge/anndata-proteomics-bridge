@@ -121,14 +121,32 @@ parsing_rules/
 
 **Filename convention** — `parse_<software>_<level>_<file_version>.toml`. The level token must match the TOML's `quantification_level` field; [tests/test_packaged_rules.py](../tests/test_packaged_rules.py) enforces this.
 
+## `scripts/cli.py` — `anndata-proteomics` umbrella CLI
+
+**Purpose** — single user-facing CLI with subcommands. Built on `cyclopts`.
+
+**Subcommands**
+
+| Subcommand | Behavior | Exit code |
+|---|---|---|
+| `validate [path ...]` | Validate one or more TOML rules. With no path, walks all packaged rules. | 0 if all pass, 1 otherwise |
+| `list` | List packaged rules: software, level, file_version, path. | 0 |
+| `export-schema` | Regenerate `parse_rule.schema.json`. | 0 |
+| `convert <data> <rule.toml>` | **STUB** — not yet implemented (RESTART_PLAN steps 5–10). | 2 (distinct from validation failure 1) |
+
+**Implementation principle** — `validate` shares the PASS/FAIL formatter (`rules.validate._print_and_exit_code`) with the older `validate-rules` console script, so output is identical.
+
+**Tests** — [tests/test_cli.py](../tests/test_cli.py)
+
 ## Console scripts
 
 Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 | Command | Module | Purpose |
 |---|---|---|
-| `validate-rules` | `rules.validate:main` | Sanity-check every packaged TOML; exit code suitable for CI |
-| `export-rule-schema` | `rules._export_schema:main` | Regenerate `parse_rule.schema.json` from the pydantic models |
+| **`anndata-proteomics`** | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert` subcommands |
+| `validate-rules` | `rules.validate:main` | Bulk-walk packaged rules (kept for CI back-compat; superseded by `anndata-proteomics validate`) |
+| `export-rule-schema` | `rules._export_schema:main` | Regenerate `parse_rule.schema.json` (kept; superseded by `anndata-proteomics export-schema`) |
 
 ## Not yet implemented
 
