@@ -40,7 +40,8 @@ This project should stop at:
   `parsing_rules/_schema/parse_rule.schema.json` (commit `acd64d8`)
 - ✅ Six packaged TOMLs committed in `parsing_rules/` (commit `29c773c`):
   `diann`, `spectronaut`, `maxquant` (long, ion); `fragpipe`, `peaks` (wide, ion);
-  `wombat` (wide, peptidoform). `proteome_discoverer` still TODO — no test data downloaded.
+  `wombat` (wide, peptidoform). `proteome_discoverer` dropped — no submissions in
+  the ProteoBench catalog (`raw_file_db_full.csv`).
 - ✅ `rules/loader.py` + `rules/registry.py` + `rules/validate.py`, plus the
   `validate-rules` console script (step 3 done).
 - ⏭️ Next: `readers/dispatch.py` + `readers/tabular.py` (step 5 of "First Implementation Order")
@@ -66,8 +67,7 @@ anndata_proteomics_bridge/
         │   ├── maxquant/
         │   ├── peaks/
         │   ├── spectronaut/
-        │   ├── wombat/
-        │   └── proteome_discoverer/  # TODO: no test data yet
+        │   └── wombat/
         ├── rules/
         │   ├── __init__.py
         │   ├── loader.py
@@ -107,8 +107,7 @@ parsing_rules/
 ├── maxquant/            # parse_maxquant_ion_1.toml
 ├── peaks/               # parse_peaks_ion_1.toml
 ├── spectronaut/         # parse_spectronaut_ion_1.toml
-├── wombat/              # parse_wombat_peptidoform_1.toml
-└── proteome_discoverer/ # TODO
+└── wombat/              # parse_wombat_peptidoform_1.toml
 ```
 
 Filename convention: `parse_<software>_<quantification_level>_<file_version>.toml`. The level
@@ -232,8 +231,8 @@ Reason:
 2. ✅ Add `rules/schema.py` with `pydantic` models. (`acd64d8`)
 3. ✅ Add `rules/loader.py` and `rules/validate.py` (plus `rules/registry.py` and the
    `validate-rules` console script).
-4. 🟡 Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/`. (6/7 vendors in;
-   `proteome_discoverer` pending.) (`29c773c`)
+4. ✅ Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/` — 6 vendors
+   covering all software present in the test_data_download catalog. (`29c773c`)
 5. ⏭️ Add generic tabular reading in `readers/`. **next**
 6. Implement `converters/recognize.py`.
 7. Implement `converters/long.py`.

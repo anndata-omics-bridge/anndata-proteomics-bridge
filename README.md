@@ -1,47 +1,60 @@
 # anndata_proteomics_bridge
 
-Convert proteomics software output to AnnData format.
+Convert proteomics quantification outputs to AnnData using declarative TOML parsing rules.
 
-Currently supported (ion / precursor level only):
+> **Status: restart in progress.** The TOML rule schema, loader, registry, and validation are implemented. Vendor-file reading and AnnData conversion are still TODO. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what's implemented now and [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md) for the roadmap.
 
-- DIA-NN (`report.tsv`)
-- MaxQuant (`evidence.txt`)
-- Spectronaut (precursor exports)
+## Packaged parsing rules
 
-Design rationale, role separation, naming conventions, and the per-tool `uns['<app_name>']['column_roles']` schema live in the sibling docs repo: [anndata_omics_bridge](../anndata_omics_bridge/).
+| Vendor | Format | Level |
+|---|---|---|
+| DIA-NN | long | ion |
+| Spectronaut | long | ion |
+| MaxQuant (`evidence.txt`) | long | ion |
+| FragPipe (`combined_modified_peptide.tsv`) | wide | ion |
+| PEAKS | wide | ion |
+| WOMBAT | wide | peptidoform |
 
 ## Install
 
 ```bash
-uv venv
+uv venv --python 3.13
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e '.[dev]'
 ```
 
 ## Quick start
 
-```python
-from anndata_proteomics.builder import ConverterBuilder
+Validate every packaged rule:
 
-# Auto-detect format
-converter = ConverterBuilder.from_file("report.tsv")
-adata = converter.convert("report.tsv", "annotation.csv")
-
-# Explicit software
-converter = ConverterBuilder.for_software("diann")
-adata = converter.convert("report.tsv", "annotation.csv")
+```bash
+validate-rules
 ```
 
-## Sample annotation file
+Load a packaged rule from Python:
 
-A CSV with at least one column matching the software's run identifier (e.g. DIA-NN's `Run` or `File.Name`):
+```python
+from anndata_proteomics.rules.loader import load_packaged_rule
 
-```csv
-sample_id,condition,batch,replicate
-sample_001,control,batch1,1
-sample_002,control,batch1,2
-sample_003,treated,batch1,1
-sample_004,treated,batch1,2
+rule = load_packaged_rule("diann", "ion")
+print(rule.software_name, rule.input_shape, rule.axis.x_layer)
+# DIA-NN long Precursor_Normalised
+```
+
+Validate a custom TOML rule (e.g. one you authored locally):
+
+```python
+from anndata_proteomics.rules.validate import validate_file
+
+result = validate_file("/path/to/parse_<software>_<level>_<v>.toml")
+if not result.ok:
+    print(result.error)
+```
+
+Regenerate the JSON Schema after editing the pydantic models:
+
+```bash
+export-rule-schema
 ```
 
 ## Tests
@@ -52,9 +65,9 @@ pytest tests/
 
 ## Documentation
 
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — current module map, public API, data flow
+- **[docs/RESTART_PLAN.md](docs/RESTART_PLAN.md)** — restart roadmap and step-by-step plan
+- **[docs/toml_schema.md](docs/toml_schema.md)** — TOML parsing-rule schema spec
 - **[anndata_omics_bridge/docs/conventions.md](../anndata_omics_bridge/docs/conventions.md)** — column / layer name sanitisation rules
 - **[anndata_omics_bridge/docs/adr_tool_specific_views.md](../anndata_omics_bridge/docs/adr_tool_specific_views.md)** — per-tool `uns` design (authoritative ADR)
 - **[anndata_omics_bridge/docs/proteomics_rationale.md](../anndata_omics_bridge/docs/proteomics_rationale.md)** — why AnnData for proteomics
-- **[docs/diann_mapping.md](docs/diann_mapping.md)** — DIA-NN-specific conversion details
-- **[docs/toml_schema.md](docs/toml_schema.md)** — TOML rules schema for per-tool parsers
-- **[docs/RESTART_PLAN.md](docs/RESTART_PLAN.md)** — current implementation roadmap
