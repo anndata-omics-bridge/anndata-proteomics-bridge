@@ -47,7 +47,11 @@ This project should stop at:
 - ✅ `scripts/cli.py` — `anndata-proteomics` umbrella CLI with `validate / list /
   export-schema / convert (stub)` subcommands (cli.py skeleton in place; `convert`
   remains a stub until readers/converters land).
-- ⏭️ Next: `readers/dispatch.py` + `readers/tabular.py` (step 5 of "First Implementation Order")
+- ✅ `readers/dispatch.py` + `readers/tabular.py` — generic file → DataFrame readers
+  (csv / tsv / txt / parquet) with extension dispatch (step 5 done). Includes a
+  parametrized integration test that reads each packaged vendor's test_data_download
+  file (skips if cache absent).
+- ⏭️ Next: `converters/recognize.py` (step 6) — header → ParseRule lookup.
 
 ## Proposed Package Layout
 
@@ -236,7 +240,7 @@ Reason:
    `validate-rules` console script).
 4. ✅ Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/` — 6 vendors
    covering all software present in the test_data_download catalog. (`29c773c`)
-5. ⏭️ Add generic tabular reading in `readers/`. **next**
+5. ✅ Add generic tabular reading in `readers/`.
 6. Implement `converters/recognize.py`.
 7. Implement `converters/long.py`.
 8. Implement `converters/wide.py`.

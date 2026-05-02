@@ -24,12 +24,14 @@ parsing_rules/<vendor>/parse_<software>_<level>_<version>.toml
                                                               │ used by
                                                               ▼
                                                   validate.validate_all_packaged
-                                                              │
-                                                              ▼
-                                                  validate.main → CLI exit code
+
+Vendor data file ──► readers.read_table ──► pandas.DataFrame
+                          │ dispatches on extension to
+                          ▼
+                   readers.tabular.read_csv / read_tsv / read_parquet
 ```
 
-Future flow (not implemented): `ParseRule + vendor data file → readers → converters → AnnData`. See [RESTART_PLAN.md](RESTART_PLAN.md) steps 5–10.
+Future flow (not implemented): `ParseRule + DataFrame → converters → AnnData`. See [RESTART_PLAN.md](RESTART_PLAN.md) steps 6–10.
 
 ## Modules
 
@@ -121,6 +123,36 @@ parsing_rules/
 
 **Filename convention** — `parse_<software>_<level>_<file_version>.toml`. The level token must match the TOML's `quantification_level` field; [tests/test_packaged_rules.py](../tests/test_packaged_rules.py) enforces this.
 
+### `readers/tabular.py`
+
+**Purpose** — generic per-extension readers; no vendor semantics, no rule application.
+
+**Public API**
+
+- `read_csv(path)` — comma-delimited, UTF-8 with BOM tolerance.
+- `read_tsv(path)` — tab-delimited, UTF-8 with BOM tolerance.
+- `read_parquet(path)` — via pyarrow.
+
+Each is a thin wrapper around `pd.read_csv` / `pd.read_parquet` so the test suite has stable entry points and any future overrides land in one place.
+
+**Depends on** — `pandas`, `pyarrow`.
+
+**Tests** — [tests/test_readers_tabular.py](../tests/test_readers_tabular.py)
+
+### `readers/dispatch.py`
+
+**Purpose** — pick the right reader from a file's extension. Vendor differences across the 6 packaged TOMLs collapse to four extensions; this is the only piece of code that knows that.
+
+**Public API**
+
+- `read_table(path) -> pd.DataFrame` — dispatch by `path.suffix.lower()`.
+- `EXTENSION_TO_READER` — registry mapping. `.txt` is treated as TSV (MaxQuant convention).
+- `UnknownFormat(ValueError)` — raised when the extension is not registered.
+
+**Depends on** — `readers.tabular`.
+
+**Tests** — [tests/test_readers_dispatch.py](../tests/test_readers_dispatch.py); end-to-end coverage in [tests/test_readers_integration.py](../tests/test_readers_integration.py), which parametrizes over every packaged TOML and reads the matching test_data_download file (skips if the gitignored cache is absent).
+
 ## `scripts/cli.py` — `anndata-proteomics` umbrella CLI
 
 **Purpose** — single user-facing CLI with subcommands. Built on `cyclopts`.
@@ -148,7 +180,6 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 ## Not yet implemented
 
-- `readers/dispatch.py`, `readers/tabular.py` — vendor file (`.tsv` / `.csv` / `.parquet`) → `pandas.DataFrame`.
 - `converters/recognize.py` — pick the right `ParseRule` from a vendor file's header.
 - `converters/long.py`, `converters/wide.py` — apply a validated rule to a DataFrame.
 - `converters/factors.py` — encode string-valued layers as integer factors per the TOML.
