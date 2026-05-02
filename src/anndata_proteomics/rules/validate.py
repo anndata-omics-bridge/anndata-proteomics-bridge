@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,8 +38,7 @@ def validate_all_packaged() -> list[ValidationResult]:
 def _print_and_exit_code(results: list[ValidationResult]) -> int:
     """Print PASS/FAIL per result and a summary line; return 0 if all ok else 1.
 
-    Shared by `validate-rules` and the `anndata-proteomics validate` subcommand
-    so both produce identical output formats.
+    Used by the `anndata-proteomics validate` subcommand.
     """
     pkg_parent = packaged_rules_root().parent
     for r in results:
@@ -53,12 +51,3 @@ def _print_and_exit_code(results: list[ValidationResult]) -> int:
     failed = sum(1 for r in results if not r.ok)
     print(f"{len(results)} rule(s) checked, {failed} failed.")
     return 0 if failed == 0 else 1
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Console entrypoint: validate every packaged rule; exit 1 if any failed."""
-    return _print_and_exit_code(validate_all_packaged())
-
-
-if __name__ == "__main__":
-    sys.exit(main())

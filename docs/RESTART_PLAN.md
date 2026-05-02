@@ -42,8 +42,7 @@ This project should stop at:
   `diann`, `spectronaut`, `maxquant` (long, ion); `fragpipe`, `peaks` (wide, ion);
   `wombat` (wide, peptidoform). `proteome_discoverer` dropped — no submissions in
   the ProteoBench catalog (`raw_file_db_full.csv`).
-- ✅ `rules/loader.py` + `rules/registry.py` + `rules/validate.py`, plus the
-  `validate-rules` console script (step 3 done).
+- ✅ `rules/loader.py` + `rules/registry.py` + `rules/validate.py` (step 3 done).
 - ✅ JSON Schema round-trip tests in `tests/test_json_schema_validation.py` (commit `4f4f252`).
 - ✅ `scripts/cli.py` — `anndata-proteomics` umbrella CLI with `validate / list /
   export-schema / convert (stub)` subcommands (cli.py skeleton in place; `convert`

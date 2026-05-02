@@ -57,7 +57,6 @@ if not result.ok:
     print(result.error)
 ```
 
-Older bulk-walk scripts (`validate-rules`, `export-rule-schema`) still work and are equivalent to `anndata-proteomics validate` and `anndata-proteomics export-schema` respectively.
 
 ## Tests
 

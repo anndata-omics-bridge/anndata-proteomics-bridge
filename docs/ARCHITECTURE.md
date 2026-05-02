@@ -144,9 +144,7 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 | Command | Module | Purpose |
 |---|---|---|
-| **`anndata-proteomics`** | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert` subcommands |
-| `validate-rules` | `rules.validate:main` | Bulk-walk packaged rules (kept for CI back-compat; superseded by `anndata-proteomics validate`) |
-| `export-rule-schema` | `rules._export_schema:main` | Regenerate `parse_rule.schema.json` (kept; superseded by `anndata-proteomics export-schema`) |
+| `anndata-proteomics` | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert` subcommands |
 
 ## Not yet implemented
 
