@@ -29,9 +29,16 @@ Vendor data file ──► readers.read_table ──► pandas.DataFrame
                           │ dispatches on extension to
                           ▼
                    readers.tabular.read_csv / read_tsv / read_parquet
-```
 
-Future flow (not implemented): `ParseRule + DataFrame → converters → AnnData`. See [RESTART_PLAN.md](RESTART_PLAN.md) steps 6–10.
+DataFrame ──► converters.recognize ──► ParseRule (auto-pick from packaged set)
+DataFrame + ParseRule ──► converters.convert ──► AnnData
+                              │ dispatches on rule.input_shape to
+                              ▼
+                       converters.long.convert_long  /  converters.wide.convert_wide
+                              │ then
+                              ▼
+                       converters.assemble.to_anndata  ◄── factors.encode_factor (per layer)
+```
 
 ## Modules
 
@@ -178,9 +185,61 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 |---|---|---|
 | `anndata-proteomics` | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert` subcommands |
 
+### `converters/recognize.py`
+
+**Purpose** — match a DataFrame's column headers to one of the packaged `ParseRule`s.
+
+**Public API**
+
+- `matches(headers, rule) -> bool` — does this rule plausibly fit?
+- `recognize(headers) -> ParseRule | None` — unique match, or None on zero / multiple.
+
+**Tests** — [tests/test_recognize.py](../tests/test_recognize.py)
+
+### `converters/long.py`
+
+**Purpose** — apply a long-format `ParseRule` to a DataFrame: pivot to per-layer (obs × var) matrices.
+
+**Public API**
+
+- `convert_long(df, rule) -> ConversionPieces` — full pipeline (build obs/var, pivot every layer, factor-encode where needed). Honors `duplicates.mode`. Coerces non-factor layers via `pd.to_numeric(errors='coerce')` so vendor sentinels like `"-"` become NaN rather than blowing up the pivot.
+
+**Tests** — [tests/test_converters_long.py](../tests/test_converters_long.py)
+
+### `converters/wide.py`
+
+**Purpose** — apply a wide-format `ParseRule` to a DataFrame: extract sample tokens from column headers via each layer's `column_pattern`, build per-layer matrices.
+
+**Public API**
+
+- `convert_wide(df, rule) -> ConversionPieces` — extracts samples (union across layers, insertion-order), builds var from `[columns.var]`, gathers each layer's matching columns into an `(n_obs × n_var)` matrix. Applies `sample_name_cleanup.pattern` if present.
+
+**Tests** — [tests/test_converters_wide.py](../tests/test_converters_wide.py)
+
+### `converters/factors.py`
+
+**Purpose** — encode string-valued layer data to integer codes per the TOML `categories` map.
+
+**Public API**
+
+- `encode_factor(series, categories, default=-1) -> Series[int64]` — unknowns and NaN → `default`.
+
+**Tests** — [tests/test_converters_factors.py](../tests/test_converters_factors.py)
+
+### `converters/assemble.py`
+
+**Purpose** — assemble `ConversionPieces` into an `AnnData`, plus `convert(df, rule)` umbrella.
+
+**Public API**
+
+- `to_anndata(pieces, rule) -> ad.AnnData` — wraps the pieces; writes `uns['anndata_proteomics']` with `rule`, `schema_version`, `software_name`, `input_shape`, `quantification_level`.
+- `convert(df, rule) -> ad.AnnData` — dispatches to `convert_long` or `convert_wide` based on `rule.input_shape`, then assembles.
+
+**Tests** — [tests/test_converters_assemble.py](../tests/test_converters_assemble.py); end-to-end coverage for all 6 packaged vendors in [tests/test_converters_e2e.py](../tests/test_converters_e2e.py).
+
 ## Not yet implemented
 
-- `converters/recognize.py` — pick the right `ParseRule` from a vendor file's header.
+- Hook `convert(df, rule)` into the `anndata-proteomics convert` CLI subcommand (still a stub).
 - `converters/long.py`, `converters/wide.py` — apply a validated rule to a DataFrame.
 - `converters/factors.py` — encode string-valued layers as integer factors per the TOML.
 - `converters/assemble.py` — assemble `obs`, `var`, `X`, `layers`, `uns` into an `AnnData`.

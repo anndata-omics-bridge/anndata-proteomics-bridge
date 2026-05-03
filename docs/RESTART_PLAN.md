@@ -48,10 +48,17 @@ This project should stop at:
   export-schema / convert (stub)` subcommands (cli.py skeleton in place; `convert`
   remains a stub until readers/converters land).
 - ✅ `readers/dispatch.py` + `readers/tabular.py` — generic file → DataFrame readers
-  (csv / tsv / txt / parquet) with extension dispatch (step 5 done). Includes a
-  parametrized integration test that reads each packaged vendor's test_data_download
-  file (skips if cache absent).
-- ⏭️ Next: `converters/recognize.py` (step 6) — header → ParseRule lookup.
+  (csv / tsv / txt / parquet) with extension dispatch (step 5 done).
+- ✅ `converters/recognize.py` — match a DataFrame's headers to one of the packaged
+  ParseRules (step 6 done).
+- ✅ `converters/long.py / wide.py / factors.py / assemble.py` — full conversion
+  pipeline (steps 7-10 done). All 6 packaged vendors round-trip from file → AnnData
+  via `convert(df, rule)` and the parametrized e2e test in `tests/test_converters_e2e.py`
+  (step 11 also covered by that test).
+- 🎉 **Restart core complete.** `vendor file + parsing TOML → AnnData` works end-to-end
+  for DIA-NN, Spectronaut, MaxQuant, FragPipe, PEAKS, WOMBAT.
+- ⏭️ Next: hook `convert(df, rule)` into the `anndata-proteomics convert` CLI subcommand
+  (currently still a stub).
 
 ## Proposed Package Layout
 
@@ -241,12 +248,13 @@ Reason:
 4. ✅ Move packaged TOMLs into `src/anndata_proteomics/parsing_rules/` — 6 vendors
    covering all software present in the test_data_download catalog. (`29c773c`)
 5. ✅ Add generic tabular reading in `readers/`.
-6. Implement `converters/recognize.py`.
-7. Implement `converters/long.py`.
-8. Implement `converters/wide.py`.
-9. Implement `converters/factors.py`.
-10. Implement `converters/assemble.py`.
-11. Add tests against a small curated `test_data_download` subset.
+6. ✅ Implement `converters/recognize.py`.
+7. ✅ Implement `converters/long.py`.
+8. ✅ Implement `converters/wide.py`.
+9. ✅ Implement `converters/factors.py`.
+10. ✅ Implement `converters/assemble.py`.
+11. ✅ Add tests against a small curated `test_data_download` subset (one parametrized e2e
+    test covers all 6 packaged vendors).
 
 ## Non-Goals For This Restart
 
