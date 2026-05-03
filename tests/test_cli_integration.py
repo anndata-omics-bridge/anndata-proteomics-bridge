@@ -60,7 +60,35 @@ def test_cli_list_outputs_six_rules() -> None:
     assert "wombat" in r.stdout
 
 
-def test_cli_convert_stub_returns_two() -> None:
-    r = _run("convert", "dummy.tsv", "rule.toml")
-    assert r.returncode == 2
-    assert "not yet implemented" in (r.stdout + r.stderr).lower()
+def test_cli_convert_writes_h5ad(tmp_path: Path) -> None:
+    """Pick a small vendor file; convert via the binary; assert .h5ad exists."""
+    import csv
+
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    DOWNLOADED_DB = PROJECT_ROOT / "test_data_download" / "raw_file_db_downloaded.csv"
+    if not DOWNLOADED_DB.exists():
+        import pytest
+
+        pytest.skip("test_data_download cache not present")
+    # Use WOMBAT — small file, fast convert.
+    data_file: Path | None = None
+    with open(DOWNLOADED_DB) as f:
+        for row in csv.DictReader(f):
+            if row["software_name"] == "WOMBAT" and row.get("status") == "ok":
+                data_file = (
+                    PROJECT_ROOT
+                    / "test_data_download"
+                    / "json_dir"
+                    / row["input_file_path"]
+                )
+                break
+    if data_file is None or not data_file.exists():
+        import pytest
+
+        pytest.skip("no WOMBAT test data available")
+
+    out = tmp_path / "wombat.h5ad"
+    r = _run("convert", str(data_file), "--output", str(out))
+    assert r.returncode == 0, r.stderr
+    assert out.exists()
+    assert "wrote" in r.stdout

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import anndata as ad
 
 from anndata_proteomics.converters._pieces import ConversionPieces
@@ -9,7 +11,13 @@ from anndata_proteomics.rules.schema import ParseRule
 
 
 def to_anndata(pieces: ConversionPieces, rule: ParseRule) -> ad.AnnData:
-    """Build an AnnData from the converter pieces, recording the rule under `uns`."""
+    """Build an AnnData from the converter pieces, recording the rule under `uns`.
+
+    The full rule is stored as a JSON string under `uns['anndata_proteomics']['rule_json']`
+    rather than a nested dict — h5py can't serialize the heterogeneous list-of-dicts
+    structure of `layers`. Top-level fields are duplicated as plain strings for
+    convenience (no need to parse JSON to read software_name, etc.).
+    """
     adata = ad.AnnData(
         X=pieces.X,
         obs=pieces.obs,
@@ -17,7 +25,7 @@ def to_anndata(pieces: ConversionPieces, rule: ParseRule) -> ad.AnnData:
         layers=pieces.layers,
     )
     adata.uns["anndata_proteomics"] = {
-        "rule": rule.model_dump(mode="json"),
+        "rule_json": json.dumps(rule.model_dump(mode="json")),
         "schema_version": rule.schema_version,
         "software_name": rule.software_name,
         "input_shape": rule.input_shape,

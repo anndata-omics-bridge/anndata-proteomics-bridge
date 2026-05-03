@@ -171,7 +171,7 @@ Each is a thin wrapper around `pd.read_csv` / `pd.read_parquet` so the test suit
 | `validate [path ...]` | Validate one or more TOML rules. With no path, walks all packaged rules. | 0 if all pass, 1 otherwise |
 | `list` | List packaged rules: software, level, file_version, path. | 0 |
 | `export-schema` | Regenerate `parse_rule.schema.json`. | 0 |
-| `convert <data> <rule.toml>` | **STUB** — not yet implemented (RESTART_PLAN steps 5–10). | 2 (distinct from validation failure 1) |
+| `convert <data> [--rule-toml] [--output]` | Convert a vendor file to AnnData (.h5ad). Auto-recognizes the rule from headers if `--rule-toml` is omitted; defaults output to `<data>.h5ad`. | 0 on success, 1 on recognition / conversion failure |
 
 **Implementation principle** — `validate` shares the PASS/FAIL formatter (`rules.validate._print_and_exit_code`) with the older `validate-rules` console script, so output is identical.
 
@@ -239,7 +239,11 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 ## Not yet implemented
 
-- Hook `convert(df, rule)` into the `anndata-proteomics convert` CLI subcommand (still a stub).
+The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete. Remaining work is polish and richer downstream features:
+
+- Per-tool `uns['<app_name>']['column_roles']` writeback per the [adr_tool_specific_views](../../anndata_omics_bridge/docs/adr_tool_specific_views.md) ADR (only `uns['anndata_proteomics']` is populated today).
+- `obs` enrichment from `sample_name_cleanup` regex capture groups.
+- `duplicates.mode = "keep_all_as_raw_table"` (raises NotImplementedError; no current TOML uses it).
 - `converters/long.py`, `converters/wide.py` — apply a validated rule to a DataFrame.
 - `converters/factors.py` — encode string-valued layers as integer factors per the TOML.
 - `converters/assemble.py` — assemble `obs`, `var`, `X`, `layers`, `uns` into an `AnnData`.

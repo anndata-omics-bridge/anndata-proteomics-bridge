@@ -83,9 +83,66 @@ def test_export_schema_writes_file() -> None:
     assert schema_path.stat().st_size > 100
 
 
-def test_convert_is_stub(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = convert(Path("data.tsv"), Path("rule.toml"))
+def test_convert_with_explicit_rule_toml_writes_h5ad(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Synthesise a tiny long DataFrame matching a stripped-down rule.
+    import pandas as pd
+
+    data_path = tmp_path / "tiny.tsv"
+    pd.DataFrame(
+        {
+            "Run": ["S1", "S2"],
+            "Sequence": ["P1", "P1"],
+            "Charge": [2, 2],
+            "Intensity": [10.0, 20.0],
+        }
+    ).to_csv(data_path, sep="\t", index=False)
+
+    rule_path = tmp_path / "rule.toml"
+    rule_path.write_text(
+        """
+schema_version = "0.1"
+file_version = "1"
+software_name = "Tiny"
+input_shape = "long"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["Run"]
+var_keys = ["Sequence", "Charge"]
+x_layer = "Intensity"
+
+[columns.obs]
+Run = "Run"
+
+[columns.var]
+Sequence = "Sequence"
+Charge = "Charge"
+
+[[layers]]
+name = "Intensity"
+source_column = "Intensity"
+
+[duplicates]
+mode = "error"
+"""
+    )
+
+    output = tmp_path / "out.h5ad"
+    rc = convert(data_path, rule_toml=rule_path, output=output)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert output.exists()
+    assert "wrote" in out
+
+
+def test_convert_returns_one_when_recognition_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data_path = tmp_path / "unknown.csv"
+    data_path.write_text("foo,bar,baz\n1,2,3\n")
+    rc = convert(data_path)
     captured = capsys.readouterr()
-    combined = captured.out + captured.err
-    assert rc == 2  # distinguishes "not implemented" (2) from "validation failed" (1)
-    assert "not yet implemented" in combined.lower()
+    assert rc == 1
+    assert "auto-recognize" in (captured.out + captured.err).lower()

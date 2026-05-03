@@ -57,8 +57,9 @@ This project should stop at:
   (step 11 also covered by that test).
 - 🎉 **Restart core complete.** `vendor file + parsing TOML → AnnData` works end-to-end
   for DIA-NN, Spectronaut, MaxQuant, FragPipe, PEAKS, WOMBAT.
-- ⏭️ Next: hook `convert(df, rule)` into the `anndata-proteomics convert` CLI subcommand
-  (currently still a stub).
+- ✅ Wired `convert(df, rule)` into the `anndata-proteomics convert` CLI subcommand;
+  auto-recognizes the rule from headers, writes a `.h5ad`. Smoke-verified against
+  WOMBAT (6 × 34,259, 2 layers, 8.5 MB output).
 
 ## Proposed Package Layout
 

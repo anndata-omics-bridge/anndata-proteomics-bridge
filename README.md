@@ -2,7 +2,7 @@
 
 Convert proteomics quantification outputs to AnnData using declarative TOML parsing rules.
 
-> **Status: restart in progress.** The TOML rule schema, loader, registry, and validation are implemented. Vendor-file reading and AnnData conversion are still TODO. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what's implemented now and [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md) for the roadmap.
+> **Status: restart core complete.** Read a vendor file, validate a TOML rule, convert to AnnData end-to-end. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map and [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md) for the roadmap.
 
 ## Packaged parsing rules
 
@@ -28,14 +28,24 @@ uv pip install -e '.[dev]'
 The umbrella CLI is `anndata-proteomics`:
 
 ```bash
-anndata-proteomics validate                                # walks all packaged rules
-anndata-proteomics validate path/to/your_rule.toml         # validates a single TOML
-anndata-proteomics list                                    # show packaged rules
-anndata-proteomics export-schema                           # regenerate parse_rule.schema.json
-anndata-proteomics convert data.tsv rule.toml              # STUB until step 5+ lands
+# Validate one or more TOML parsing rules. With no path: walks all packaged rules.
+anndata-proteomics validate                                  # all packaged
+anndata-proteomics validate path/to/your_rule.toml           # one (or several)
+
+# List packaged rules.
+anndata-proteomics list
+
+# Convert a vendor file to AnnData (.h5ad). The rule is auto-recognized from the
+# data's column headers; pass --rule-toml to override.
+anndata-proteomics convert path/to/report.tsv                # writes report.h5ad next to it
+anndata-proteomics convert report.tsv --output out.h5ad
+anndata-proteomics convert report.tsv --rule-toml my_rule.toml --output out.h5ad
+
+# Regenerate the JSON Schema after editing the pydantic models.
+anndata-proteomics export-schema
 ```
 
-Exit codes: `0` all pass, `1` validation failed, `2` not yet implemented (e.g. `convert`).
+Exit codes: `0` all pass, `1` validation / conversion failed.
 
 Load a packaged rule from Python:
 

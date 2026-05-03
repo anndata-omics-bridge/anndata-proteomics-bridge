@@ -14,7 +14,11 @@ from pathlib import Path
 
 from cyclopts import App
 
+from anndata_proteomics.converters.assemble import convert as _run_convert
+from anndata_proteomics.converters.recognize import recognize
+from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
+from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.validate import (
     _print_and_exit_code,
@@ -59,14 +63,34 @@ def export_schema_cmd() -> int:
 
 
 @app.command
-def convert(data: Path, rule_toml: Path) -> int:
-    """STUB. Not yet implemented; see docs/RESTART_PLAN.md steps 5-10."""
-    print(
-        "error: convert is not yet implemented; "
-        "see docs/RESTART_PLAN.md steps 5-10",
-        file=sys.stderr,
-    )
-    return 2
+def convert(
+    data: Path,
+    rule_toml: Path | None = None,
+    output: Path | None = None,
+) -> int:
+    """Convert a vendor file to AnnData and write a .h5ad.
+
+    If --rule-toml is omitted, the rule is auto-recognized from the data's
+    column headers. Use --rule-toml to override or when recognition is ambiguous.
+    --output defaults to <data>.h5ad next to the input.
+    """
+    df = read_table(data)
+    if rule_toml is None:
+        rule = recognize(list(df.columns))
+        if rule is None:
+            print(
+                f"error: could not auto-recognize a rule for {data}; "
+                f"pass --rule-toml PATH",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        rule = load_rule(rule_toml)
+    adata = _run_convert(df, rule)
+    out = output or data.with_suffix(".h5ad")
+    adata.write_h5ad(out)
+    print(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
+    return 0
 
 
 def main() -> int:
