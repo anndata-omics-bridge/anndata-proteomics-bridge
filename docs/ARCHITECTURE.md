@@ -237,19 +237,44 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 **Tests** — [tests/test_converters_assemble.py](../tests/test_converters_assemble.py); end-to-end coverage for all 6 packaged vendors in [tests/test_converters_e2e.py](../tests/test_converters_e2e.py).
 
+## R-side report package: `~/projects/anndata_bridge/annProtSum/`
+
+Sibling R package (own folder, sibling of this repo, **not** under `tools/`). Renders HTML summary reports from `.h5ad` files via a parametrized Quarto vignette. Reads h5ad natively with `anndataR`. The current vignette is intentionally minimal (shape + per-layer table + obs/var head); a richer version using `skimr` / `GGally::ggpairs` / `DataExplorer` / `gt` panels is a follow-up.
+
+Install (R):
+
+```r
+devtools::install("/Users/wolski/projects/anndata_bridge/annProtSum",
+                  dependencies = TRUE)
+```
+
+Render a single .h5ad → .html from the shell:
+
+```bash
+Rscript $(R -q -s -e 'cat(system.file("bin/render_report.R", package = "annProtSum"))') \
+        path/to/data.h5ad path/to/out.html
+```
+
+## Python orchestrator: `tools/generate_report.py`
+
+One-file convert+report tool. Reads a vendor file → recognizes / loads a rule → writes `<software>_<sha8(input_path)>.h5ad` (+ sidecar `.meta.json`) under `--output-dir` → calls annProtSum's `render_report.R` to produce a parametrized HTML report → rebuilds `<output-dir>/index.html` from all `.meta.json` files in that dir.
+
+```bash
+python tools/generate_report.py path/to/data.tsv
+python tools/generate_report.py path/to/data.tsv --rule-toml my.toml
+python tools/generate_report.py path/to/data.tsv --output-dir examples/results
+```
+
+`index.html` table columns: **software | input | output (.h5ad) | layers (shape) | report**. Each row links to the .h5ad and the rendered report.
+
 ## Not yet implemented
 
-The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete. Remaining work is polish and richer downstream features:
+The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete. Remaining work:
 
+- Rich annProtSum vignette content (skim + ggpairs + DataExplorer + gt panels). The current `inst/quarto/report.qmd` is intentionally minimal (shape + per-layer table + obs/var head); plumbing first, content second.
 - Per-tool `uns['<app_name>']['column_roles']` writeback per the [adr_tool_specific_views](../../anndata_omics_bridge/docs/adr_tool_specific_views.md) ADR (only `uns['anndata_proteomics']` is populated today).
 - `obs` enrichment from `sample_name_cleanup` regex capture groups.
 - `duplicates.mode = "keep_all_as_raw_table"` (raises NotImplementedError; no current TOML uses it).
-- `converters/long.py`, `converters/wide.py` — apply a validated rule to a DataFrame.
-- `converters/factors.py` — encode string-valued layers as integer factors per the TOML.
-- `converters/assemble.py` — assemble `obs`, `var`, `X`, `layers`, `uns` into an `AnnData`.
-- `cli.py` — user-facing CLI for validation / listing / conversion.
-
-See [RESTART_PLAN.md](RESTART_PLAN.md) §"First Implementation Order" for the agreed sequence.
 
 ## Adding things
 
