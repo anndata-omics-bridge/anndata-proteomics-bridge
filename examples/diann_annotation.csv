@@ -1,7 +1,0 @@
-sample,condition,replicate,batch
-LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01,A,1,batch1
-LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_02,A,2,batch1
-LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_03,A,3,batch1
-LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01,B,1,batch1
-LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_02,B,2,batch1
-LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_03,B,3,batch1
