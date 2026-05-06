@@ -117,7 +117,17 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
         layers[layer.name] = _gather_layer_matrix(df, layer, sample_order, var_df.index)
 
     obs_names = _apply_sample_cleanup(sample_order, rule)
-    obs_df = pd.DataFrame(index=pd.Index(obs_names, name="sample"))
+    obs_index = pd.Index(obs_names, name="sample")
+    obs_data: dict[str, list[str]] = {}
+    for out_name, source in rule.columns.obs.items():
+        if source == _SAMPLE_PLACEHOLDER:
+            obs_data[out_name] = list(obs_names)
+        else:
+            raise ValueError(
+                f"wide rule columns.obs entry {out_name!r} = {source!r}: "
+                f"only the {_SAMPLE_PLACEHOLDER!r} placeholder is supported in wide shape"
+            )
+    obs_df = pd.DataFrame(obs_data, index=obs_index)
 
     X = layers[rule.axis.x_layer]
     return ConversionPieces(X=X, obs=obs_df, var=var_df, layers=layers)

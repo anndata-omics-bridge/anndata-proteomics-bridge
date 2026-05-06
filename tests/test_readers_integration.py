@@ -5,7 +5,6 @@ Skipped when the test_data_download cache (gitignored, regenerable) is absent.
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import pytest
@@ -13,20 +12,7 @@ import pytest
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TEST_DATA_DIR = PROJECT_ROOT / "test_data_download"
-DOWNLOADED_DB = TEST_DATA_DIR / "raw_file_db_downloaded.csv"
-
-
-def _find_test_data(software_name: str) -> Path | None:
-    if not DOWNLOADED_DB.exists():
-        return None
-    with open(DOWNLOADED_DB) as f:
-        for row in csv.DictReader(f):
-            if row["software_name"] == software_name and row.get("status") == "ok":
-                return TEST_DATA_DIR / "json_dir" / row["input_file_path"]
-    return None
+from anndata_proteomics.test_data import find_test_data
 
 
 @pytest.mark.parametrize(
@@ -36,7 +22,7 @@ def _find_test_data(software_name: str) -> Path | None:
 )
 def test_reader_loads_test_data_for_packaged_rule(toml_path: Path) -> None:
     rule = load_rule(toml_path)
-    data_file = _find_test_data(rule.software_name)
+    data_file = find_test_data(rule.software_name)
     if data_file is None or not data_file.exists():
         pytest.skip(
             f"no downloaded test data for {rule.software_name!r}; "

@@ -1,6 +1,6 @@
 # Architecture (current state)
 
-**Status as of 2026-05-02** (HEAD `09ee417`). This document describes what is *implemented today*. For the broader design and remaining steps, see [RESTART_PLAN.md](RESTART_PLAN.md).
+**Status as of 2026-05-06**. This document describes what is *implemented today*. For the broader design and remaining steps, see [RESTART_PLAN.md](RESTART_PLAN.md).
 
 ## Data flow
 
@@ -212,7 +212,7 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 **Public API**
 
-- `convert_wide(df, rule) -> ConversionPieces` — extracts samples (union across layers, insertion-order), builds var from `[columns.var]`, gathers each layer's matching columns into an `(n_obs × n_var)` matrix. Applies `sample_name_cleanup.pattern` if present.
+- `convert_wide(df, rule) -> ConversionPieces` — extracts samples (union across layers, insertion-order), builds var from `[columns.var]`, gathers each layer's matching columns into an `(n_obs × n_var)` matrix. Populates obs columns from `[columns.obs]`: each entry whose value is the `<sample>` placeholder becomes a column of sample tokens (so `sample = "<sample>"` produces an obs column named `sample`). Any non-placeholder value raises — wide rules have no per-row metadata to pull from. Applies `sample_name_cleanup.pattern` if present.
 
 **Tests** — [tests/test_converters_wide.py](../tests/test_converters_wide.py)
 
@@ -239,7 +239,18 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 ## R-side report package: `~/projects/anndata_bridge/annProtSum/`
 
-Sibling R package (own folder, sibling of this repo, **not** under `tools/`). Renders HTML summary reports from `.h5ad` files via a parametrized Quarto vignette. Reads h5ad natively with `anndataR`. The current vignette is intentionally minimal (shape + per-layer table + obs/var head); a richer version using `skimr` / `GGally::ggpairs` / `DataExplorer` / `gt` panels is a follow-up.
+Sibling R package (own folder, sibling of this repo, **not** under `tools/`). Renders HTML summary reports from `.h5ad` files via a parametrized Quarto vignette. Reads h5ad natively with `anndataR`.
+
+The vignette `inst/quarto/report.qmd` is a thin tabset shell that calls helpers in `R/report_helpers.R`. The QMD renders self-contained (`embed-resources: true`) so a single `.html` opens correctly without a sibling `report_files/` directory. Outer tabs: **Overview | obs | var | X + layers | uns | obsm | varm**. The `X + layers` tab nests one sub-tab per layer (with `X` shown as `X (= <axis.x_layer>)`), or renders the single layer flat when only one is present.
+
+- **obs panel** — `gt(obs)` table, `skimr::skim(obs)`, and `GGally::ggpairs(obs)` when `ncol(obs) ≥ 2 && nrow(obs) ≥ 2`. ggpairs auto-chooses the panel type per pair (numeric/categorical mix).
+- **var panel** — single `GGally::ggpairs(var)` over a filtered subset. Cardinality filter: drop any column with `< 2` unique non-NA values; for character/factor/integer columns also drop those whose unique-count exceeds `max(2, nrow(var) %/% 1000)`. Surviving integer columns are coerced to factor so ggpairs draws bar/box panels for them (e.g. `Charge`) rather than treating them as continuous. Dropped column names are listed inline above the plot.
+- **Per-layer (numeric) panels** — shape/dtype/NA/zero summary, per-run colour-coded density (one density line per run, log-x for quant-like layer names, linear otherwise), per-run boxplot, and a sample × sample correlation heatmap when `n_obs ≥ 2` (skipped at `n_obs == 1` because the correlation reduces to a 1×1 trivial value).
+- **Per-layer (factor-encoded) panels** — for layers with `categories` populated in the rule (e.g. **FragPipe `Match_Type`**), the helper looks up the layer entry in `rule_json$layers` by scanning `$name` (parsed `layers` is an unnamed list of dicts, not name-indexed) and builds a code→label map from `categories` (which the TOML stores as `{label = code}`). Renders: `gt` table of the code/category mapping, **Counts per run** stacked bar (x = run, fill = decoded category, y = count), and **Proportion per run** (same bar with `position = "fill"`, easier to compare ratios across runs of different sizes). No density/boxplot/correlation — those are meaningless for integer-coded categoricals.
+- **uns panel** — each top-level key pretty-printed as a YAML fenced block. `rule_json` is parsed from its JSON-string representation once in the setup chunk and written back to `adata$uns$anndata_proteomics$rule_json`, so every helper sees a list rather than a string.
+- **obsm / varm** — summarise each key (shape + finite-value range); scatter the matrix when its name matches `^X_(pca|umap|tsne)` / `^X_(de|ptm)` and has 2 columns.
+
+Implementation note for the `results = "asis"` chunks: each `print()` of a `gt` or `ggplot` is followed by a blank line via a tiny `.emit()` helper. Without that blank line Pandoc treats raw-HTML output (e.g. gt's `</div><!--/html_preserve-->`) as continuing through the next `####` heading, which was silently dropping inner-tab labels in earlier versions. The `inst/bin/render_report.R` script also `normalizePath()`s its temp dir before calling `quarto_render()` — on macOS, `tempfile()` returns `/var/folders/...` while Quarto's resource-cleanup compares realpaths (`/private/var/...`), and the mismatch otherwise aborts post-render with `Refusing to remove directory`.
 
 Install (R):
 
@@ -257,22 +268,37 @@ Rscript $(R -q -s -e 'cat(system.file("bin/render_report.R", package = "annProtS
 
 ## Python orchestrator: `tools/generate_report.py`
 
-One-file convert+report tool. Reads a vendor file → recognizes / loads a rule → writes `<software>_<sha8(input_path)>.h5ad` (+ sidecar `.meta.json`) under `--output-dir` → calls annProtSum's `render_report.R` to produce a parametrized HTML report → rebuilds `<output-dir>/index.html` from all `.meta.json` files in that dir.
+Iterates **every packaged ParseRule** and produces a per-converter row in a single `index.html`. Per rule:
+
+1. Look up a canonical input via `anndata_proteomics.test_data.find_test_data(rule.software_name)` — same lookup the integration tests use, against `test_data_download/raw_file_db_downloaded.csv`.
+2. Read → convert → write `<stem>.h5ad` (+ sidecar `.meta.json` + `<stem>.log`).
+3. Shell out to annProtSum's `render_report.R` to produce `<stem>.html`. The Rscript stdout/stderr is appended to the same per-rule `<stem>.log`.
+4. Rows for converters with no available test data become `status=skipped`; failures become `status=failed`. Both still get a `.meta.json` and `.log`.
+
+`<stem>` = `<software_token>_<sha8(input_path or software_name)>`.
 
 ```bash
-python tools/generate_report.py path/to/data.tsv
-python tools/generate_report.py path/to/data.tsv --rule-toml my.toml
-python tools/generate_report.py path/to/data.tsv --output-dir examples/results
+python tools/generate_report.py
+python tools/generate_report.py --output-dir examples/results
+python tools/generate_report.py --rule WOMBAT --rule DIA-NN
+python tools/generate_report.py --log-level DEBUG
 ```
 
-`index.html` table columns: **software | input | output (.h5ad) | layers (shape) | report**. Each row links to the .h5ad and the rendered report.
+A full run (no `--rule` filter) clears prior `*.meta.json / *.h5ad / *.html / *.log / index.html` in the output dir before iterating, so the index never mixes schemas.
+
+`index.html` table columns: **software | input | output (.h5ad) | dim / layers | report | log**. Input and output cells render as basename-only `<a>` tags whose `title` attribute carries the full absolute path (so long paths don't blow out the column width but the tooltip still reveals them); a small inline `<style>` block applies `vertical-align: top` and `word-break: break-word` so the layer list aligns cleanly when content does wrap.
+
+## Logging convention
+
+The package uses [`loguru`](https://github.com/Delgan/loguru) as its logging backbone. Library modules just `from loguru import logger` and emit messages; entry points (`scripts.cli:main`, `tools/generate_report.py:main`) call `anndata_proteomics._logging.configure_default_sink()` once to install a stderr sink with format `"{level} | {message}"`. Per-rule runs in `generate_report.py` add a scoped file sink (`<stem>.log`) for the duration of that rule.
+
+Tests bridge loguru into pytest's `capsys` via [tests/conftest.py](../tests/conftest.py) — fixtures replace the sink with one whose writer looks up `sys.stderr` at write time, picking up pytest's per-test patched stream. CLI test assertions read `capsys.readouterr().err`.
 
 ## Not yet implemented
 
 The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete. Remaining work:
 
-- Rich annProtSum vignette content (skim + ggpairs + DataExplorer + gt panels). The current `inst/quarto/report.qmd` is intentionally minimal (shape + per-layer table + obs/var head); plumbing first, content second.
-- Per-tool `uns['<app_name>']['column_roles']` writeback per the [adr_tool_specific_views](../../anndata_omics_bridge/docs/adr_tool_specific_views.md) ADR (only `uns['anndata_proteomics']` is populated today).
+- Per-tool `uns['<app_name>']['column_roles']` writeback per the [adr_tool_specific_views](../../anndata_omics_bridge/docs/adr_tool_specific_views.md) ADR (only `uns['anndata_proteomics']` is populated today). Once populated, the `uns` tab in the annProtSum report will surface them automatically (every top-level `uns` key gets a YAML block).
 - `obs` enrichment from `sample_name_cleanup` regex capture groups.
 - `duplicates.mode = "keep_all_as_raw_table"` (raises NotImplementedError; no current TOML uses it).
 

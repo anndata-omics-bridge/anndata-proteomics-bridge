@@ -1,7 +1,8 @@
 """Smoke tests for tools/generate_report.py.
 
-Skips gracefully when Rscript or annProtSum isn't installed (the orchestrator
-shells out to render_report.R).
+Skips gracefully when Rscript / annProtSum / the test_data_download cache are
+absent (the orchestrator pulls inputs from the cache and shells out to
+render_report.R).
 """
 
 from __future__ import annotations
@@ -9,12 +10,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pytest
+
+from anndata_proteomics.test_data import find_test_data
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TOOL_PATH = PROJECT_ROOT / "tools" / "generate_report.py"
@@ -49,53 +50,49 @@ def test_rebuild_index_with_no_meta_files_writes_empty_table(tmp_path: Path) -> 
     assert "no conversions yet" in index.read_text()
 
 
-def test_convert_one_writes_artifacts(tmp_path: Path) -> None:
+def test_main_runs_one_converter_end_to_end(tmp_path: Path) -> None:
+    """Run main() against the WOMBAT rule; check artifacts + meta + index."""
+    if find_test_data("WOMBAT") is None:
+        pytest.skip("test_data_download cache not present")
     if not _have_render_script():
-        pytest.skip("annProtSum render_report.R not reachable (Rscript or package missing)")
+        pytest.skip("annProtSum render_report.R not reachable")
 
     mod = _load_tool()
+    rc = mod.main(["--rule", "WOMBAT", "--output-dir", str(tmp_path)])
+    assert rc == 0
 
-    # Synthesise a tiny long DIA-NN-shaped DataFrame so the packaged DIA-NN
-    # rule can be auto-recognized.
-    data_path = tmp_path / "tiny.tsv"
-    pd.DataFrame(
-        {
-            "Run": ["S1", "S1", "S2", "S2"],
-            "Modified.Sequence": ["P1", "P2", "P1", "P2"],
-            "Stripped.Sequence": ["P1", "P2", "P1", "P2"],
-            "Precursor.Charge": [2, 2, 2, 2],
-            "Precursor.Id": ["P1_2", "P2_2", "P1_2", "P2_2"],
-            "Protein.Group": ["A", "B", "A", "B"],
-            "Protein.Ids": ["A", "B", "A", "B"],
-            "Protein.Names": ["A", "B", "A", "B"],
-            "Genes": ["g1", "g2", "g1", "g2"],
-            "Precursor.Normalised": [10.0, 20.0, 11.0, 21.0],
-            "Precursor.Quantity": [100.0, 200.0, 110.0, 210.0],
-            "Ms1.Area": [1000.0, 2000.0, 1100.0, 2100.0],
-            "Q.Value": [0.01, 0.02, 0.01, 0.02],
-            "RT": [10.0, 20.0, 10.5, 20.5],
-        }
-    ).to_csv(data_path, sep="\t", index=False)
+    metas = list(tmp_path.glob("*.meta.json"))
+    assert len(metas) == 1
+    meta = json.loads(metas[0].read_text())
+    assert meta["status"] == "ok"
+    assert meta["software"] == "WOMBAT"
+    assert (tmp_path / meta["h5ad_path"]).exists()
+    assert (tmp_path / meta["html_path"]).exists()
+    assert (tmp_path / meta["log_path"]).exists()
 
-    out_dir = tmp_path / "out"
-    conv = mod.convert_one(data_path, rule_toml=None, output_dir=out_dir)
-
-    assert conv.h5ad_path.exists()
-    assert conv.html_path.exists()
-    assert conv.meta_path.exists()
-    assert conv.html_path.stat().st_size > 1000  # non-trivial HTML
-
-    meta = json.loads(conv.meta_path.read_text())
-    assert meta["software"] == "DIA-NN"
-    assert meta["n_obs"] == 2
-    assert meta["n_var"] == 2
-    assert {l["name"] for l in meta["layers"]} == {
-        "Precursor_Normalised", "Precursor_Quantity", "Ms1_Area", "Q_Value", "RT"
-    }
-
-    # Rebuild index — single row referencing this conversion.
-    index = mod.rebuild_index(out_dir)
+    index = tmp_path / "index.html"
+    assert index.exists()
     body = index.read_text()
-    assert conv.h5ad_path.name in body
-    assert conv.html_path.name in body
-    assert "DIA-NN" in body
+    assert meta["h5ad_path"] in body
+    assert meta["html_path"] in body
+    assert meta["log_path"] in body
+    assert "WOMBAT" in body
+
+
+def test_main_emits_skipped_row_when_cache_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If find_test_data returns None for every software, every row is `skipped`."""
+    mod = _load_tool()
+    monkeypatch.setattr(mod, "find_test_data", lambda _name: None)
+    rc = mod.main(["--rule", "WOMBAT", "--output-dir", str(tmp_path)])
+    # rc == 0 when there are no failures; skipped is not a failure.
+    assert rc == 0
+
+    metas = list(tmp_path.glob("*.meta.json"))
+    assert len(metas) == 1
+    meta = json.loads(metas[0].read_text())
+    assert meta["status"] == "skipped"
+    assert meta["h5ad_path"] is None
+    assert meta["html_path"] is None
+    assert (tmp_path / meta["log_path"]).exists()
