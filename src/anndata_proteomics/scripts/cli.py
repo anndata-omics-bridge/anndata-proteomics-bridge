@@ -13,7 +13,9 @@ import sys
 from pathlib import Path
 
 from cyclopts import App
+from loguru import logger
 
+from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics.converters.assemble import convert as _run_convert
 from anndata_proteomics.converters.recognize import recognize
 from anndata_proteomics.readers.dispatch import read_table
@@ -21,7 +23,7 @@ from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.validate import (
-    _print_and_exit_code,
+    _log_and_exit_code,
     validate_all_packaged,
     validate_file,
 )
@@ -39,7 +41,7 @@ def validate(*paths: Path) -> int:
         results = validate_all_packaged()
     else:
         results = [validate_file(p) for p in paths]
-    return _print_and_exit_code(results)
+    return _log_and_exit_code(results)
 
 
 @app.command(name="list")
@@ -51,7 +53,7 @@ def list_rules() -> int:
         software = "_".join(parts[1:-2])
         level = parts[-2]
         version = parts[-1]
-        print(f"{software:14}  {level:12}  v{version:<3}  {p}")
+        logger.info(f"{software:14}  {level:12}  v{version:<3}  {p}")
     return 0
 
 
@@ -78,10 +80,9 @@ def convert(
     if rule_toml is None:
         rule = recognize(list(df.columns))
         if rule is None:
-            print(
-                f"error: could not auto-recognize a rule for {data}; "
-                f"pass --rule-toml PATH",
-                file=sys.stderr,
+            logger.error(
+                f"could not auto-recognize a rule for {data}; "
+                f"pass --rule-toml PATH"
             )
             return 1
     else:
@@ -89,12 +90,13 @@ def convert(
     adata = _run_convert(df, rule)
     out = output or data.with_suffix(".h5ad")
     adata.write_h5ad(out)
-    print(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
+    logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
     return 0
 
 
 def main() -> int:
     """Console-script entry point."""
+    configure_default_sink()
     rc = app()
     return int(rc) if rc is not None else 0
 

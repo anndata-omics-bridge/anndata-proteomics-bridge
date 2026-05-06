@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from loguru import logger
+
 from anndata_proteomics.rules.schema import ParseRule
 
 
@@ -18,7 +20,7 @@ def main() -> None:
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(schema, indent=2) + "\n")
-    print(f"wrote {out}")
+    logger.info(f"wrote {out}")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ dependencies = [
     "toml",
     "cyclopts",
     "pydantic>=2",
+    "loguru",
 ]
 
 [project.scripts]

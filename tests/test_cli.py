@@ -4,6 +4,10 @@ We exercise the subcommand functions directly (calling them as Python)
 rather than going through cyclopts' argv parsing — that's a unit-test
 shortcut. The dispatch layer is exercised separately by the manual
 smoke commands in TODO/PLAN_20260502_jsonschema-and-cli.md §Verification.
+
+CLI output goes through loguru → stderr; tests read `capsys.readouterr().err`.
+The `_loguru_to_pytest_capsys` fixture in conftest.py wires loguru into
+pytest's stderr capture.
 """
 
 from __future__ import annotations
@@ -23,19 +27,19 @@ from anndata_proteomics.scripts.cli import (
 
 def test_validate_no_args_walks_packaged(capsys: pytest.CaptureFixture[str]) -> None:
     rc = validate()
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    assert "0 failed" in out
-    assert "PASS" in out
+    assert "0 failed" in err
+    assert "PASS" in err
 
 
 def test_validate_single_path_happy(capsys: pytest.CaptureFixture[str]) -> None:
     path = find_rule("diann", "ion")
     rc = validate(path)
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    assert "PASS" in out
-    assert "0 failed" in out
+    assert "PASS" in err
+    assert "0 failed" in err
 
 
 def test_validate_single_path_bad(
@@ -44,10 +48,10 @@ def test_validate_single_path_bad(
     bad = tmp_path / "bad.toml"
     bad.write_text("not = valid [[[")
     rc = validate(bad)
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 1
-    assert "FAIL" in out
-    assert "1 failed" in out
+    assert "FAIL" in err
+    assert "1 failed" in err
 
 
 def test_validate_multiple_paths(
@@ -57,22 +61,22 @@ def test_validate_multiple_paths(
     bad = tmp_path / "bad.toml"
     bad.write_text("[[")
     rc = validate(good, bad)
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 1  # any failure → 1
-    assert "PASS" in out
-    assert "FAIL" in out
-    assert "2 rule(s) checked, 1 failed" in out
+    assert "PASS" in err
+    assert "FAIL" in err
+    assert "2 rule(s) checked, 1 failed" in err
 
 
 def test_list_shows_six_rules(capsys: pytest.CaptureFixture[str]) -> None:
     rc = list_rules()
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
-    lines = [line for line in out.splitlines() if line.strip()]
+    lines = [line for line in err.splitlines() if line.strip()]
     assert len(lines) == 6
-    assert "diann" in out
-    assert "wombat" in out
-    assert "peptidoform" in out
+    assert "diann" in err
+    assert "wombat" in err
+    assert "peptidoform" in err
 
 
 def test_export_schema_writes_file() -> None:
@@ -131,10 +135,10 @@ mode = "error"
 
     output = tmp_path / "out.h5ad"
     rc = convert(data_path, rule_toml=rule_path, output=output)
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
     assert rc == 0
     assert output.exists()
-    assert "wrote" in out
+    assert "wrote" in err
 
 
 def test_convert_returns_one_when_recognition_fails(
