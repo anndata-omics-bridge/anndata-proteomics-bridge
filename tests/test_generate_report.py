@@ -47,7 +47,36 @@ def test_rebuild_index_with_no_meta_files_writes_empty_table(tmp_path: Path) -> 
     mod = _load_tool()
     index = mod.rebuild_index(tmp_path)
     assert index.exists()
-    assert "no conversions yet" in index.read_text()
+    body = index.read_text()
+    assert "input size" in body
+    assert ".h5ad size" in body
+    assert "no conversions yet" in body
+
+
+def test_rebuild_index_renders_file_sizes(tmp_path: Path) -> None:
+    mod = _load_tool()
+    meta = {
+        "status": "ok",
+        "software": "ExampleSoft",
+        "stem": "examplesoft_12345678",
+        "input_path": "/tmp/input.tsv",
+        "h5ad_path": "examplesoft_12345678.h5ad",
+        "html_path": "examplesoft_12345678.html",
+        "log_path": "examplesoft_12345678.log",
+        "input_size_bytes": 1536,
+        "h5ad_size_bytes": 2 * 1024 * 1024,
+        "n_obs": 2,
+        "n_var": 3,
+        "layers": [{"name": "abundance", "n_obs": 2, "n_var": 3}],
+        "error": None,
+    }
+    (tmp_path / "examplesoft_12345678.meta.json").write_text(json.dumps(meta) + "\n")
+
+    index = mod.rebuild_index(tmp_path)
+    body = index.read_text()
+
+    assert "1.5 KiB" in body
+    assert "2.0 MiB" in body
 
 
 def test_main_runs_one_converter_end_to_end(tmp_path: Path) -> None:
@@ -66,6 +95,10 @@ def test_main_runs_one_converter_end_to_end(tmp_path: Path) -> None:
     meta = json.loads(metas[0].read_text())
     assert meta["status"] == "ok"
     assert meta["software"] == "WOMBAT"
+    assert meta["input_size_bytes"] is not None
+    assert meta["input_size_bytes"] > 0
+    assert meta["h5ad_size_bytes"] is not None
+    assert meta["h5ad_size_bytes"] > 0
     assert (tmp_path / meta["h5ad_path"]).exists()
     assert (tmp_path / meta["html_path"]).exists()
     assert (tmp_path / meta["log_path"]).exists()
@@ -95,4 +128,6 @@ def test_main_emits_skipped_row_when_cache_missing(
     assert meta["status"] == "skipped"
     assert meta["h5ad_path"] is None
     assert meta["html_path"] is None
+    assert meta["input_size_bytes"] is None
+    assert meta["h5ad_size_bytes"] is None
     assert (tmp_path / meta["log_path"]).exists()

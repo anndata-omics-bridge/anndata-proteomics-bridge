@@ -2,6 +2,12 @@
 
 Convert proteomics software output to AnnData format.
 
+## Terminology
+
+- **APB** means this project, `anndata_proteomics_bridge`.
+- The Python package remains `anndata_proteomics`; use **APB** only as the project-level
+  shorthand in plans, architecture notes, and cross-repo migration discussions.
+
 Design lives in the sibling docs repo [anndata_omics_bridge](../anndata_omics_bridge/):
 - **[conventions.md](../anndata_omics_bridge/docs/conventions.md)** — column / layer name sanitisation rules (apply on `obs.columns`, `var.columns`, layer names; **not** on `obs_names`/`var_names`/`uns` keys)
 - **[adr_tool_specific_views.md](../anndata_omics_bridge/docs/adr_tool_specific_views.md)** — per-tool `uns['<app_name>']['column_roles']` schema (authoritative ADR)
@@ -36,6 +42,12 @@ ProteoBench test data:
 ## Coding Rules
 
 - **Keep `__init__.py` files empty** (a single module docstring is acceptable). Put classes/functions in separate modules and import them directly from those modules.
+- **APB owns reusable proteomics parsing infrastructure.** Modification cleanup/mapping
+  rules currently duplicated in ProteoBench per-tool TOMLs should migrate into APB parsing
+  TOMLs/schema instead of being reimplemented downstream.
+- **Parameter parsing belongs in APB.** ProteoBench parameter parsers should move into APB
+  as shared code; ProteoBench should consume APB rather than remain the upstream owner of
+  generic vendor parameter parsing.
 
 ## Development
 

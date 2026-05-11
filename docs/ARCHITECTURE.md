@@ -286,7 +286,7 @@ python tools/generate_report.py --log-level DEBUG
 
 A full run (no `--rule` filter) clears prior `*.meta.json / *.h5ad / *.html / *.log / index.html` in the output dir before iterating, so the index never mixes schemas.
 
-`index.html` table columns: **software | input | output (.h5ad) | dim / layers | report | log**. Input and output cells render as basename-only `<a>` tags whose `title` attribute carries the full absolute path (so long paths don't blow out the column width but the tooltip still reveals them); a small inline `<style>` block applies `vertical-align: top` and `word-break: break-word` so the layer list aligns cleanly when content does wrap.
+`index.html` table columns: **software | input | input size | output (.h5ad) | .h5ad size | dim / layers | report | log**. Input and output cells render as basename-only `<a>` tags whose `title` attribute carries the full absolute path (so long paths don't blow out the column width but the tooltip still reveals them); size cells are formatted as `B`, `KiB`, `MiB`, or `GiB`; a small inline `<style>` block applies `vertical-align: top` and `word-break: break-word` so the layer list aligns cleanly when content does wrap.
 
 ## Logging convention
 

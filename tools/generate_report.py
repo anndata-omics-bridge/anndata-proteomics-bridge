@@ -10,7 +10,7 @@ Per packaged rule:
 `<stem>` = `<software_token>_<sha8(input_path or software_name)>`. Per-run
 output goes under `--output-dir` (default `examples/results/`); the run also
 produces `<output-dir>/index.html` with one row per packaged rule and links
-to: input path, .h5ad, dim+layer summary, .html report, .log file.
+to: input path + size, .h5ad + size, dim+layer summary, .html report, .log file.
 
 Usage:
     python tools/generate_report.py
@@ -59,6 +59,8 @@ class Outcome:
     html_path: Path | None
     log_path: Path
     meta_path: Path
+    input_size_bytes: int | None
+    h5ad_size_bytes: int | None
     n_obs: int | None
     n_var: int | None
     layers: list[dict[str, int | str]]
@@ -78,12 +80,36 @@ def _stem_for(rule: ParseRule, input_path: Path | None) -> str:
     return f"{_software_token(rule)}_{_sha8(seed)}"
 
 
+def _path_size(path: Path | None) -> int | None:
+    """Return file size in bytes when `path` points at an existing file."""
+    if path is None or not path.exists():
+        return None
+    return path.stat().st_size
+
+
+def _format_bytes(size: int | None) -> str:
+    """Format byte counts for compact display in the HTML index."""
+    if size is None:
+        return "(none)"
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GiB"
+
+
 def _resolve_render_script() -> Path:
     """Find render_report.R via installed annProtSum, fall back to dev path."""
     try:
         out = subprocess.run(
             [
-                "R", "-q", "-s", "-e",
+                "R",
+                "-q",
+                "-s",
+                "-e",
                 'cat(system.file("bin/render_report.R", package = "annProtSum"))',
             ],
             capture_output=True,
@@ -122,6 +148,8 @@ def _write_meta(outcome: Outcome) -> None:
         "h5ad_path": outcome.h5ad_path.name if outcome.h5ad_path else None,
         "html_path": outcome.html_path.name if outcome.html_path else None,
         "log_path": outcome.log_path.name,
+        "input_size_bytes": outcome.input_size_bytes,
+        "h5ad_size_bytes": outcome.h5ad_size_bytes,
         "n_obs": outcome.n_obs,
         "n_var": outcome.n_var,
         "layers": outcome.layers,
@@ -157,6 +185,8 @@ def _run_one(rule: ParseRule, output_dir: Path, log_level: str) -> Outcome:
                 html_path=None,
                 log_path=log_path,
                 meta_path=meta_path,
+                input_size_bytes=None,
+                h5ad_size_bytes=None,
                 n_obs=None,
                 n_var=None,
                 layers=[],
@@ -208,6 +238,8 @@ def _run_one(rule: ParseRule, output_dir: Path, log_level: str) -> Outcome:
                 html_path=html_path,
                 log_path=log_path,
                 meta_path=meta_path,
+                input_size_bytes=_path_size(input_path),
+                h5ad_size_bytes=_path_size(h5ad_path),
                 n_obs=int(adata.n_obs),
                 n_var=int(adata.n_vars),
                 layers=layer_descs,
@@ -228,6 +260,8 @@ def _run_one(rule: ParseRule, output_dir: Path, log_level: str) -> Outcome:
                 html_path=None,
                 log_path=log_path,
                 meta_path=meta_path,
+                input_size_bytes=_path_size(input_path),
+                h5ad_size_bytes=_path_size(h5ad_path),
                 n_obs=None,
                 n_var=None,
                 layers=[],
@@ -249,12 +283,10 @@ def _path_link(path_str: str) -> str:
 def _meta_to_row(meta: dict) -> str:
     """Render one <tr> for the index."""
     software = html.escape(meta["software"])
-    log_cell = (
-        f'<a href="{html.escape(meta["log_path"])}">log</a>'
-        if meta.get("log_path")
-        else ""
-    )
+    log_cell = f'<a href="{html.escape(meta["log_path"])}">log</a>' if meta.get("log_path") else ""
     input_cell = _path_link(meta["input_path"]) if meta.get("input_path") else "(none)"
+    input_size_cell = html.escape(_format_bytes(meta.get("input_size_bytes")))
+    h5ad_size_cell = html.escape(_format_bytes(meta.get("h5ad_size_bytes")))
 
     if meta["status"] == "ok":
         layer_lis = "".join(
@@ -263,14 +295,14 @@ def _meta_to_row(meta: dict) -> str:
         )
         dim_cell = (
             f"({meta['n_obs']}, {meta['n_var']})"
-            f"<ul style=\"margin:0;padding-left:1em\">{layer_lis}</ul>"
+            f'<ul style="margin:0;padding-left:1em">{layer_lis}</ul>'
         )
         output_cell = _path_link(meta["h5ad_path"])
         report_cell = f'<a href="{html.escape(meta["html_path"])}">report</a>'
     else:
         status_label = meta["status"].upper()
         err = html.escape(meta.get("error") or "")
-        dim_cell = f'<em>{status_label}</em>: {err}'
+        dim_cell = f"<em>{status_label}</em>: {err}"
         output_cell = "(none)"
         report_cell = "(none)"
 
@@ -278,7 +310,9 @@ def _meta_to_row(meta: dict) -> str:
         "<tr>"
         f"<td>{software}</td>"
         f"<td>{input_cell}</td>"
+        f"<td>{input_size_cell}</td>"
         f"<td>{output_cell}</td>"
+        f"<td>{h5ad_size_cell}</td>"
         f"<td>{dim_cell}</td>"
         f"<td>{report_cell}</td>"
         f"<td>{log_cell}</td>"
@@ -294,10 +328,11 @@ def rebuild_index(output_dir: Path) -> Path:
         '<table border="1" cellpadding="6" cellspacing="0" '
         'style="border-collapse:collapse">'
         "<thead><tr>"
-        "<th>software</th><th>input</th><th>output (.h5ad)</th>"
+        "<th>software</th><th>input</th><th>input size</th>"
+        "<th>output (.h5ad)</th><th>.h5ad size</th>"
         "<th>dim / layers</th><th>report</th><th>log</th>"
         "</tr></thead>"
-        f"<tbody>{''.join(rows) if rows else '<tr><td colspan=6>(no conversions yet)</td></tr>'}</tbody>"
+        f"<tbody>{''.join(rows) if rows else '<tr><td colspan=8>(no conversions yet)</td></tr>'}</tbody>"
         "</table>"
     )
     out = output_dir / "index.html"
@@ -345,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         dest="rule_filter",
         help="restrict to specific software_name(s), case-insensitive; repeatable. "
-             "When passed, the output dir is NOT cleared.",
+        "When passed, the output dir is NOT cleared.",
     )
     parser.add_argument(
         "--log-level",

@@ -47,6 +47,48 @@ anndata-proteomics export-schema
 
 Exit codes: `0` all pass, `1` validation / conversion failed.
 
+## Report generation
+
+Generate conversion reports for the packaged parsing rules with:
+
+```bash
+python tools/generate_report.py
+```
+
+By default, outputs are written under:
+
+```text
+examples/results/
+```
+
+The report index is therefore:
+
+```text
+examples/results/index.html
+```
+
+The index includes one row per packaged rule, with links to the input file, generated
+`.h5ad`, rendered HTML report, per-rule log, and the input/`.h5ad` file sizes.
+
+Use `--output-dir` to write somewhere else:
+
+```bash
+python tools/generate_report.py --output-dir path/to/outdir
+```
+
+That writes:
+
+```text
+path/to/outdir/index.html
+```
+
+Useful filters:
+
+```bash
+python tools/generate_report.py --rule DIA-NN --rule WOMBAT
+python tools/generate_report.py --log-level DEBUG
+```
+
 Load a packaged rule from Python:
 
 ```python
