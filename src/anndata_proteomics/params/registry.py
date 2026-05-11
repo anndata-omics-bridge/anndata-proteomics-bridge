@@ -8,6 +8,7 @@ from typing import Callable, Union
 from anndata_proteomics.params.alphapept import extract_params as _alphapept_extract
 from anndata_proteomics.params.maxquant import extract_params as _maxquant_extract
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.msaid import extract_params as _msaid_extract
 from anndata_proteomics.params.sage import extract_params as _sage_extract
 from anndata_proteomics.params.wombat import extract_params as _wombat_extract
 
@@ -18,6 +19,7 @@ ParseFn = Callable[[Union[str, Path]], Parameters]
 _REGISTRY: dict[str, ParseFn] = {
     "alphapept": _alphapept_extract,
     "maxquant": _maxquant_extract,
+    "msaid": _msaid_extract,
     "sage": _sage_extract,
     "wombat": _wombat_extract,
 }
