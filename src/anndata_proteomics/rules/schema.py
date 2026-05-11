@@ -10,6 +10,9 @@ InputShape = Literal["long", "wide"]
 QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein"]
 EncodingMode = Literal["numeric", "factor"]
 DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_table"]
+ModificationParser = Literal["token_regex", "already_proforma", "separate_mod_column"]
+TokenPosition = Literal["before_residue", "after_residue", "n_term", "c_term", "embedded", "unknown"]
+UnknownPolicy = Literal["preserve", "drop", "error"]
 
 
 class _Strict(BaseModel):
@@ -51,6 +54,42 @@ class SampleNameCleanup(_Strict):
     pattern: str = ""
 
 
+class ModificationMapEntry(_Strict):
+    token: str
+    name: str
+    accession: str | None = None
+    target: str | None = None
+    position: str | None = "Anywhere"
+    mass_delta: float | None = None
+
+
+class Modifications(_Strict):
+    source_column: str
+    parser: ModificationParser = "token_regex"
+    token_pattern: str | None = None
+    token_position: TokenPosition = "after_residue"
+    case_sensitive: bool = False
+    unknown_policy: UnknownPolicy = "preserve"
+    sequence_column: str | None = None
+    output_column: str = "proforma_sequence"
+    map: list[ModificationMapEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _parser_consistency(self) -> Modifications:
+        if self.parser == "token_regex":
+            if not self.token_pattern:
+                raise ValueError("parser='token_regex' requires 'token_pattern'.")
+            if not self.map:
+                raise ValueError("parser='token_regex' requires at least one 'map' entry.")
+        elif self.parser == "already_proforma":
+            if self.token_pattern is not None:
+                raise ValueError("parser='already_proforma' must not set 'token_pattern'.")
+            if self.map:
+                raise ValueError("parser='already_proforma' must not set 'map' entries.")
+        # separate_mod_column: source_column suffices; map optional.
+        return self
+
+
 class ParseRule(_Strict):
     schema_version: str
     file_version: str
@@ -63,6 +102,7 @@ class ParseRule(_Strict):
     layers: list[Layer] = Field(min_length=1)
     duplicates: Duplicates = Field(default_factory=Duplicates)
     sample_name_cleanup: SampleNameCleanup | None = None
+    modifications: Modifications | None = None
 
     @model_validator(mode="after")
     def _shape_layer_consistency(self) -> ParseRule:
