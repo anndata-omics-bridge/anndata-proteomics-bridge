@@ -5,15 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Union
 
+from anndata_proteomics.params.alphapept import extract_params as _alphapept_extract
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.sage import extract_params as _sage_extract
+from anndata_proteomics.params.wombat import extract_params as _wombat_extract
 
 
 ParseFn = Callable[[Union[str, Path]], Parameters]
 
 
 _REGISTRY: dict[str, ParseFn] = {
+    "alphapept": _alphapept_extract,
     "sage": _sage_extract,
+    "wombat": _wombat_extract,
 }
 
 
