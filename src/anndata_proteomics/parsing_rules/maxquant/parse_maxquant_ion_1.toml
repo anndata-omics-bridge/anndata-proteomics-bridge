@@ -7,7 +7,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Raw file"]
-var_keys = ["Modified sequence", "Charge"]
+var_keys = ["proforma_sequence", "Charge"]
 x_layer = "Intensity"
 
 [columns.obs]
@@ -46,3 +46,55 @@ source_column = "PEP"
 
 [duplicates]
 mode = "error"
+
+# Handles both the new short-token format (e.g. _(ac)PEPTM(ox)_) and the
+# legacy nested format (e.g. _(Acetyl (Protein N-term))PEPTM(Oxidation (M))_)
+# by allowing one level of inner parentheses inside the token.
+[modifications]
+source_column = "Modified sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "ac"
+name = "Acetyl"
+accession = "UNIMOD:1"
+target = "N-term"
+position = "N-term"
+mass_delta = 42.0106
+
+[[modifications.map]]
+token = "ox"
+name = "Oxidation"
+accession = "UNIMOD:35"
+target = "M"
+position = "Anywhere"
+mass_delta = 15.9949
+
+[[modifications.map]]
+token = "Acetyl (Protein N-term)"
+name = "Acetyl"
+accession = "UNIMOD:1"
+target = "N-term"
+position = "N-term"
+mass_delta = 42.0106
+
+[[modifications.map]]
+token = "Oxidation (M)"
+name = "Oxidation"
+accession = "UNIMOD:35"
+target = "M"
+position = "Anywhere"
+mass_delta = 15.9949
+
+[[modifications.map]]
+token = "Carbamidomethyl (C)"
+name = "Carbamidomethyl"
+accession = "UNIMOD:4"
+target = "C"
+position = "Anywhere"
+mass_delta = 57.02146

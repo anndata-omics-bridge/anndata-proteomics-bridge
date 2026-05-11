@@ -137,6 +137,161 @@
       "title": "Layer",
       "type": "object"
     },
+    "ModificationMapEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "title": "Token",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "accession": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accession"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "Anywhere",
+          "title": "Position"
+        },
+        "mass_delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mass Delta"
+        }
+      },
+      "required": [
+        "token",
+        "name"
+      ],
+      "title": "ModificationMapEntry",
+      "type": "object"
+    },
+    "Modifications": {
+      "additionalProperties": false,
+      "properties": {
+        "source_column": {
+          "title": "Source Column",
+          "type": "string"
+        },
+        "parser": {
+          "default": "token_regex",
+          "enum": [
+            "token_regex",
+            "already_proforma",
+            "separate_mod_column"
+          ],
+          "title": "Parser",
+          "type": "string"
+        },
+        "token_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Pattern"
+        },
+        "token_position": {
+          "default": "after_residue",
+          "enum": [
+            "before_residue",
+            "after_residue",
+            "n_term",
+            "c_term",
+            "embedded",
+            "unknown"
+          ],
+          "title": "Token Position",
+          "type": "string"
+        },
+        "case_sensitive": {
+          "default": false,
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "unknown_policy": {
+          "default": "preserve",
+          "enum": [
+            "preserve",
+            "drop",
+            "error"
+          ],
+          "title": "Unknown Policy",
+          "type": "string"
+        },
+        "sequence_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sequence Column"
+        },
+        "output_column": {
+          "default": "proforma_sequence",
+          "title": "Output Column",
+          "type": "string"
+        },
+        "map": {
+          "items": {
+            "$ref": "#/$defs/ModificationMapEntry"
+          },
+          "title": "Map",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_column"
+      ],
+      "title": "Modifications",
+      "type": "object"
+    },
     "SampleNameCleanup": {
       "additionalProperties": false,
       "properties": {
@@ -215,6 +370,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/SampleNameCleanup"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "modifications": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Modifications"
         },
         {
           "type": "null"
