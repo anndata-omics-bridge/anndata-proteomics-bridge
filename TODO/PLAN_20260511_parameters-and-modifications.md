@@ -23,9 +23,10 @@ plan is approved.
 - APB owns reusable proteomics modification parsing and normalization.
 - ProteoBench owns submission workflows, UI, benchmarking behavior, and
   ProteoBench-specific presentation.
-- ProteoBench should consume APB through compatibility adapters during the
-  migration, then delete duplicated parser and modification logic after behavior
-  is proven equivalent.
+- ProteoBench is **not** changed in this stage. Wiring ProteoBench to consume
+  APB (and eventually removing ProteoBench's duplicated parsers) is a separately
+  approved future stage. This plan delivers a standalone, fully-tested
+  implementation in APB only.
 
 ## Standards Context
 
@@ -100,15 +101,7 @@ Relevant quant parser modules include:
 - `spectronaut.py`
 - `wombat.py`
 
-De novo parsers exist too:
-
-- `adanovo.py`
-- `casanovo.py`
-- `deepnovo.py`
-- `instanovo.py`
-- `pihelixnovo.py`
-- `piprimenovo.py`
-- `pointnovo.py`
+De novo parsers exist in ProteoBench but are **out of scope** for this plan.
 
 The parser contract is currently centered on `ProteoBenchParameters`, with
 expected outputs tested by CSV fixtures in:
@@ -136,10 +129,7 @@ There are 60 TOML files with modification parser configuration. Grouped by tool:
 
 | Tool | Files | Unique dictionaries | Parse column(s) | Pattern(s) |
 |---|---:|---:|---|---|
-| `adanovo` | 1 | 1 | `sequence` | `(?:^([+-]\d+\.\d+))|(\([+-]\d+\.\d+\))` |
 | `alphapept` | 2 | 1 | `Modified sequence` | `([a-z]+)` |
-| `casanovo` | 1 | 1 | `sequence` | `([\d+-.]+)` |
-| `deepnovo` | 1 | 1 | `sequence` | `\(([^)]+)\)` |
 | `diann` | 8 | 1 | `Sequence` | `\(([^()]*)\)` |
 | `fragpipe` | 2 | 1 | `Modified Sequence` | `(?<=\[).+?(?=\])` |
 | `fragpipe_DIA` | 5 | 2 | `Modified Sequence` | `(?<=\[).+?(?=\])`, `\[([^]]+)\]` |
@@ -149,9 +139,6 @@ There are 60 TOML files with modification parser configuration. Grouped by tool:
 | `metamorpheus` | 2 | 1 | `Modified sequence` | `\[(.*?)\]` |
 | `msaid` | 5 | 1 | `Sequence` | `\[(.*?)\]` |
 | `peaks` | 9 | 1 | `Sequence` | `(?<=\().+?(?=\))` |
-| `pepnet` | 1 | 1 | `sequence` | `\(([^)]+)\)` |
-| `pihelixnovo` | 1 | 1 | `sequence` | `([\d+-.]+)` |
-| `piprimenovo` | 1 | 1 | `sequence` | `([\d+-.]+)` |
 | `sage` | 3 | 1 | `Sequence` | `(?<=\[).+?(?=\])`, `\[([^]]+)\]` |
 | `spectronaut` | 6 | 1 | `Sequence` | `\[(.*?)\]` |
 | `wombat` | 3 | 1 | `Sequence` | `(?<=\[).+?(?=\])` |
@@ -167,12 +154,14 @@ Initial APB migration should cover tools with packaged APB rules:
 - Spectronaut: ProteoBench `parse_settings_spectronaut.toml`
 - WOMBAT: ProteoBench `parse_settings_wombat.toml`
 
-De novo tools and APB-unsupported quant tools should be inventoried but deferred
-unless explicitly added to scope.
+APB-unsupported quant tools should be inventoried but deferred unless explicitly
+added to scope. De novo tools are explicitly out of scope.
 
 ## Current APB Gaps
 
-APB currently has no parameter parser package.
+APB currently has no parameter parser package, but `src/anndata_proteomics/params/`
+already exists as an empty placeholder directory — this is the intended target for the
+migration.
 
 APB parsing-rule schema currently has no `modifications_parser` or
 `modifications` section. Current APB TOMLs preserve vendor modified sequence
@@ -187,6 +176,20 @@ columns as `var` columns, for example:
 
 These files need first-class rule sections for modification parsing and
 normalization.
+
+### Integration With Existing Rule Schema
+
+The existing pydantic rule schema lives in `src/anndata_proteomics/rules/schema.py`
+with loader/validator/registry siblings. The proposed `[modifications]` section must be
+added as an **optional** field on the top-level rule model so existing TOMLs continue to
+validate unchanged. Conditional validation (parser-mode-specific required fields) should
+follow the same pattern already used for `long` vs `wide` `layers` validation.
+
+The existing DIA-NN rule (`parsing_rules/diann/parse_diann_ion_1.toml`) already keeps
+both `Stripped_Sequence` and `Modified_Sequence` as var columns. After modification
+normalization is added, `axis.var_keys` should be reconsidered: the canonical
+identity key likely becomes `proforma_sequence` + `Precursor_Charge`, with the raw
+vendor `Modified.Sequence` retained as provenance, not as the identity key.
 
 ## Proposed APB Package Shape
 
@@ -220,8 +223,7 @@ src/anndata_proteomics/modifications/
   apply_rules.py
 ```
 
-De novo parsers should be decided explicitly: either migrate under
-`params/denovo/`, or defer them until quant parameter parsing is stable.
+De novo parsers are out of scope; do not create `params/denovo/`.
 
 ## Parameter Model
 
@@ -461,6 +463,53 @@ searched as fixed or variable. `MT=fixed|variable` should therefore come from
 parameter-file parsing when available. Result-column normalization can keep
 `mod_type = "unknown"` unless the tool rule has authoritative knowledge.
 
+## Implementation Workflow
+
+Work proceeds in **segments**. For each segment, the loop is:
+
+1. Implement the code for the segment.
+2. Self-review the diff (naming, scope, no premature abstractions, no unrelated changes).
+3. Write tests against ProteoBench fixtures in
+   `/Users/wolski/projects/anndata_bridge/ProteoBench/test/params/` where applicable.
+4. Run the tests:
+   `PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -p no:cacheprovider tests/<relevant>`.
+5. Re-review the resulting code, fix any issues found, rerun tests.
+6. For segments that touch the conversion pipeline or packaged TOMLs, also run
+   `uv run python tools/generate_report.py` and confirm it still completes.
+7. Commit the segment.
+8. Move to the next segment.
+
+### Segment List
+
+- **S1 — Parameter model.** `params/model.py` with `Parameters` (Pydantic).
+  Tests for construction + serialization.
+- **S2 — Common helpers + first parser (Sage).** `params/_common.py` (tolerance,
+  bool, numeric, enzyme helpers). Port `proteobench/io/params/sage.py` →
+  `params/sage.py`. Test against `ProteoBench/test/params/sage_parameterfile.json`
+  with the `sage_parameterfile.csv` expected output.
+- **S3 — Modification models + normalization.** `modifications/model.py`
+  (`SearchedModification`, `ModificationOccurrence`, `ModifiedSequence`),
+  `modifications/apply_rules.py` (token→model), `modifications/sdrf.py`,
+  `modifications/proforma.py`. Unit tests for round-trip token → model → ProForma
+  and model → SDRF key=value.
+- **S4 — TOML schema extension.** Add optional `[modifications]` block to
+  `rules/schema.py` with conditional validation. Schema tests.
+- **S5 — Pipeline integration.** Converter accepts optional `params_path`.
+  Apply modification normalization between `read_table` and assemble. Populate
+  `uns['<software>']['search_parameters']`. Update DIA-NN packaged rule to use
+  `proforma_sequence` in `axis.var_keys`. End-to-end test + `generate_report.py`.
+- **S6 — Port remaining parameter parsers.** One commit per parser, each
+  validated against its ProteoBench fixture pair. Order: structured formats
+  first (AlphaPept YAML, AlphaDIA, quantms, MetaMorpheus, WOMBAT, MaxQuant XML),
+  then text/log/report formats (DIA-NN log, FragPipe `.workflow`, PEAKS,
+  Spectronaut, MSAID, MSAngel, ProlineStudio, i2MassChroQ).
+- **S7 — Migrate packaged rule TOMLs.** Add `[modifications]` to DIA-NN,
+  FragPipe, MaxQuant, PEAKS, Spectronaut, WOMBAT rules. Run
+  `tools/generate_report.py` end-to-end on every packaged rule.
+
+If a segment turns out larger than expected, split it; do not merge segments.
+Each segment ends in a commit that leaves the tree in a green state.
+
 ## Migration Steps
 
 1. **Inventory ProteoBench sources**
@@ -531,13 +580,13 @@ parameter-file parsing when available. Result-column normalization can keep
      anndata-proteomics parse-params <parameter-file> --software Sage
      ```
 
-10. **ProteoBench compatibility**
-    - Add a ProteoBench compatibility layer that delegates to APB while
-      preserving existing imports during transition.
-    - Run APB parser tests and ProteoBench parser tests against the same
-      fixtures.
-    - Delete ProteoBench parser and modification implementations only after
-      compatibility tests pass.
+10. **Equivalence verification (APB-side only)**
+    - Run APB parsers against the same fixtures used by ProteoBench parser
+      tests and compare serialized output for equivalence.
+    - ProteoBench itself is **not** modified at this stage: no shim, no
+      dependency pin, no deletion of ProteoBench parsers.
+    - Wiring ProteoBench to consume APB is deferred to a separately approved
+      future stage.
 
 ## Test Strategy
 
@@ -564,26 +613,91 @@ parameter-file parsing when available. Result-column normalization can keep
 - Rich parameter validation beyond current parsed fields.
 - Converting every modification to ProForma if localization or target
   information is ambiguous.
-- De novo parser migration, unless explicitly added to the approved plan.
+- De novo parser migration (explicitly out of scope).
 
-## Design Decisions To Resolve Before Coding
+## Parameter ↔ Quant Result Integration
 
-- Should APB expose parsed parameters as plain Python objects, Pydantic models,
-  or a DataFrame/Series-compatible object?
+Searched modifications from parameter files (`SearchedModification`) are **per-experiment**,
+not per-row. They do not fit `obs` or `var`; they should land in
+`uns['<software>']['search_parameters']` alongside other parsed search settings. The
+`column_roles` ADR in `anndata_omics_bridge/docs/adr_tool_specific_views.md` is the
+relevant precedent for `uns` shape.
+
+The conversion pipeline currently does not consume parameter files at all. Two options
+for how it gets there:
+
+- **Coupled.** A converter accepts an optional `params_path` argument; if provided,
+  the parser is run and result is stored in `uns`. Same call site as `read_table`.
+- **Decoupled.** Parameter parsing is a standalone API (`parse_params(path, software=...)`)
+  with results merged into an existing AnnData via a separate helper. Useful when the
+  parameter file and quant file ship separately, or when users only want SDRF metadata.
+
+The plan should pick one as the default and note the other as future work.
+
+## Dependency Direction (This Stage: APB-Only)
+
+At this stage, the work is **additive on the APB side only**. ProteoBench is not
+modified, not refactored, and nothing is deleted from it. ProteoBench continues to
+run exactly as it does today against its own in-tree parsers.
+
+Concrete rules for this stage:
+
+- APB stays free of any `proteobench` imports.
+- APB's `params/` package is implemented as a full, standalone parser layer with
+  its own tests and fixtures (fixtures may be copied from ProteoBench, but APB
+  does not import ProteoBench code).
+- ProteoBench's `pyproject.toml` is **not** modified to depend on APB yet.
+- ProteoBench's `proteobench/io/params/*.py` is **not** modified, shimmed, or
+  deleted.
+- Equivalence is proven by running APB parsers against the same fixtures that
+  ProteoBench tests use and comparing serialized output — without touching
+  ProteoBench's runtime.
+
+A later, separately approved stage will handle wiring ProteoBench to consume APB
+(shim layer, dependency pin, eventual deletion of duplicated code). That stage is
+out of scope here.
+
+## Resolved Decisions (2026-05-11)
+
+- **Model type.** Parameter model uses Pydantic, matching the existing
+  `rules/schema.py` validation layer.
+- **Pipeline integration.** Coupled: the converter takes an optional `params_path`
+  argument. When provided, `parse_params` runs and the result lands in
+  `uns['<software>']['search_parameters']`. No separate merge API in the first pass.
+- **Canonical var identity.** ProForma is the canonical `var` modified-sequence
+  column for every tool where localization is available. `axis.var_keys` for APB
+  rules updates to `proforma_sequence` + charge (or equivalent). The original
+  vendor `Modified.Sequence` column is retained as provenance in `columns.var`,
+  not as an identity key.
+- **Unknown tokens.** Default `unknown_policy = "preserve"`: log a warning and
+  keep the original vendor token verbatim inside the ProForma string. `error` and
+  `drop` remain available per rule for stricter contexts.
+- **Vocabulary.** Canonicalize to Unimod accessions when known; preserve PSI-MOD
+  only when no Unimod equivalent exists. (Aligned with the Standards Context
+  section.)
+- **SDRF export.** Layered exporter on top of parsed parameters
+  (`anndata_proteomics.modifications.sdrf`), not part of the parser API itself.
+
+## Token Lookup Rule
+
+Each `modifications.map` entry is identified by the tuple
+`(mass_delta, target, position)`, not by `mass_delta` alone. At parse time the
+matcher reads the token's mass, the adjacent residue from the sequence, and the
+position (`Anywhere`, `N-term`, `C-term`) and matches against this tuple. This
+makes mass-only tokens unambiguous in practice:
+
+- `42.0106` on K matches Acetyl-K; `42.0106` at N-term matches Acetyl-Nterm.
+- `79.9663` on S/T matches Phospho; `79.9663` on Y matches Phospho-Y (or Sulfo-Y
+  if the map entry targets Y with `Sulfo`).
+- `-17.026548` on Q at N-term matches Gln→pyro-Glu.
+
+If no map entry matches the tuple, `unknown_policy` applies.
+
+## Design Decisions Still Open
+
 - Should APB support auto-detection of parameter-file software, or require
-  explicit software selection first?
-- Should quant and de novo parameter parsers share one model, or should de novo
-  get a narrower model?
-- Should APB use ProForma as the canonical `var` modified-sequence column for
-  all tools where localization is available?
-- How should ambiguous mass-only tokens be handled when a mass could map to
-  multiple modifications?
-- Should APB canonicalize to Unimod accessions when known and preserve PSI-MOD
-  accessions only when Unimod is unavailable?
-- Should unknown modification tokens make conversion fail by default, or should
-  they be preserved with warnings?
-- Should SDRF export be part of the parameter parser API, or a separate exporter
-  layered on top of parsed parameters?
+  explicit `software=` selection first? (Default assumption: explicit first;
+  auto-detection registry added later if needed.)
 
 ## Verification
 
