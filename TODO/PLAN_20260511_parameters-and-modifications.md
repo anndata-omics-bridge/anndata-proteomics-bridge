@@ -227,7 +227,12 @@ De novo parsers are out of scope; do not create `params/denovo/`.
 
 ## Parameter Model
 
-Define an APB-owned typed parameter model before moving parser logic.
+Define an APB-owned typed parameter model before moving parser logic. The first
+implementation target is:
+
+```text
+src/anndata_proteomics/params/model.py
+```
 
 This model must be strict Pydantic, not a dynamic dataclass. There should be no
 `Any` in public parameter or modification models. If primitive types are not
@@ -591,7 +596,8 @@ Each segment ends in a commit that leaves the tree in a green state.
    - Deduplicate modification mapping dictionaries by tool.
 
 2. **Define APB models**
-   - Define the APB parameter model.
+   - Create `src/anndata_proteomics/params/model.py`.
+   - Define the APB parameter model there first, before moving any parser logic.
    - Define `SearchedModification`, `ModificationOccurrence`, and
      `ModifiedSequence`.
    - Define SDRF and ProForma export helpers as separate adapters.
