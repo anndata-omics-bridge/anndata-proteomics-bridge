@@ -7,28 +7,36 @@ quantification_level = "peptidoform"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["proforma_sequence"]
+var_keys = ["Peptidoform"]
 x_layer = "Abundance"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 sample = "<sample>"
 
-[columns.var]
-ProForma = "proforma_sequence"
-Stripped_Sequence_Normalized = "stripped_sequence"
+[columns.var.select]
 modified_peptide = "modified_peptide"
 protein_group = "protein_group"
 
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["modified_peptide"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "Stripped_Sequence_Normalized"
+from = ["modified_peptide"]
+how = "stripped_sequence"
+
 [[layers]]
 name = "Abundance"
-column_pattern = "^abundance_(?P<sample>[AB]_[123])$"
+column_pattern = "^abundance_(?P<sample>.+)$"
 
 [[layers]]
 name = "Number_Of_Psms"
-column_pattern = "^number_of_psms_(?P<sample>[AB]_[123])$"
-
-[duplicates]
-mode = "error"
+column_pattern = "^number_of_psms_(?P<sample>.+)$"
 
 [modifications]
 source_column = "modified_peptide"

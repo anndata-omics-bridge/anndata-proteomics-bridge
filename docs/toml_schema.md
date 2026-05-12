@@ -1,20 +1,13 @@
-# TODO: AnnData Mapping For Quant Parsing Rules
+# TOML Schema Reference for Parsing Rules
 
-## Purpose
+This document is the contract reference for the parsing-rule TOML files
+shipped under `src/anndata_proteomics/parsing_rules/<vendor>/`. Each
+file maps one vendor quantification export into AnnData. The pydantic
+validator lives at `src/anndata_proteomics/rules/schema.py` and is
+authoritative — when this doc and the validator disagree, the validator
+wins.
 
-Define a TOML rule format for mapping quantification outputs in `test_data_download/json_dir/`
-into AnnData.
-
-This document now reflects the decisions already made. It is about the rule contract, not yet the
-full implementation.
-
-This TODO is meant to become source material for a future skill file that helps an AI:
-
-- generate TOMLs for all vendor file types
-- implement a Python program that reads those TOMLs
-- convert vendor files into AnnData according to the TOML rules
-
-## Decisions
+## Background concepts
 
 ### AnnData orientation
 
@@ -22,212 +15,257 @@ This TODO is meant to become source material for a future skill file that helps 
 - `var` = quantified features
 - `X` = primary quantitative matrix
 - `layers` = additional per-sample-per-feature matrices
-- `uns` = provenance, parser metadata, category mappings, anything not cleanly representable as
-  `obs`, `var`, or matrix-shaped `layers`
+
+(`uns` is written by the parser at conversion time — provenance, the
+serialized rule, parameter records, factor mappings — and is not
+declared in the TOML.)
 
 ### Axis keys
 
-- `axis.obs_keys` defines the columns that become the AnnData observation axis
-- `axis.var_keys` defines the columns that become the AnnData variable axis
-- `var_keys` must be chosen per software
-- Pragmatic rule for `var_keys`: use the smallest set of source columns that avoids duplicates in
-  `var`
+- `axis.obs_keys` defines the columns that become the AnnData
+  observation axis.
+- `axis.var_keys` defines the columns that become the AnnData variable
+  axis.
+- Pragmatic rule for `var_keys`: use the smallest set of declared output
+  column names that avoids duplicates in `var`.
+
+### Obs-axis conventions
+
+- **Wide rules**: `obs_keys = ["sample"]` and `sample = "<sample>"`
+  under `[columns.obs.select]`. The `sample` token is captured by the
+  `(?P<sample>...)` group of each layer's `column_pattern`.
+- **Long rules**: `obs_keys` is the single column that uniquely
+  identifies a run within the vendor's export. Preserve the vendor's
+  natural name on the LHS — DIA-NN uses `Run`, MaxQuant `Raw_File`,
+  Spectronaut `R_FileName`. These are vendor-specific identifiers, not
+  synonyms for "sample"; no canonical run-id name is imposed.
+- Additional obs-side annotations (`Experiment`, `Fraction`,
+  `R_Condition`, …) may appear in `[columns.obs.select]` even when not
+  in `axis.obs_keys`. They enrich `adata.obs` but do not participate in
+  uniqueness.
+
+### Var-axis naming convention
+
+Two derived sequence representations are produced by every TOML and the
+names are reserved across vendors:
+
+- `Peptidoform` — the per-sequence ProForma string, produced by
+  `how = "proforma_sequence"`. Use this as `var_keys` for
+  peptidoform-level rules.
+- `ProForma` — the per-ion combined string `<peptidoform>/<charge>`,
+  produced by `how = "proforma_ion"` (ion-level only). Use this as
+  `var_keys` for ion-level rules.
 
 ### Column naming
 
-- Right-hand-side names must preserve the exact vendor column names
-- Left-hand-side names may be cleaner internal names
-- Clean names must live inside typed sections like `columns.obs`, `columns.var`, and `layers`
-- No separate global alias table
+- Right-hand-side names must preserve the exact vendor column names.
+- Left-hand-side names may be cleaner internal names.
+- `[columns.*.select]` is strictly for values that exist in the input
+  table, plus the wide-file placeholder `"<sample>"`. APB-derived
+  values (the column whose name matches `modifications.output_column`,
+  and the reserved literal `stripped_sequence`) must never appear under
+  `select`; declare them via `[[columns.var.compute]]`.
 
 ### Numeric vs string layers
 
-- Treat `layers` as numeric storage
-- If a matrix-shaped vendor field is string-valued, encode it as integer factors in the layer
-- Store the factor mapping in the TOML and in AnnData metadata
-
-Examples:
-
-- FragPipe `Match Type`
-- FragPipe `Localization`
+`layers` are numeric storage. String-valued matrix fields (e.g.
+FragPipe `Match Type`) are encoded as integer factors via
+`encoding_mode = "factor"` + a `categories` mapping. The factor
+mapping is stored both in the TOML and in `uns` at conversion time.
 
 ### Version fields
 
-- `schema_version` = version of the TOML schema itself
-- `file_version` = version of the specific parsing-rule TOML
-- `software_version` = vendor software version metadata, when known
+- `schema_version` — version of the TOML schema itself.
+- `file_version` — version of this specific parsing-rule TOML.
+- `software_version` — vendor software version metadata, when known.
 
 Filename convention:
 
-- `parse_<softwareName>_<quantificationLevel>_<fileVersion>.toml`
-
-Here `fileVersion` means the parsing-rule version, not the vendor software version.
-`quantificationLevel` is one of `ion`, `peptidoform`, `peptide`, `protein` and must match the
-in-TOML `quantification_level` field. The packaged-rules test enforces this.
-
-### Formal validation
-
-- TOML files should be parsed into Python objects and formally validated
-- Use `pydantic` as the primary validation layer for the parsed TOML structure
-- The validator should enforce conditional rules such as:
-  - long rules require `layers.source_column`
-  - wide rules require `layers.column_pattern`
-  - factor-encoded layers require `layers.categories`
-
-### Long vs wide
-
-- Long and wide should use the same top-level concepts
-- The main difference is only how a layer finds its source data:
-  - long: `source_column`
-  - wide: `column_pattern`
-
-### Wide-file obs creation
-
-- Wide files still must define `obs`
-- In the minimal case, `obs` is created from the `<sample>` token extracted by a layer regex
-- If possible, extract a basename or raw-file-like identifier directly from the quant column names
-- For this stage, vendor-derived obs names should be kept as they are
-- This is especially true for WOMBAT and Proteome Discoverer
-- Factor annotation and richer obs annotation belong to a second stage later
-- If the quant format does not expose a usable basename, there must be a tool-specific annotation
-  file for the second stage
+- `parse_<software>_<quantification_level>_<file_version>.toml`
+- The folder and filename use the lowercase vendor short-name
+  (`diann/parse_diann_ion_1.toml`); the `software_name` value inside
+  the TOML preserves the canonical spelling (`"DIA-NN"`).
+- `quantification_level` in the filename must match the in-TOML
+  `quantification_level` value. `tests/test_packaged_rules.py`
+  enforces this.
 
 ### Duplicate handling
 
-- Each TOML must define a duplicate policy for duplicate `(obs, var)` entries
-- Allowed modes:
-  - `error`
-  - `aggregate`
-  - `keep_first`
-  - `keep_all_as_raw_table`
-- Default recommendation: `error`, unless a software-specific aggregation rule is intentionally
-  defined
+Each TOML defines `[axis.duplicates] mode` for duplicate `(obs, var)`
+entries. Allowed values: `error`, `aggregate`, `keep_first`,
+`keep_all_as_raw_table`. The schema default is `error`; override only
+when a software-specific aggregation rule is intentionally needed.
 
-## TOML Schema
+### Long vs wide
 
-This is the rule schema we want to support.
+Long and wide rules share the same top-level concepts. The only
+difference is how a layer finds its source data:
 
-## Common Entries
+- long: `layers.source_column`
+- wide: `layers.column_pattern`
+
+Wide rules still must define `obs`. In the minimal case, `obs` is
+created from the `<sample>` token extracted by the layer regex.
+Vendor-derived obs names are kept as they are at this stage; richer
+obs annotation belongs to a later stage.
+
+## TOML schema
+
+This section enumerates every section / key the validator recognises.
+
+### Common entries
 
 These entries are valid for both long and wide rules.
 
-- `schema_version`
-  Purpose: version of the TOML schema
-  Type: string
-  Example: `"0.1"`
-
-- `file_version`
-  Purpose: version of this parsing-rule file
-  Type: string
-  Example: `"1"`
-
-- `software_name`
-  Purpose: human-readable software identifier
-  Type: string
-  Example: `"FragPipe"`
-
-- `software_version`
-  Purpose: vendor software version metadata
-  Type: string
-  Optional: yes
-
-- `input_shape`
-  Purpose: declares whether the rule is for long or wide input
-  Type: string
-  Allowed values: `"long"`, `"wide"`
-
-- `quantification_level`
-  Purpose: declares the level of quantification the rule produces
-  Type: string
-  Allowed values: `"ion"`, `"peptidoform"`, `"peptide"`, `"protein"`
-  Note: must match the level token encoded in the TOML filename.
+- `schema_version` — string. Example: `"0.1"`.
+- `file_version` — string. Example: `"1"`.
+- `software_name` — string, human-readable software identifier.
+  Example: `"FragPipe"`.
+- `software_version` — string, optional.
+- `input_shape` — `"long"` or `"wide"`.
+- `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`, or
+  `"protein"`. Must match the filename token.
 
 - `[axis]`
-  Purpose: defines the AnnData axes and the primary quantitative matrix
+  - `obs_keys` — array of strings. Must reference declared output
+    column names from `[columns.obs.select]`. (Computed obs columns
+    are not supported.)
+  - `var_keys` — array of strings. Must reference declared output
+    column names from `[columns.var.select]` or
+    `[[columns.var.compute]]`. The schema requires that any
+    `how = "proforma_ion"` compute appears in `var_keys`.
+  - `x_layer` — string. Must match one `layers.name`.
+- `[axis.duplicates]`
+  - `mode` — `"error"` (default), `"aggregate"`, `"keep_first"`,
+    `"keep_all_as_raw_table"`.
 
-- `axis.obs_keys`
-  Purpose: columns that define the observation axis
-  Type: array of strings
+- `[columns.obs.select]` — key-value mapping
+  `Internal_Name = "Vendor column"`, or
+  `Internal_Name = "<sample>"` for wide rules.
 
-- `axis.var_keys`
-  Purpose: columns that define the variable axis
-  Type: array of strings
+- `[columns.var.select]` — key-value mapping
+  `Internal_Name = "Vendor column"`. Values must be original
+  input-table columns; reserved derived names
+  (`modifications.output_column` and `stripped_sequence`) must not
+  appear here.
 
-- `axis.x_layer`
-  Purpose: which parsed layer becomes `X`
-  Type: string
-  Value: must match one `layers.name`
-
-- `[columns.obs]`
-  Purpose: map internal obs field names to source values
-  Type: key-value mapping
-  Form: `Internal_Name = "Vendor column"` or `Internal_Name = "<sample>"`
-
-- `[columns.var]`
-  Purpose: map internal var field names to source vendor columns
-  Type: key-value mapping
-  Form: `Internal_Name = "Vendor column"`
+- `[[columns.var.compute]]` — APB-derived var columns
+  - `name` — output column name.
+  - `from` — list of declared var column names (from `select` or
+    earlier `compute` entries).
+  - `how` — one of `"proforma_sequence"`, `"stripped_sequence"`,
+    `"proforma_ion"`. The first two require a `[modifications]` block
+    and exactly one source column. `proforma_ion` is ion-level only,
+    requires exactly two source columns, and its `name` must appear in
+    `axis.var_keys`.
 
 - `[[layers]]`
-  Purpose: defines one matrix-valued layer
-  Required entry: `name`
+  - `name` — internal layer name (required).
+  - `encoding_mode` — `"numeric"` (default) or `"factor"`.
+  - `categories` — `{ "value" = code, … }`. Required and non-empty
+    when `encoding_mode = "factor"` (enforced by `schema.py`).
+  - `source_column` — required for long, forbidden for wide.
+  - `column_pattern` — required for wide, forbidden for long.
 
-- `layers.name`
-  Purpose: internal layer name
-  Type: string
+### Long-only entries
 
-- `[duplicates]`
-  Purpose: duplicate handling policy
+- `layers.source_column` — vendor column to pivot into this layer.
 
-- `duplicates.mode`
-  Purpose: duplicate handling mode
-  Type: string
-  Allowed values: `"error"`, `"aggregate"`, `"keep_first"`, `"keep_all_as_raw_table"`
+### Wide-only entries
 
-## Long Rule Entries
+- `layers.column_pattern` — regex that finds the source columns for
+  this layer. Must expose a named capture group `(?P<sample>...)`
+  when sample names are encoded in the column names. The `sample`
+  capture describes the *vendor column shape*, not the *user's sample
+  naming* — use `.+` for the sample token. If you need to strip or
+  rewrite the captured sample names, use `[sample_name_cleanup]`.
 
-These entries are valid when `input_shape = "long"`.
+- `[sample_name_cleanup]` — optional, wide-only (forbidden on long).
+  - `pattern` — regex used to extract or normalize a basename /
+    raw-file-like obs name from the captured `<sample>` tokens.
 
-- `layers.source_column`
-  Purpose: vendor column to pivot into this layer
-  Type: string
-  Required for long layers: yes
+### Modifications
 
-- `layers.encoding_mode`
-  Purpose: declares how layer values are encoded
-  Type: string
-  Allowed values: `"numeric"`, `"factor"`
-  Optional: yes
+Every TOML carries a `[modifications]` block. It turns embedded
+modification tokens in a vendor sequence column (e.g.
+`Modified.Sequence`) into a ProForma-normalised output column.
 
-- `layers.categories`
-  Purpose: mapping from vendor string values to integer factor codes
-  Type: inline table or TOML table
-  Required when `encoding_mode = "factor"`: yes
+- `[modifications]`
+  - `source_column` — vendor column containing modification tokens.
+  - `parser` — `"token_regex"` (default), `"already_proforma"`, or
+    `"separate_mod_column"`. Each parser has consistency constraints
+    enforced by the validator:
+    - `token_regex` requires `token_pattern` AND at least one
+      `[[modifications.map]]` entry.
+    - `already_proforma` forbids both `token_pattern` and `map`.
+    - `separate_mod_column` requires `source_column` and accepts an
+      optional `map`.
+  - `token_pattern` — regex whose first capture group is the vendor
+    token. Required for `token_regex`. Example: `"\\(([^()]*)\\)"`.
+  - `token_position` — where the token sits relative to its residue.
+    One of `"before_residue"`, `"after_residue"` (default), `"n_term"`,
+    `"c_term"`, `"embedded"`, `"unknown"`.
+  - `case_sensitive` — bool, default `false`.
+  - `unknown_policy` — what to do with tokens not in `map`. One of
+    `"preserve"` (default), `"drop"`, `"error"`.
+  - `sequence_column` — used only by `separate_mod_column`; the
+    column carrying the stripped (unmodified) sequence.
+  - `output_column` — name of the derived column that
+    `how = "proforma_sequence"` exposes. Default
+    `"proforma_sequence"`.
+- `[[modifications.map]]` — one entry per vendor token.
+  - `token` — the vendor's token string as it appears between the
+    `token_pattern` delimiters.
+  - `accession` — UNIMOD/MOD accession (`UNIMOD:35`, `MOD:00425`).
+    The validator requires the `UNIMOD:N` or `MOD:N` shape.
 
-Long example:
+The canonical fields a downstream consumer expects (`name`, `target`,
+`position`, `mass_delta`) are NOT carried per-tool. They are filled at
+rule-load time from
+`src/anndata_proteomics/modifications/unimod_registry.toml` so all
+tools agree on what e.g. `UNIMOD:35` means. Adding a new accession
+requires adding it to that registry first.
+
+Vendor tokens may be numeric mass deltas (`"15.9949"`, `"+57.02"`),
+named labels (`"Acetyl (Protein N-term)"`), or UniMod-style strings
+(`"UniMod:35"`) — see the worked examples below.
+
+## Long example (DIA-NN)
 
 ```toml
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "1.9.1"
+software_version = "2.3.0"
 input_shape = "long"
 quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["Modified.Sequence", "Precursor.Charge"]
+var_keys = ["ProForma"]
 x_layer = "Precursor_Normalised"
 
-[columns.obs]
-File_Name = "File.Name"
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
+[columns.var.select]
 Modified_Sequence = "Modified.Sequence"
-Protein_Ids = "Protein.Ids"
 Precursor_Charge = "Precursor.Charge"
+Protein_Ids = "Protein.Ids"
 Genes = "Genes"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
@@ -237,49 +275,25 @@ source_column = "Precursor.Normalised"
 name = "Q_Value"
 source_column = "Q.Value"
 
-[[layers]]
-name = "RT"
-source_column = "RT"
+[modifications]
+source_column = "Modified.Sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
 
-[[layers]]
-name = "Ms1_Area"
-source_column = "Ms1.Area"
+[[modifications.map]]
+token = "UniMod:1"
+accession = "UNIMOD:1"
 
-[duplicates]
-mode = "error"
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"
 ```
 
-## Wide Rule Entries
-
-These entries are valid when `input_shape = "wide"`.
-
-- `layers.column_pattern`
-  Purpose: regex that finds the source columns for this layer
-  Type: string
-  Required for wide layers: yes
-  Requirement: should expose a named capture group `sample` when sample names are encoded in the
-  column names
-
-- `[sample_name_cleanup]`
-  Purpose: optional basename extraction / cleanup applied to extracted `<sample>` tokens
-  Optional: yes
-
-- `sample_name_cleanup.pattern`
-  Purpose: regex used to extract or normalize a basename / raw-file-like obs name
-  Type: string
-
-- `layers.encoding_mode`
-  Purpose: declares how layer values are encoded
-  Type: string
-  Allowed values: `"numeric"`, `"factor"`
-  Optional: yes
-
-- `layers.categories`
-  Purpose: mapping from vendor string values to integer factor codes
-  Type: inline table or TOML table
-  Required when `encoding_mode = "factor"`: yes
-
-Wide example:
+## Wide example (FragPipe)
 
 ```toml
 schema_version = "0.1"
@@ -291,18 +305,31 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["Modified Sequence", "Charge"]
+var_keys = ["ProForma"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 sample = "<sample>"
 
-[columns.var]
+[columns.var.select]
 Peptide_Sequence = "Peptide Sequence"
 Modified_Sequence = "Modified Sequence"
 Charge = "Charge"
 Protein_ID = "Protein ID"
 Gene = "Gene"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
@@ -318,51 +345,45 @@ column_pattern = "^(?P<sample>.+) Match Type$"
 encoding_mode = "factor"
 categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
 
-[[layers]]
-name = "Localization"
-column_pattern = "^(?P<sample>.+) Localization$"
-encoding_mode = "factor"
+[modifications]
+source_column = "Modified Sequence"
+parser = "token_regex"
+token_pattern = "\\[([^\\]]+)\\]"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
 
-[sample_name_cleanup]
-pattern = ""
+[[modifications.map]]
+token = "57.0215"
+accession = "UNIMOD:4"
 
-[duplicates]
-mode = "error"
+[[modifications.map]]
+token = "15.9949"
+accession = "UNIMOD:35"
 ```
 
-## Software Families Already Seen
+## Software families already shipped
 
-- Long-like:
-  - DIA-NN
-  - Spectronaut
-  - AlphaDIA long export
-  - MaxQuant evidence-like outputs
+- Long: DIA-NN, Spectronaut, MaxQuant (evidence-like).
+- Wide: FragPipe, PEAKS, WOMBAT.
 
-- Wide-like:
-  - FragPipe
-  - WOMBAT
-  - AlphaDIA wide export
+This is why the rule schema supports both `source_column` and
+`column_pattern`.
 
-This is why the rule schema must support both exact source columns and regex-driven sample-column
-detection.
+## Adding a new vendor
 
-## Recommended Implementation Path
-
-1. Keep one shared TOML schema for both long and wide.
-2. Implement `pydantic` validation for the parsed TOML rules first.
-3. Decide where the implementation should live:
-   - either inside ProteoBench
-   - or in a separate `anndata_proteomics_bridge` project if that gives a cleaner development
-     boundary
-4. Implement long parsing with `source_column`.
-5. Implement wide parsing with `column_pattern`.
-6. Add factor encoding for string-valued layers.
-7. Generate the first representative TOMLs:
-   - one long example
-   - one wide regex example
-   - one wide explicit sample-mapping example
-8. Add tests that verify:
-   - all configured columns are represented
-   - all rows are represented
-   - `obs` and `var` axes are constructed as specified
-   - `X` and `layers` match the TOML definition
+1. Copy the closest-matching shipped TOML into a new
+   `parsing_rules/<vendor>/parse_<vendor>_<level>_1.toml`.
+2. Update `software_name`, `software_version`, `input_shape`,
+   `quantification_level`.
+3. Replace `[columns.var.select]` RHS values with the new vendor's
+   actual column names; keep the LHS clean.
+4. Update layer `source_column` (long) or `column_pattern` (wide).
+   Keep the sample-token in wide regexes as `.+`.
+5. Adjust `[modifications]`: pick the right `token_pattern` for the
+   vendor's token syntax, then enumerate the vendor's tokens under
+   `[[modifications.map]]`. Add any new UNIMOD accessions to
+   `modifications/unimod_registry.toml`.
+6. Run the packaged-rules test:
+   `pytest tests/test_packaged_rules.py -k <vendor>`.
