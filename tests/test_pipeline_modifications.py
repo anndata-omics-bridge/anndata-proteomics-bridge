@@ -51,19 +51,11 @@ output_column = "proforma_sequence"
 
 [[modifications.map]]
 token = "15.9949"
-name = "Oxidation"
 accession = "UNIMOD:35"
-target = "M"
-position = "Anywhere"
-mass_delta = 15.9949
 
 [[modifications.map]]
 token = "57.0215"
-name = "Carbamidomethyl"
 accession = "UNIMOD:4"
-target = "C"
-position = "Anywhere"
-mass_delta = 57.02146
 """
 
 

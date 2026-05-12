@@ -53,48 +53,24 @@ output_column = "proforma_sequence"
 
 [[modifications.map]]
 token = "+15.99"
-name = "Oxidation"
 accession = "UNIMOD:35"
-target = "M"
-position = "Anywhere"
-mass_delta = 15.9949
 
 [[modifications.map]]
 token = "+57.02"
-name = "Carbamidomethyl"
 accession = "UNIMOD:4"
-target = "C"
-position = "Anywhere"
-mass_delta = 57.02146
 
 [[modifications.map]]
 token = "+42.01"
-name = "Acetyl"
 accession = "UNIMOD:1"
-target = "N-term"
-position = "N-term"
-mass_delta = 42.0106
 
 [[modifications.map]]
 token = "+15.9949"
-name = "Oxidation"
 accession = "UNIMOD:35"
-target = "M"
-position = "Anywhere"
-mass_delta = 15.9949
 
 [[modifications.map]]
 token = "+57.02146"
-name = "Carbamidomethyl"
 accession = "UNIMOD:4"
-target = "C"
-position = "Anywhere"
-mass_delta = 57.02146
 
 [[modifications.map]]
 token = "+42.0106"
-name = "Acetyl"
 accession = "UNIMOD:1"
-target = "N-term"
-position = "N-term"
-mass_delta = 42.0106

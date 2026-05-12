@@ -57,24 +57,12 @@ output_column = "proforma_sequence"
 
 [[modifications.map]]
 token = "UniMod:1"
-name = "Acetyl"
 accession = "UNIMOD:1"
-target = "N-term"
-position = "N-term"
-mass_delta = 42.0106
 
 [[modifications.map]]
 token = "UniMod:4"
-name = "Carbamidomethyl"
 accession = "UNIMOD:4"
-target = "C"
-position = "Anywhere"
-mass_delta = 57.02146
 
 [[modifications.map]]
 token = "UniMod:35"
-name = "Oxidation"
 accession = "UNIMOD:35"
-target = "M"
-position = "Anywhere"
-mass_delta = 15.9949

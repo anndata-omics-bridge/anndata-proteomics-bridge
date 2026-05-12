@@ -9,11 +9,30 @@ from anndata_proteomics.modifications.apply_rules import (
     ModificationRule,
     apply_rule,
 )
+from anndata_proteomics.modifications.unimod_registry import resolve
 from anndata_proteomics.rules.schema import Modifications
 
 
 def _to_runtime_rule(mods: Modifications) -> ModificationRule:
-    """Convert the validated TOML model into the runtime dataclass."""
+    """Convert the validated TOML model into the runtime dataclass.
+
+    Fills ``name``, ``target``, ``position``, ``mass_delta`` from the bundled
+    Unimod registry; raises ``KeyError`` if any entry references an
+    unknown accession.
+    """
+    runtime_entries: list[MapEntry] = []
+    for e in mods.map:
+        record = resolve(e.accession)
+        runtime_entries.append(
+            MapEntry(
+                token=e.token,
+                name=record.name,
+                accession=record.accession,
+                target=record.target,
+                position=record.position,
+                mass_delta=record.mass_delta,
+            )
+        )
     return ModificationRule(
         source_column=mods.source_column,
         token_pattern=mods.token_pattern or "",
@@ -22,17 +41,7 @@ def _to_runtime_rule(mods: Modifications) -> ModificationRule:
         unknown_policy=mods.unknown_policy,
         sequence_column=mods.sequence_column,
         output_column=mods.output_column,
-        entries=tuple(
-            MapEntry(
-                token=e.token,
-                name=e.name,
-                accession=e.accession,
-                target=e.target,
-                position=e.position,
-                mass_delta=e.mass_delta,
-            )
-            for e in mods.map
-        ),
+        entries=tuple(runtime_entries),
     )
 
 

@@ -59,11 +59,7 @@ unknown_policy = "preserve"
 
 [[modifications.map]]
 token = "UniMod:35"
-name = "Oxidation"
 accession = "UNIMOD:35"
-target = "M"
-position = "Anywhere"
-mass_delta = 15.9949
 """
     rule = _parse(BASE + extra)
     assert rule.modifications is not None
@@ -79,7 +75,7 @@ parser = "token_regex"
 
 [[modifications.map]]
 token = "ox"
-name = "Oxidation"
+accession = "UNIMOD:35"
 """
     with pytest.raises(ValidationError, match="token_pattern"):
         _parse(BASE + extra)
@@ -115,7 +111,7 @@ parser = "already_proforma"
 
 [[modifications.map]]
 token = "x"
-name = "X"
+accession = "UNIMOD:35"
 """
     with pytest.raises(ValidationError, match="map"):
         _parse(BASE + extra)
@@ -131,7 +127,7 @@ weird_field = true
 
 [[modifications.map]]
 token = "ox"
-name = "Oxidation"
+accession = "UNIMOD:35"
 """
     with pytest.raises(ValidationError):
         _parse(BASE + extra)

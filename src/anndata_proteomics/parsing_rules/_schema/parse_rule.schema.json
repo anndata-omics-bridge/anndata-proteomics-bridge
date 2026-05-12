@@ -139,67 +139,20 @@
     },
     "ModificationMapEntry": {
       "additionalProperties": false,
+      "description": "User-facing TOML entry: a vendor token plus the Unimod accession.\n\n``name``, ``target``, ``position`` and ``mass_delta`` are NOT carried\non the entry itself \u2014 they are filled at rule-load time from\n``modifications/unimod_registry.toml``. This keeps the per-tool TOMLs\nfree of duplicated canonical data and guarantees that all tools agree\non what e.g. ``UNIMOD:35`` means.",
       "properties": {
         "token": {
           "title": "Token",
           "type": "string"
         },
-        "name": {
-          "title": "Name",
-          "type": "string"
-        },
         "accession": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Accession"
-        },
-        "target": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Target"
-        },
-        "position": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": "Anywhere",
-          "title": "Position"
-        },
-        "mass_delta": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Mass Delta"
+          "title": "Accession",
+          "type": "string"
         }
       },
       "required": [
         "token",
-        "name"
+        "accession"
       ],
       "title": "ModificationMapEntry",
       "type": "object"

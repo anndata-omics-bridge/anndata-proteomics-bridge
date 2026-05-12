@@ -1,0 +1,46 @@
+# Canonical modification records, keyed by accession. Per-tool parsing-rule
+# TOMLs reference modifications by accession only — name/target/position/
+# mass_delta are filled from this registry at rule-load time. Update this
+# file (not the per-tool TOMLs) when a new modification needs to be supported.
+
+[[entries]]
+accession = "UNIMOD:1"
+name = "Acetyl"
+target = "N-term"
+position = "N-term"
+mass_delta = 42.0106
+
+[[entries]]
+accession = "UNIMOD:4"
+name = "Carbamidomethyl"
+target = "C"
+position = "Anywhere"
+mass_delta = 57.02146
+
+[[entries]]
+accession = "UNIMOD:21"
+name = "Phospho"
+target = "S"
+position = "Anywhere"
+mass_delta = 79.96633
+
+[[entries]]
+accession = "UNIMOD:27"
+name = "Glu->pyro-Glu"
+target = "E"
+position = "N-term"
+mass_delta = -18.010565
+
+[[entries]]
+accession = "UNIMOD:28"
+name = "Gln->pyro-Glu"
+target = "Q"
+position = "N-term"
+mass_delta = -17.026548
+
+[[entries]]
+accession = "UNIMOD:35"
+name = "Oxidation"
+target = "M"
+position = "Anywhere"
+mass_delta = 15.9949

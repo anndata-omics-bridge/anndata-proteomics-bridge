@@ -55,12 +55,17 @@ class SampleNameCleanup(_Strict):
 
 
 class ModificationMapEntry(_Strict):
+    """User-facing TOML entry: a vendor token plus the Unimod accession.
+
+    ``name``, ``target``, ``position`` and ``mass_delta`` are NOT carried
+    on the entry itself — they are filled at rule-load time from
+    ``modifications/unimod_registry.toml``. This keeps the per-tool TOMLs
+    free of duplicated canonical data and guarantees that all tools agree
+    on what e.g. ``UNIMOD:35`` means.
+    """
+
     token: str
-    name: str
-    accession: str | None = None
-    target: str | None = None
-    position: str | None = "Anywhere"
-    mass_delta: float | None = None
+    accession: str
 
 
 class Modifications(_Strict):
