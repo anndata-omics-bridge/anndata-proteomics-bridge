@@ -10,6 +10,7 @@ import pandas as pd
 
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.modifications.pipeline import apply_modifications
+from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.registry import available_software, parse_params
 from anndata_proteomics.rules.schema import ParseRule
 
@@ -95,7 +96,4 @@ def _attach_search_parameters(adata: ad.AnnData, params_path: str | Path, softwa
         adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
         return
     params = parse_params(params_path, software=software_key)
-    adata.uns["anndata_proteomics"]["search_parameters"] = json.dumps(
-        params.model_dump(mode="json")
-    )
-    adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
+    write_search_parameters(adata, params, source_path=str(params_path))
