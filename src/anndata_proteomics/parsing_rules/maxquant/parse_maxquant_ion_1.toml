@@ -6,18 +6,19 @@ input_shape = "long"
 quantification_level = "ion"
 
 [axis]
-obs_keys = ["Raw file"]
-var_keys = ["proforma_sequence", "Charge"]
+obs_keys = ["Raw_File"]
+var_keys = ["ProForma"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Raw_File = "Raw file"
 Experiment = "Experiment"
 Fraction = "Fraction"
 
-[columns.var]
-ProForma = "proforma_sequence"
-Stripped_Sequence_Normalized = "stripped_sequence"
+[columns.var.select]
 Sequence = "Sequence"
 Modified_Sequence = "Modified sequence"
 Modifications = "Modifications"
@@ -25,6 +26,21 @@ Charge = "Charge"
 Mass = "Mass"
 Proteins = "Proteins"
 Leading_Razor_Protein = "Leading razor protein"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "Stripped_Sequence_Normalized"
+from = ["Modified_Sequence"]
+how = "stripped_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
@@ -45,9 +61,6 @@ source_column = "Score"
 [[layers]]
 name = "PEP"
 source_column = "PEP"
-
-[duplicates]
-mode = "error"
 
 # Handles both the new short-token format (e.g. _(ac)PEPTM(ox)_) and the
 # legacy nested format (e.g. _(Acetyl (Protein N-term))PEPTM(Oxidation (M))_)

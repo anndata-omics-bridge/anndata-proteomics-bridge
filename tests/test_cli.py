@@ -117,19 +117,19 @@ obs_keys = ["Run"]
 var_keys = ["Sequence", "Charge"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
+[columns.var.select]
 Sequence = "Sequence"
 Charge = "Charge"
 
 [[layers]]
 name = "Intensity"
 source_column = "Intensity"
-
-[duplicates]
-mode = "error"
 """
     )
 

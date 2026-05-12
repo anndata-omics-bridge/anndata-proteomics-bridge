@@ -24,23 +24,19 @@ def _build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
 
 
 def _build_axis_frame(
-    df: pd.DataFrame, keys: list[str], internal_to_vendor: dict[str, str]
+    df: pd.DataFrame, keys: list[str], output_columns: list[str]
 ) -> pd.DataFrame:
-    """Take first occurrence per key tuple, rename vendor → internal column names."""
-    vendor_cols = list(internal_to_vendor.values())
-    # Dedupe needed columns (keys may overlap with vendor_cols, e.g. obs_keys=["Run"]
-    # and columns.obs={"Run": "Run"}). pandas duplicates if the same name appears twice.
-    needed_cols = list(dict.fromkeys(list(keys) + vendor_cols))
+    """Take first occurrence per key tuple for already-materialized output columns."""
+    needed_cols = list(dict.fromkeys(list(keys) + output_columns))
     block = df[needed_cols].drop_duplicates(subset=keys).copy()
-    out = block[vendor_cols].copy()
-    out.columns = list(internal_to_vendor.keys())
+    out = block[output_columns].copy()
     out.index = _build_index(block, keys).values
     out.index.name = _KEY_SEPARATOR.join(keys)
     return out
 
 
 def _aggfunc_for(rule: ParseRule) -> str:
-    mode = rule.duplicates.mode
+    mode = rule.axis.duplicates.mode
     if mode == "aggregate":
         return "sum"
     if mode == "keep_all_as_raw_table":
@@ -83,8 +79,8 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     obs_keys = list(rule.axis.obs_keys)
     var_keys = list(rule.axis.var_keys)
 
-    obs_df = _build_axis_frame(df, obs_keys, rule.columns.obs)
-    var_df = _build_axis_frame(df, var_keys, rule.columns.var)
+    obs_df = _build_axis_frame(df, obs_keys, rule.columns.obs.names)
+    var_df = _build_axis_frame(df, var_keys, rule.columns.var.names)
 
     aggfunc = _aggfunc_for(rule)
 

@@ -22,24 +22,37 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["proforma_sequence", "Precursor.Charge"]
+var_keys = ["ProForma"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
-ProForma = "proforma_sequence"
-Stripped = "stripped_sequence"
+[columns.var.select]
 Vendor_Sequence = "Modified.Sequence"
 Precursor_Charge = "Precursor.Charge"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Vendor_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "Stripped"
+from = ["Vendor_Sequence"]
+how = "stripped_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
 source_column = "Intensity"
-
-[duplicates]
-mode = "error"
 
 [modifications]
 source_column = "Modified.Sequence"
@@ -83,14 +96,43 @@ def test_convert_adds_proforma_column_to_var():
     adata = convert(_make_df(), _make_rule())
     assert "ProForma" in adata.var.columns
     proforma_values = sorted(adata.var["ProForma"].tolist())
-    assert "PEPM[UNIMOD:35]TIDE" in proforma_values
-    assert "PEPC[UNIMOD:4]TIDE" in proforma_values
+    assert "PEPM[UNIMOD:35]TIDE/2" in proforma_values
+    assert "PEPC[UNIMOD:4]TIDE/2" in proforma_values
+    peptidoform_values = sorted(adata.var["Peptidoform"].tolist())
+    assert "PEPM[UNIMOD:35]TIDE" in peptidoform_values
 
 
 def test_convert_var_indexed_by_proforma():
     adata = convert(_make_df(), _make_rule())
-    # var_keys = ["proforma_sequence", "Precursor.Charge"], so var index combines them
-    assert all("UNIMOD" in idx for idx in adata.var_names)
+    assert sorted(adata.var_names) == [
+        "PEPC[UNIMOD:4]TIDE/2",
+        "PEPM[UNIMOD:35]TIDE/2",
+    ]
+
+
+def test_convert_normalizes_float_charge_in_proforma_ion():
+    df = _make_df()
+    df["Precursor.Charge"] = [2.0, 2.0, 2.0, 2.0]
+    adata = convert(df, _make_rule())
+    assert sorted(adata.var_names) == [
+        "PEPC[UNIMOD:4]TIDE/2",
+        "PEPM[UNIMOD:35]TIDE/2",
+    ]
+
+
+def test_convert_rejects_non_positive_charge_for_proforma_ion():
+    df = _make_df()
+    df.loc[0, "Precursor.Charge"] = 0
+    with pytest.raises(ValueError, match="positive"):
+        convert(df, _make_rule())
+
+
+def test_convert_rejects_non_integral_charge_for_proforma_ion():
+    df = _make_df()
+    df["Precursor.Charge"] = df["Precursor.Charge"].astype(float)
+    df.loc[0, "Precursor.Charge"] = 2.5
+    with pytest.raises(ValueError, match="integer"):
+        convert(df, _make_rule())
 
 
 def test_convert_with_params_path_attaches_search_parameters(tmp_path):

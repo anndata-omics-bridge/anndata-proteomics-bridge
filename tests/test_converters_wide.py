@@ -30,12 +30,15 @@ def test_convert_wide_happy_path() -> None:
                 "obs_keys": ["sample"],
                 "var_keys": ["Modified Sequence", "Charge"],
                 "x_layer": "Intensity",
+                "duplicates": {"mode": "keep_first"},
             },
             "columns": {
-                "obs": {"sample": "<sample>"},
+                "obs": {"select": {"sample": "<sample>"}},
                 "var": {
-                    "Modified_Sequence": "Modified Sequence",
-                    "Charge": "Charge",
+                    "select": {
+                        "Modified Sequence": "Modified Sequence",
+                        "Charge": "Charge",
+                    }
                 },
             },
             "layers": [
@@ -48,7 +51,6 @@ def test_convert_wide_happy_path() -> None:
                     "column_pattern": "^(?P<sample>S\\d+) Spectral Count$",
                 },
             ],
-            "duplicates": {"mode": "keep_first"},
         }
     )
     pieces = convert_wide(df, rule)
@@ -81,12 +83,15 @@ def test_convert_wide_factor_layer() -> None:
                 "obs_keys": ["sample"],
                 "var_keys": ["Modified Sequence", "Charge"],
                 "x_layer": "Intensity",
+                "duplicates": {"mode": "keep_first"},
             },
             "columns": {
-                "obs": {"sample": "<sample>"},
+                "obs": {"select": {"sample": "<sample>"}},
                 "var": {
-                    "Modified_Sequence": "Modified Sequence",
-                    "Charge": "Charge",
+                    "select": {
+                        "Modified Sequence": "Modified Sequence",
+                        "Charge": "Charge",
+                    }
                 },
             },
             "layers": [
@@ -98,7 +103,6 @@ def test_convert_wide_factor_layer() -> None:
                     "categories": {"unmatched": 0, "MS/MS": 1, "MBR": 2},
                 },
             ],
-            "duplicates": {"mode": "keep_first"},
         }
     )
     pieces = convert_wide(df, rule)

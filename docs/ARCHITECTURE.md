@@ -212,7 +212,7 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 **Public API**
 
-- `convert_wide(df, rule) -> ConversionPieces` — extracts samples (union across layers, insertion-order), builds var from `[columns.var]`, gathers each layer's matching columns into an `(n_obs × n_var)` matrix. Populates obs columns from `[columns.obs]`: each entry whose value is the `<sample>` placeholder becomes a column of sample tokens (so `sample = "<sample>"` produces an obs column named `sample`). Any non-placeholder value raises — wide rules have no per-row metadata to pull from. Applies `sample_name_cleanup.pattern` if present.
+- `convert_wide(df, rule) -> ConversionPieces` — extracts samples (union across layers, insertion-order), builds var from materialized `[columns.var.select]` and `[[columns.var.compute]]` outputs, gathers each layer's matching columns into an `(n_obs × n_var)` matrix. Populates obs columns from `[columns.obs.select]`: each entry whose value is the `<sample>` placeholder becomes a column of sample tokens (so `sample = "<sample>"` produces an obs column named `sample`). Any non-placeholder value raises — wide rules have no per-row metadata to pull from. Applies `sample_name_cleanup.pattern` if present.
 
 **Tests** — [tests/test_converters_wide.py](../tests/test_converters_wide.py)
 

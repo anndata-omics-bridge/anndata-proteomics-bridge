@@ -49,8 +49,8 @@ def test_matches_long_rule_with_extra_headers_still_matches() -> None:
         next(p for p in iter_packaged_rules() if p.parent.name == "diann")
     )
     headers = (
-        list(diann_rule.columns.obs.values())
-        + list(diann_rule.columns.var.values())
+        list(diann_rule.columns.obs.select.values())
+        + list(diann_rule.columns.var.select.values())
         + [layer.source_column for layer in diann_rule.layers]
         + ["UnrelatedExtraColumn"]
     )
@@ -62,8 +62,8 @@ def test_matches_long_rule_returns_false_when_required_column_missing() -> None:
         next(p for p in iter_packaged_rules() if p.parent.name == "diann")
     )
     headers = (
-        list(diann_rule.columns.obs.values())
-        + list(diann_rule.columns.var.values())
+        list(diann_rule.columns.obs.select.values())
+        + list(diann_rule.columns.var.select.values())
         # deliberately drop the layers' source columns
     )
     assert matches(headers, diann_rule) is False

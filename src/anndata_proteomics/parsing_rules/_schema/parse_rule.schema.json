@@ -22,6 +22,9 @@
         "x_layer": {
           "title": "X Layer",
           "type": "string"
+        },
+        "duplicates": {
+          "$ref": "#/$defs/Duplicates"
         }
       },
       "required": [
@@ -32,22 +35,68 @@
       "title": "Axis",
       "type": "object"
     },
+    "ColumnCompute": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "from": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "From",
+          "type": "array"
+        },
+        "how": {
+          "enum": [
+            "proforma_sequence",
+            "stripped_sequence",
+            "proforma_ion"
+          ],
+          "title": "How",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "from",
+        "how"
+      ],
+      "title": "ColumnCompute",
+      "type": "object"
+    },
+    "ColumnGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "select": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Select",
+          "type": "object"
+        },
+        "compute": {
+          "items": {
+            "$ref": "#/$defs/ColumnCompute"
+          },
+          "title": "Compute",
+          "type": "array"
+        }
+      },
+      "title": "ColumnGroup",
+      "type": "object"
+    },
     "Columns": {
       "additionalProperties": false,
       "properties": {
         "obs": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Obs",
-          "type": "object"
+          "$ref": "#/$defs/ColumnGroup"
         },
         "var": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Var",
-          "type": "object"
+          "$ref": "#/$defs/ColumnGroup"
         }
       },
       "required": [
@@ -315,9 +364,6 @@
       "minItems": 1,
       "title": "Layers",
       "type": "array"
-    },
-    "duplicates": {
-      "$ref": "#/$defs/Duplicates"
     },
     "sample_name_cleanup": {
       "anyOf": [

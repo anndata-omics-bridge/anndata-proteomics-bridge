@@ -25,22 +25,27 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["proforma_sequence", "Charge"]
+var_keys = ["Proforma", "Charge"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
-Proforma = "proforma_sequence"
+[columns.var.select]
+Modified_Sequence = "Modified Sequence"
 Charge = "Charge"
+
+[[columns.var.compute]]
+name = "Proforma"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
 
 [[layers]]
 name = "Intensity"
 source_column = "Intensity"
-
-[duplicates]
-mode = "error"
 """
 
 

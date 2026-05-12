@@ -7,15 +7,16 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["proforma_sequence", "Precursor.Charge"]
+var_keys = ["ProForma"]
 x_layer = "Precursor_Normalised"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
-ProForma = "proforma_sequence"
-Stripped_Sequence_Normalized = "stripped_sequence"
+[columns.var.select]
 Modified_Sequence = "Modified.Sequence"
 Stripped_Sequence = "Stripped.Sequence"
 Precursor_Charge = "Precursor.Charge"
@@ -24,6 +25,21 @@ Protein_Group = "Protein.Group"
 Protein_Ids = "Protein.Ids"
 Protein_Names = "Protein.Names"
 Genes = "Genes"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "Stripped_Sequence_Normalized"
+from = ["Modified_Sequence"]
+how = "stripped_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
@@ -44,9 +60,6 @@ source_column = "Q.Value"
 [[layers]]
 name = "RT"
 source_column = "RT"
-
-[duplicates]
-mode = "error"
 
 [modifications]
 source_column = "Modified.Sequence"

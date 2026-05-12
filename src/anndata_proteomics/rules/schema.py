@@ -13,21 +13,42 @@ DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_tab
 ModificationParser = Literal["token_regex", "already_proforma", "separate_mod_column"]
 TokenPosition = Literal["before_residue", "after_residue", "n_term", "c_term", "embedded", "unknown"]
 UnknownPolicy = Literal["preserve", "drop", "error"]
+ColumnComputeMode = Literal["proforma_sequence", "stripped_sequence", "proforma_ion"]
 
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class Duplicates(_Strict):
+    mode: DuplicateMode = "error"
+
+
 class Axis(_Strict):
     obs_keys: list[str] = Field(min_length=1)
     var_keys: list[str] = Field(min_length=1)
     x_layer: str
+    duplicates: Duplicates = Field(default_factory=Duplicates)
+
+
+class ColumnCompute(_Strict):
+    name: str
+    from_: list[str] = Field(alias="from", min_length=1)
+    how: ColumnComputeMode
+
+
+class ColumnGroup(_Strict):
+    select: dict[str, str] = Field(default_factory=dict)
+    compute: list[ColumnCompute] = Field(default_factory=list)
+
+    @property
+    def names(self) -> list[str]:
+        return list(self.select) + [column.name for column in self.compute]
 
 
 class Columns(_Strict):
-    obs: dict[str, str]
-    var: dict[str, str]
+    obs: ColumnGroup
+    var: ColumnGroup
 
 
 class Layer(_Strict):
@@ -44,10 +65,6 @@ class Layer(_Strict):
                 f"Layer {self.name!r}: encoding_mode='factor' requires non-empty 'categories'."
             )
         return self
-
-
-class Duplicates(_Strict):
-    mode: DuplicateMode = "error"
 
 
 class SampleNameCleanup(_Strict):
@@ -105,7 +122,6 @@ class ParseRule(_Strict):
     axis: Axis
     columns: Columns
     layers: list[Layer] = Field(min_length=1)
-    duplicates: Duplicates = Field(default_factory=Duplicates)
     sample_name_cleanup: SampleNameCleanup | None = None
     modifications: Modifications | None = None
 
@@ -146,4 +162,69 @@ class ParseRule(_Strict):
     def _cleanup_only_for_wide(self) -> ParseRule:
         if self.sample_name_cleanup is not None and self.input_shape == "long":
             raise ValueError("sample_name_cleanup is only valid for wide rules.")
+        return self
+
+    @model_validator(mode="after")
+    def _axis_keys_are_declared_columns(self) -> ParseRule:
+        obs_columns = set(self.columns.obs.names)
+        var_columns = set(self.columns.var.names)
+        missing_obs = [key for key in self.axis.obs_keys if key not in obs_columns]
+        missing_var = [key for key in self.axis.var_keys if key not in var_columns]
+        if missing_obs:
+            raise ValueError(f"axis.obs_keys must be declared in columns.obs: {missing_obs}")
+        if missing_var:
+            raise ValueError(f"axis.var_keys must be declared in columns.var: {missing_var}")
+        return self
+
+    @model_validator(mode="after")
+    def _computed_column_consistency(self) -> ParseRule:
+        available_var_columns = set(self.columns.var.select)
+        for column in self.columns.var.compute:
+            missing_sources = [
+                source for source in column.from_ if source not in available_var_columns
+            ]
+            if missing_sources:
+                raise ValueError(
+                    f"computed column {column.name!r} references undeclared "
+                    f"var column(s): {missing_sources}"
+                )
+            if column.how in {"proforma_sequence", "stripped_sequence"}:
+                if self.modifications is None:
+                    raise ValueError(
+                        f"how={column.how!r} requires a [modifications] block."
+                    )
+                if len(column.from_) != 1:
+                    raise ValueError(f"how={column.how!r} requires exactly one source column.")
+            elif column.how == "proforma_ion":
+                if self.quantification_level != "ion":
+                    raise ValueError("how='proforma_ion' is valid only for ion rules.")
+                if len(column.from_) != 2:
+                    raise ValueError("how='proforma_ion' requires exactly two source columns.")
+                if column.name not in self.axis.var_keys:
+                    raise ValueError(
+                        "computed ProForma ion columns must be used in axis.var_keys."
+                    )
+            available_var_columns.add(column.name)
+        if self.columns.obs.compute:
+            raise ValueError("computed columns are currently supported only for columns.var.")
+        return self
+
+    @model_validator(mode="after")
+    def _derived_columns_are_not_selected(self) -> ParseRule:
+        if self.modifications is None:
+            return self
+        derived = {self.modifications.output_column, "stripped_sequence"}
+        selected_sources = list(self.columns.obs.select.values()) + list(
+            self.columns.var.select.values()
+        )
+        selected = {
+            source
+            for source in selected_sources
+            if source in derived
+        }
+        if selected:
+            raise ValueError(
+                "APB-derived modification columns must be declared in "
+                f"columns.var.compute, not select: {sorted(selected)}"
+            )
         return self

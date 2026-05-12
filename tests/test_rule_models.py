@@ -20,18 +20,31 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["Modified.Sequence", "Precursor.Charge"]
+var_keys = ["ProForma"]
 x_layer = "Precursor_Normalised"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 File_Name = "File.Name"
 Run = "Run"
 
-[columns.var]
+[columns.var.select]
 Modified_Sequence = "Modified.Sequence"
 Protein_Ids = "Protein.Ids"
 Precursor_Charge = "Precursor.Charge"
 Genes = "Genes"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
@@ -49,8 +62,10 @@ source_column = "RT"
 name = "Ms1_Area"
 source_column = "Ms1.Area"
 
-[duplicates]
-mode = "error"
+[modifications]
+source_column = "Modified.Sequence"
+parser = "already_proforma"
+output_column = "proforma_sequence"
 """
 
 
@@ -64,13 +79,16 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["Modified Sequence", "Charge"]
+var_keys = ["Modified_Sequence", "Charge"]
 x_layer = "Intensity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 sample = "<sample>"
 
-[columns.var]
+[columns.var.select]
 Peptide_Sequence = "Peptide Sequence"
 Modified_Sequence = "Modified Sequence"
 Charge = "Charge"
@@ -99,9 +117,6 @@ categories = { "Localized" = 1, "Ambiguous" = 0 }
 
 [sample_name_cleanup]
 pattern = ""
-
-[duplicates]
-mode = "error"
 """
 
 
@@ -115,7 +130,7 @@ def test_long_example_validates():
     assert rule.software_name == "DIA-NN"
     assert len(rule.layers) == 4
     assert rule.axis.x_layer == "Precursor_Normalised"
-    assert rule.duplicates.mode == "error"
+    assert rule.axis.duplicates.mode == "error"
 
 
 def test_wide_example_validates():
@@ -179,6 +194,12 @@ def test_invalid_duplicates_mode():
         _parse(bad)
 
 
+def test_top_level_duplicates_rejected():
+    bad = LONG_EXAMPLE + '\n[duplicates]\nmode = "error"\n'
+    with pytest.raises(ValidationError, match="duplicates"):
+        _parse(bad)
+
+
 def test_unknown_top_level_key_rejected():
     bad = LONG_EXAMPLE + '\nfoo = "bar"\n'
     with pytest.raises(ValidationError, match="foo"):
@@ -203,7 +224,6 @@ def test_json_schema_export_has_expected_top_level_properties():
         "axis",
         "columns",
         "layers",
-        "duplicates",
         "sample_name_cleanup",
         "modifications",
     }
@@ -221,4 +241,38 @@ def test_invalid_quantification_level():
 def test_missing_quantification_level():
     bad = LONG_EXAMPLE.replace('quantification_level = "ion"\n', "")
     with pytest.raises(ValidationError, match="quantification_level"):
+        _parse(bad)
+
+
+def test_proforma_ion_requires_two_sources():
+    bad = LONG_EXAMPLE.replace(
+        'from = ["Peptidoform", "Precursor_Charge"]',
+        'from = ["Peptidoform"]',
+    )
+    with pytest.raises(ValidationError, match="exactly two"):
+        _parse(bad)
+
+
+def test_proforma_ion_must_be_var_axis_key():
+    bad = LONG_EXAMPLE.replace('var_keys = ["ProForma"]', 'var_keys = ["Peptidoform"]')
+    with pytest.raises(ValidationError, match="axis.var_keys"):
+        _parse(bad)
+
+
+def test_apb_derived_columns_cannot_be_selected():
+    bad = LONG_EXAMPLE.replace(
+        'Modified_Sequence = "Modified.Sequence"',
+        'Modified_Sequence = "Modified.Sequence"\nBad = "proforma_sequence"',
+    )
+    with pytest.raises(ValidationError, match="derived"):
+        _parse(bad)
+
+
+def test_proforma_sequence_compute_requires_modifications():
+    bad = LONG_EXAMPLE.replace(
+        '\n[modifications]\nsource_column = "Modified.Sequence"\n'
+        'parser = "already_proforma"\noutput_column = "proforma_sequence"\n',
+        "\n",
+    )
+    with pytest.raises(ValidationError, match="modifications"):
         _parse(bad)

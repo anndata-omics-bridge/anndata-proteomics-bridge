@@ -35,18 +35,18 @@ obs_keys = ["Run"]
 var_keys = ["Foo"]
 x_layer = "X"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
+[columns.var.select]
 Foo = "Foo"
 
 [[layers]]
 name = "X"
 source_column = "Foo"
-
-[duplicates]
-mode = "error"
 """
 
 

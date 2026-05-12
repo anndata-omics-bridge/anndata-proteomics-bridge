@@ -15,6 +15,12 @@ Design lives in the sibling docs repo [anndata_omics_bridge](../anndata_omics_br
 
 In-repo docs: [docs/toml_schema.md](docs/toml_schema.md), [docs/RESTART_PLAN.md](docs/RESTART_PLAN.md).
 
+TOML parsing-rule edits must follow [docs/toml_schema.md](docs/toml_schema.md).
+In particular, `[columns.*.select]` is for original input-table columns only
+(`"<sample>"` is the wide-file exception); APB-derived values such as
+`proforma_sequence` and `stripped_sequence` must be declared via
+`[[columns.var.compute]]`.
+
 ## Current Scope
 
 **Ion/precursor level quantification only:**

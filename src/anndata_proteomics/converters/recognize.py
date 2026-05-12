@@ -25,7 +25,7 @@ def _synthesized_columns(rule: ParseRule) -> set[str]:
 
 def _expected_long_columns(rule: ParseRule) -> set[str]:
     """Vendor columns a long rule expects to see in the input."""
-    out = set(rule.columns.obs.values()) | set(rule.columns.var.values())
+    out = set(rule.columns.obs.select.values()) | set(rule.columns.var.select.values())
     out.update(layer.source_column for layer in rule.layers if layer.source_column)
     out.discard(_SAMPLE_PLACEHOLDER)
     out -= _synthesized_columns(rule)
@@ -35,7 +35,7 @@ def _expected_long_columns(rule: ParseRule) -> set[str]:
 def _required_var_columns(rule: ParseRule) -> set[str]:
     """Vendor columns a wide rule expects on the var axis (per-feature, not per-sample)."""
     return {
-        v for v in rule.columns.var.values()
+        v for v in rule.columns.var.select.values()
         if v != _SAMPLE_PLACEHOLDER and v not in _synthesized_columns(rule)
     }
 

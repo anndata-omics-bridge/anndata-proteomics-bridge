@@ -771,6 +771,60 @@ makes mass-only tokens unambiguous in practice:
 
 If no map entry matches the tuple, `unknown_policy` applies.
 
+## ProForma Ion Var Index And Axis Duplicates (Merged 2026-05-12)
+
+Ion-level ProForma identifiers must include charge:
+
+```text
+<modpeptideseq>/<charge>
+PEPM[UNIMOD:35]TIDE/2
+```
+
+The ion-level `adata.var_names` should use this ProForma ion identifier, not the
+old joined key form `PEPM[UNIMOD:35]TIDE_2`. The peptidoform-level `ProForma`
+annotation column may remain as the sequence-only ProForma string for readability
+and provenance.
+
+Duplicate handling belongs under `axis`:
+
+```toml
+[axis]
+obs_keys = ["Run"]
+var_keys = ["ProForma"]
+x_layer = "Intensity"
+
+[axis.duplicates]
+mode = "error"
+
+[columns.var.select]
+Precursor_Charge = "Precursor.Charge"
+Modified_Sequence = "Modified.Sequence"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
+```
+
+Implementation decisions:
+
+- Move `duplicates` into the `Axis` Pydantic model as `axis.duplicates`.
+- Remove top-level `[duplicates]` from packaged rules and tests.
+- Add derived `Peptidoform` / `Stripped_Sequence_Normalized` columns from
+  `[[columns.var.compute]]` after modification normalization.
+- Add derived ion-level `ProForma` from `[[columns.var.compute]]`, using the
+  computed `Peptidoform` and selected charge output column.
+- Normalize charge values so `2`, `2.0`, and `"2"` all render as `/2`; reject
+  missing or non-integral charge values with clear errors.
+- Update packaged ion rules to use `axis.var_keys = ["ProForma"]` with
+  `how = "proforma_ion"`.
+- Keep peptidoform rules indexed by sequence-level ProForma without charge.
+
 ## Design Decisions Still Open
 
 - Should APB support auto-detection of parameter-file software, or require

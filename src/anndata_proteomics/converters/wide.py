@@ -37,12 +37,10 @@ def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]
 
 def _build_var_frame(df: pd.DataFrame, rule: ParseRule) -> pd.DataFrame:
     var_keys = list(rule.axis.var_keys)
-    vendor_cols = [v for v in rule.columns.var.values() if v != _SAMPLE_PLACEHOLDER]
-    # Dedupe to avoid duplicate columns when var_keys overlap vendor_cols.
-    needed_cols = list(dict.fromkeys(var_keys + vendor_cols))
+    output_columns = rule.columns.var.names
+    needed_cols = list(dict.fromkeys(var_keys + output_columns))
     block = df[needed_cols].drop_duplicates(subset=var_keys).copy()
-    out = block[vendor_cols].copy()
-    out.columns = [k for k, v in rule.columns.var.items() if v != _SAMPLE_PLACEHOLDER]
+    out = block[output_columns].copy()
     if len(var_keys) == 1:
         out.index = block[var_keys[0]].astype(str).values
     else:
@@ -119,7 +117,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     obs_names = _apply_sample_cleanup(sample_order, rule)
     obs_index = pd.Index(obs_names, name="sample")
     obs_data: dict[str, list[str]] = {}
-    for out_name, source in rule.columns.obs.items():
+    for out_name, source in rule.columns.obs.select.items():
         if source == _SAMPLE_PLACEHOLDER:
             obs_data[out_name] = list(obs_names)
         else:

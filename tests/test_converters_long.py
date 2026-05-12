@@ -20,16 +20,16 @@ def _build_long_rule() -> ParseRule:
                 "obs_keys": ["Run"],
                 "var_keys": ["Sequence", "Charge"],
                 "x_layer": "Intensity",
+                "duplicates": {"mode": "keep_first"},
             },
             "columns": {
-                "obs": {"Run": "Run", "Condition": "Condition"},
-                "var": {"Sequence": "Sequence", "Charge": "Charge"},
+                "obs": {"select": {"Run": "Run", "Condition": "Condition"}},
+                "var": {"select": {"Sequence": "Sequence", "Charge": "Charge"}},
             },
             "layers": [
                 {"name": "Intensity", "source_column": "Intensity"},
                 {"name": "Score", "source_column": "Score"},
             ],
-            "duplicates": {"mode": "first"},
         }
     )
 
@@ -56,16 +56,16 @@ def test_convert_long_happy_path() -> None:
                 "obs_keys": ["Run"],
                 "var_keys": ["Sequence", "Charge"],
                 "x_layer": "Intensity",
+                "duplicates": {"mode": "keep_first"},
             },
             "columns": {
-                "obs": {"Run": "Run", "Condition": "Condition"},
-                "var": {"Sequence": "Sequence", "Charge": "Charge"},
+                "obs": {"select": {"Run": "Run", "Condition": "Condition"}},
+                "var": {"select": {"Sequence": "Sequence", "Charge": "Charge"}},
             },
             "layers": [
                 {"name": "Intensity", "source_column": "Intensity"},
                 {"name": "Score", "source_column": "Score"},
             ],
-            "duplicates": {"mode": "keep_first"},
         }
     )
     pieces = convert_long(df, rule)

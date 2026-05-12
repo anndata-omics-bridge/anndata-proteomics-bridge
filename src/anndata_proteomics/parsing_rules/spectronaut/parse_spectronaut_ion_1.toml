@@ -6,25 +6,41 @@ input_shape = "long"
 quantification_level = "ion"
 
 [axis]
-obs_keys = ["R.FileName"]
-var_keys = ["proforma_sequence", "FG.Charge"]
+obs_keys = ["R_FileName"]
+var_keys = ["ProForma"]
 x_layer = "FG_Quantity"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 R_FileName = "R.FileName"
 R_Condition = "R.Condition"
 R_Replicate = "R.Replicate"
 R_Label = "R.Label"
 
-[columns.var]
-ProForma = "proforma_sequence"
-Stripped_Sequence_Normalized = "stripped_sequence"
+[columns.var.select]
 PEP_StrippedSequence = "PEP.StrippedSequence"
 EG_ModifiedSequence = "EG.ModifiedSequence"
 EG_ModifiedPeptide = "EG.ModifiedPeptide"
 FG_Charge = "FG.Charge"
 PG_ProteinGroups = "PG.ProteinGroups"
 PG_ProteinAccessions = "PG.ProteinAccessions"
+
+[[columns.var.compute]]
+name = "Peptidoform"
+from = ["EG_ModifiedSequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "Stripped_Sequence_Normalized"
+from = ["EG_ModifiedSequence"]
+how = "stripped_sequence"
+
+[[columns.var.compute]]
+name = "ProForma"
+from = ["Peptidoform", "FG_Charge"]
+how = "proforma_ion"
 
 [[layers]]
 name = "FG_Quantity"
@@ -45,9 +61,6 @@ source_column = "EG.ApexRT"
 [[layers]]
 name = "EG_Qvalue"
 source_column = "EG.Qvalue"
-
-[duplicates]
-mode = "error"
 
 [modifications]
 source_column = "EG.ModifiedSequence"

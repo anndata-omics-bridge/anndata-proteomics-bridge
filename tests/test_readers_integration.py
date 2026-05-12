@@ -30,7 +30,7 @@ def test_reader_loads_test_data_for_packaged_rule(toml_path: Path) -> None:
         )
     df = read_table(data_file)
     expected_min_cols = (
-        len(rule.columns.var) + len(rule.columns.obs) + len(rule.layers)
+        len(rule.columns.var.select) + len(rule.columns.obs.select) + len(rule.layers)
     )
     assert not df.empty, f"{data_file} produced an empty DataFrame"
     assert len(df.columns) >= expected_min_cols, (

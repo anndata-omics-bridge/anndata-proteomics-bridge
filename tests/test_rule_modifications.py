@@ -20,22 +20,22 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["Modified.Sequence", "Precursor.Charge"]
+var_keys = ["Modified_Sequence", "Precursor_Charge"]
 x_layer = "Precursor_Normalised"
 
-[columns.obs]
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
 Run = "Run"
 
-[columns.var]
+[columns.var.select]
 Modified_Sequence = "Modified.Sequence"
 Precursor_Charge = "Precursor.Charge"
 
 [[layers]]
 name = "Precursor_Normalised"
 source_column = "Precursor.Normalised"
-
-[duplicates]
-mode = "error"
 """
 
 
