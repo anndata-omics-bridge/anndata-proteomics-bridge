@@ -10,6 +10,17 @@ from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule
 
 _SAMPLE_PLACEHOLDER = "<sample>"
+# Columns added to the DataFrame by `apply_modifications`; never present in the
+# raw vendor input, so the recognizer must ignore them.
+_SYNTHESIZED = {"stripped_sequence"}
+
+
+def _synthesized_columns(rule: ParseRule) -> set[str]:
+    """Set of column names the modifications pipeline injects post-read."""
+    out = set(_SYNTHESIZED)
+    if rule.modifications is not None:
+        out.add(rule.modifications.output_column)
+    return out
 
 
 def _expected_long_columns(rule: ParseRule) -> set[str]:
@@ -17,12 +28,16 @@ def _expected_long_columns(rule: ParseRule) -> set[str]:
     out = set(rule.columns.obs.values()) | set(rule.columns.var.values())
     out.update(layer.source_column for layer in rule.layers if layer.source_column)
     out.discard(_SAMPLE_PLACEHOLDER)
+    out -= _synthesized_columns(rule)
     return out
 
 
 def _required_var_columns(rule: ParseRule) -> set[str]:
     """Vendor columns a wide rule expects on the var axis (per-feature, not per-sample)."""
-    return {v for v in rule.columns.var.values() if v != _SAMPLE_PLACEHOLDER}
+    return {
+        v for v in rule.columns.var.values()
+        if v != _SAMPLE_PLACEHOLDER and v not in _synthesized_columns(rule)
+    }
 
 
 def matches(headers: Iterable[str], rule: ParseRule) -> bool:

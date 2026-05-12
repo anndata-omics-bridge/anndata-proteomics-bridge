@@ -17,6 +17,8 @@ R_Replicate = "R.Replicate"
 R_Label = "R.Label"
 
 [columns.var]
+ProForma = "proforma_sequence"
+Stripped_Sequence_Normalized = "stripped_sequence"
 PEP_StrippedSequence = "PEP.StrippedSequence"
 EG_ModifiedSequence = "EG.ModifiedSequence"
 EG_ModifiedPeptide = "EG.ModifiedPeptide"

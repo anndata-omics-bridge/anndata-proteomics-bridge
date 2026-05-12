@@ -14,6 +14,8 @@ x_layer = "Normalized_Area"
 sample = "<sample>"
 
 [columns.var]
+ProForma = "proforma_sequence"
+Stripped_Sequence_Normalized = "stripped_sequence"
 Peptide = "Peptide"
 Charge = "z"
 Mz = "m/z"

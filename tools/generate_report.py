@@ -39,7 +39,7 @@ from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule
-from anndata_proteomics.test_data import find_test_data
+from anndata_proteomics.test_data import find_param_file, find_test_data
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "examples" / "results"
@@ -202,8 +202,13 @@ def _run_one(rule: ParseRule, output_dir: Path, log_level: str) -> Outcome:
             df = read_table(input_path)
             logger.info(f"input shape: {df.shape}")
 
+            params_path = find_param_file(rule.software_name)
+            if params_path is not None:
+                logger.info(f"parameter file: {params_path}")
+            else:
+                logger.info("no parameter file available for this tool")
             logger.info("converting to AnnData")
-            adata = run_convert(df, rule)
+            adata = run_convert(df, rule, params_path=params_path)
             adata.write_h5ad(h5ad_path)
             logger.info(f"wrote {h5ad_path}  shape={adata.shape}  layers={list(adata.layers)}")
 

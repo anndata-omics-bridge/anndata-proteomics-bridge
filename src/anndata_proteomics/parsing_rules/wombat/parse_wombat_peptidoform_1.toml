@@ -14,6 +14,8 @@ x_layer = "Abundance"
 sample = "<sample>"
 
 [columns.var]
+ProForma = "proforma_sequence"
+Stripped_Sequence_Normalized = "stripped_sequence"
 modified_peptide = "modified_peptide"
 protein_group = "protein_group"
 

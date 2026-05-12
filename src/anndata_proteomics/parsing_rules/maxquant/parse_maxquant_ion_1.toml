@@ -16,6 +16,8 @@ Experiment = "Experiment"
 Fraction = "Fraction"
 
 [columns.var]
+ProForma = "proforma_sequence"
+Stripped_Sequence_Normalized = "stripped_sequence"
 Sequence = "Sequence"
 Modified_Sequence = "Modified sequence"
 Modifications = "Modifications"
