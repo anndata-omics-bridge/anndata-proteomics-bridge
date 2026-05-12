@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
 
 
-def format_tolerance_range(tolerance: dict[str, Any]) -> str:
+def format_tolerance_range(tolerance: Mapping[str, Sequence[float | int]]) -> str:
     """Format a mass-tolerance dict ``{unit: [low, high]}`` as a bracketed string.
 
     Output format matches ProteoBench's `_format_tolerance_range` so that

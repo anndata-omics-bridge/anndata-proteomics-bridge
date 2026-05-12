@@ -5,14 +5,17 @@ from __future__ import annotations
 import collections.abc
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import IO, Any, Union
+from typing import IO, Union
 
 import pandas as pd
 
 from anndata_proteomics.params.model import Parameters
 
+XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
+FlatValue = str | None
 
-def _add_record(data: dict, tag: str, record: Any) -> dict:
+
+def _add_record(data: dict[str, XmlValue], tag: str, record: XmlValue) -> dict[str, XmlValue]:
     if tag in data:
         if isinstance(data[tag], list):
             data[tag].append(record)
@@ -23,8 +26,8 @@ def _add_record(data: dict, tag: str, record: Any) -> dict:
     return data
 
 
-def _read_element(element: ET.Element) -> Any:
-    data: dict = {}
+def _read_element(element: ET.Element) -> XmlValue:
+    data: dict[str, XmlValue] = {}
     if element.attrib:
         data.update(element.attrib)
     for child in element:
@@ -49,9 +52,12 @@ def _read_element(element: ET.Element) -> Any:
     return data or None
 
 
-def _read_xml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict:
+def _read_xml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict[str, XmlValue]:
     tree = ET.parse(source)
-    return _read_element(tree.getroot())
+    parsed = _read_element(tree.getroot())
+    if not isinstance(parsed, dict):
+        raise ValueError("mqpar root did not parse to a mapping")
+    return parsed
 
 
 def _extend(t: tuple, target_length: int) -> tuple:
@@ -60,8 +66,10 @@ def _extend(t: tuple, target_length: int) -> tuple:
     return t + (None,) * (target_length - len(t))
 
 
-def _flatten(d: dict, parent_key: tuple = ()) -> list[tuple[tuple, Any]]:
-    items: list[tuple[tuple, Any]] = []
+def _flatten(
+    d: dict[str, XmlValue], parent_key: tuple = ()
+) -> list[tuple[tuple, FlatValue]]:
+    items: list[tuple[tuple, FlatValue]] = []
     for key, value in d.items():
         new_key = parent_key + (key,)
         if isinstance(value, collections.abc.MutableMapping):
@@ -70,7 +78,7 @@ def _flatten(d: dict, parent_key: tuple = ()) -> list[tuple[tuple, Any]]:
             for item in value:
                 if isinstance(item, collections.abc.MutableMapping):
                     items.extend(_flatten(item, parent_key=new_key))
-                elif isinstance(item, str):
+                elif isinstance(item, str) or item is None:
                     items.append((new_key, item))
         else:
             items.append((new_key, value))

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_ACCESSION_RE = re.compile(r"^(UNIMOD|MOD):\d+$", re.IGNORECASE)
 
 
 class ModType(str, Enum):
@@ -34,6 +36,13 @@ class SearchedModification(BaseModel):
     mass_delta: float | None = None
     source: str | None = None
 
+    @field_validator("accession")
+    @classmethod
+    def _valid_accession(cls, value: str | None) -> str | None:
+        if value is not None and not _ACCESSION_RE.match(value):
+            raise ValueError("accession must look like UNIMOD:35 or MOD:00425")
+        return value
+
 
 class ModificationOccurrence(BaseModel):
     """A localized modification on a peptide.
@@ -51,6 +60,20 @@ class ModificationOccurrence(BaseModel):
     position: str | None = None
     mass_delta: float | None = None
     source_token: str | None = None
+
+    @field_validator("accession")
+    @classmethod
+    def _valid_accession(cls, value: str | None) -> str | None:
+        if value is not None and not _ACCESSION_RE.match(value):
+            raise ValueError("accession must look like UNIMOD:35 or MOD:00425")
+        return value
+
+    @field_validator("sequence_index")
+    @classmethod
+    def _non_negative_index(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("sequence_index must be non-negative")
+        return value
 
 
 class ModifiedSequence(BaseModel):

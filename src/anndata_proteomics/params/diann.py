@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import IO, Any, Optional, Union
+from typing import IO, Optional, Union
 
 from packaging.version import Version
 
@@ -77,6 +77,7 @@ _SETTINGS_PB_INT = {
 _SETTINGS_PB_MOD = {"fixed_mods", "variable_mods"}
 
 _PROT_INF_MAP = {"isoform IDs": "Isoforms", "protein names": "Protein_names", "genes": "Genes"}
+_SettingValue = bool | int | float | str | list[str] | dict[str, str]
 
 
 def _find_cmdline(lines: list[str]) -> Optional[str]:
@@ -87,7 +88,7 @@ def _find_cmdline(lines: list[str]) -> Optional[str]:
 
 
 def _parse_cmdline(cmd: str, software_version: str) -> dict:
-    settings: dict[str, Any] = {}
+    settings: dict[str, _SettingValue] = {}
     var_mods: list[str] = []
     fixed_mods: list[str] = []
     below_1_8 = Version(software_version.split(" ")[0]) < Version("1.8")
@@ -178,11 +179,14 @@ def _quantification_strategy(cmd_dict: dict) -> str:
     return "QuantUMS high-precision"
 
 
-def _predictors_library(cmd_dict: dict):
+def _predictors_library(cmd_dict: dict) -> str | None:
     if "predictor" in cmd_dict:
-        return {"RT": "DIANN", "IM": "DIANN", "MS2_int": "DIANN"}
+        return "{'RT': 'DIANN', 'IM': 'DIANN', 'MS2_int': 'DIANN'}"
     if "lib" in cmd_dict and not isinstance(cmd_dict["lib"], bool):
-        return {"RT": "User defined speclib", "IM": "User defined speclib", "MS2_int": "User defined speclib"}
+        return (
+            "{'RT': 'User defined speclib', 'IM': 'User defined speclib', "
+            "'MS2_int': 'User defined speclib'}"
+        )
     return None
 
 
@@ -206,7 +210,7 @@ def extract_params(source: _Source) -> Parameters:
     used.
     """
     lines = _load_lines(source)
-    out: dict[str, Any] = {
+    out: dict[str, object] = {
         "software_name": "DIA-NN",
         "search_engine": "DIA-NN",
         "enable_match_between_runs": False,

@@ -25,8 +25,8 @@ def _expected_series(csv: Path) -> pd.Series:
 
 def _assert_matches_expected(params: Parameters, expected_csv: Path) -> None:
     expected = Parameters.from_series(_expected_series(expected_csv))
-    e = expected.model_dump()
-    a = params.model_dump()
+    e = expected.to_series()
+    a = params.to_series()
     fields_to_check = [
         "software_name",
         "software_version",
@@ -84,7 +84,8 @@ def test_sage_accepts_filelike_object(tmp_path):
     params = extract_params(buf)
     assert params.software_name == "Sage"
     assert params.software_version == "0.14.6"
-    assert params.precursor_mass_tolerance == "[-20.0 ppm, 20.0 ppm]"
+    assert params.precursor_mass_tolerance is not None
+    assert params.precursor_mass_tolerance.to_legacy() == "[-20 ppm, 20 ppm]"
     # restrict is present (null) → enzyme stays raw (ProteoBench parity)
     assert params.enzyme == "KR"
 

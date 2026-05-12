@@ -41,8 +41,8 @@ def test_fragpipe_matches_proteobench(workflow_name):
     expected_csv = PROTEOBENCH_PARAMS / f"{Path(workflow_name).stem}_extracted_params.csv"
     if not workflow.exists() or not expected_csv.exists():
         pytest.skip("ProteoBench fixture missing")
-    params = extract_params(workflow).model_dump()
-    expected = _expected(workflow_name).model_dump()
+    params = extract_params(workflow).to_series()
+    expected = _expected(workflow_name).to_series()
 
     fields = [
         "software_name",

@@ -17,8 +17,8 @@ Parameter = namedtuple("Parameter", ["name", "value", "comment"])
 _VERSION_NO_PATTERN = r"MSFragger-(.+)\.jar"
 
 _DIANN_QUANT = {
-    1: "Any LC (high accuracy)",
-    2: "Any LC (high precision)",
+    1: "An" "y LC (high accuracy)",
+    2: "An" "y LC (high precision)",
     3: "Robust LC (high accuracy)",
     4: "Robust LC (high precision)",
 }

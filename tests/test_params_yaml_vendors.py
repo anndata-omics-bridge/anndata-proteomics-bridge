@@ -37,8 +37,8 @@ def _expected(csv: Path) -> Parameters:
 
 def _compare(params: Parameters, csv: Path, extra: list[str] = ()) -> None:
     expected = _expected(csv)
-    e = expected.model_dump()
-    a = params.model_dump()
+    e = expected.to_series()
+    a = params.to_series()
     mismatches = []
     for field in list(COMMON_FIELDS) + list(extra):
         if str(a.get(field)) != str(e.get(field)):

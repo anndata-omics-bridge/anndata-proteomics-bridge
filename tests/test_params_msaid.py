@@ -24,8 +24,8 @@ def test_msaid_matches_proteobench():
     if not csv.exists() or not expected_tsv.exists():
         pytest.skip("ProteoBench fixture missing")
 
-    params = extract_params(csv).model_dump()
-    expected = _expected_tsv(expected_tsv).model_dump()
+    params = extract_params(csv).to_series()
+    expected = _expected_tsv(expected_tsv).to_series()
     # semi_enzymatic intentionally excluded: ProteoBench's dynamic dataclass only
     # populates fields declared in the JSON template, and DIA_ion.json omits
     # semi_enzymatic, so the expected TSV has it blank. APB always emits it.

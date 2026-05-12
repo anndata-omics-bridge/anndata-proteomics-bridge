@@ -34,9 +34,9 @@ def test_spectronaut_matches_proteobench(txt_name):
     if not txt.exists() or not csv.exists():
         pytest.skip("ProteoBench fixture missing")
 
-    params = extract_params(txt).model_dump()
+    params = extract_params(txt).to_series()
     df = pd.read_csv(csv, header=0, index_col=0)
-    expected = Parameters.from_series(df.iloc[:, 0]).model_dump()
+    expected = Parameters.from_series(df.iloc[:, 0]).to_series()
 
     fields = [
         "software_name",

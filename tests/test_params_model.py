@@ -6,8 +6,10 @@ import math
 from pathlib import Path
 
 import pandas as pd
+import pytest
+from pydantic import ValidationError
 
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.model import MassTolerance, Parameters, Probability
 
 
 def test_construct_empty_has_all_none():
@@ -18,10 +20,9 @@ def test_construct_empty_has_all_none():
     assert dumped["scan_window"] is None
 
 
-def test_extra_fields_are_preserved():
-    p = Parameters(software_name="Sage", vendor_specific_thing=42)
-    assert p.software_name == "Sage"
-    assert p.model_dump()["vendor_specific_thing"] == 42
+def test_extra_fields_are_rejected():
+    with pytest.raises(ValidationError):
+        Parameters(software_name="Sage", vendor_specific_thing=42)
 
 
 def test_to_series_roundtrip():
@@ -52,14 +53,49 @@ def test_from_series_treats_empty_and_nan_as_none():
     assert p.software_name == "Sage"
     assert p.enzyme is None
     assert p.max_peptide_length is None
-    assert p.fixed_mods == "{'C': 57.02146}"
+    assert p.fixed_mods[0].source == "{'C': 57.02146}"
+    assert p.to_series()["fixed_mods"] == "{'C': 57.02146}"
 
 
-def test_from_series_preserves_literal_none_string():
-    # ProteoBench writes literal "None" strings for unset fields; preserve them.
+def test_from_series_treats_literal_none_string_as_none():
     s = pd.Series({"software_name": "Sage", "ident_fdr_psm": "None"})
     p = Parameters.from_series(s)
-    assert p.ident_fdr_psm == "None"
+    assert p.ident_fdr_psm is None
+
+
+def test_probability_rejects_invalid_values():
+    with pytest.raises(ValidationError):
+        Probability(value=1.2)
+
+
+def test_parameters_reject_negative_mz():
+    with pytest.raises(ValidationError):
+        Parameters(min_precursor_mz=-1)
+
+
+def test_parameters_reject_invalid_charge():
+    with pytest.raises(ValidationError):
+        Parameters(min_precursor_charge=0)
+
+
+def test_parameters_reject_invalid_range_ordering():
+    with pytest.raises(ValidationError):
+        Parameters(min_precursor_mz=900, max_precursor_mz=300)
+
+
+def test_mass_tolerance_rejects_invalid_range_ordering():
+    with pytest.raises(ValidationError):
+        MassTolerance(mode="range", lower=20, upper=-20, unit="ppm")
+
+
+def test_mass_tolerance_accepts_only_ppm_or_da_units():
+    assert MassTolerance.parse("20 ppm").unit == "ppm"
+    assert MassTolerance.parse("0.5 Da").unit == "Da"
+    assert MassTolerance.parse("20 Th").unit == "Da"
+    with pytest.raises(ValidationError):
+        MassTolerance(mode="absolute", value=20)
+    with pytest.raises(ValueError):
+        MassTolerance.parse("20 kg")
 
 
 PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
@@ -74,4 +110,4 @@ def test_from_series_reads_sage_expected_csv():
     p = Parameters.from_series(series)
     assert p.software_name == "Sage"
     assert p.enzyme == "KR"
-    assert str(p.min_peptide_length) == "7"
+    assert p.min_peptide_length == 7

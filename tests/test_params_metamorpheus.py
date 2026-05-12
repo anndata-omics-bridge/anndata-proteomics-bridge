@@ -23,8 +23,8 @@ def _expected() -> Parameters:
 
 @pytest.mark.skipif(not TOML_FILE.exists(), reason="ProteoBench fixture missing")
 def test_metamorpheus_matches_proteobench():
-    params = extract_params(TOML_FILE, VERSION_FILE).model_dump()
-    expected = _expected().model_dump()
+    params = extract_params(TOML_FILE, VERSION_FILE).to_series()
+    expected = _expected().to_series()
     fields = [
         "software_name",
         "software_version",
@@ -53,6 +53,6 @@ def test_metamorpheus_matches_proteobench():
 
 @pytest.mark.skipif(not TOML_FILE.exists(), reason="ProteoBench fixture missing")
 def test_metamorpheus_input_order_insensitive():
-    direct = extract_params(TOML_FILE, VERSION_FILE).model_dump()
-    reversed_ = extract_params(VERSION_FILE, TOML_FILE).model_dump()
-    assert direct == reversed_
+    direct = extract_params(TOML_FILE, VERSION_FILE).to_series()
+    reversed_ = extract_params(VERSION_FILE, TOML_FILE).to_series()
+    assert direct.equals(reversed_)

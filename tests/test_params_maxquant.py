@@ -37,7 +37,7 @@ def test_maxquant_matches_proteobench(xml_name, expected_name):
         pytest.skip("ProteoBench fixture missing")
     # ProteoBench wrote literal "NaN" tokens to JSON; allow them.
     expected = json.loads(expected_path.read_text().replace("NaN", "null"))
-    params = extract_params(xml_path).model_dump()
+    params = extract_params(xml_path).to_series()
 
     fields = [
         "software_name",

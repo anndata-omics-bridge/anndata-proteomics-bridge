@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import anndata as ad
-from pydantic import ValidationError
 
 from anndata_proteomics.params.anndata_io import (
     get_search_parameters_path,
@@ -45,16 +44,18 @@ def test_write_then_read_roundtrip():
     assert isinstance(recovered, Parameters)
     assert recovered.software_name == "Sage"
     assert recovered.software_version == "0.14.6"
-    assert recovered.fixed_mods == "{'C': 57.02146}"
+    assert recovered.fixed_mods[0].source == "{'C': 57.02146}"
+    assert recovered.to_series()["fixed_mods"] == "{'C': 57.02146}"
     assert get_search_parameters_path(adata) == "/tmp/fake.json"
 
 
-def test_write_preserves_extra_fields():
+def test_read_rejects_extra_fields():
     adata = _empty_adata()
-    params = Parameters(software_name="Sage", vendor_specific=42)
-    write_search_parameters(adata, params)
-    recovered = read_search_parameters(adata)
-    assert recovered.model_dump()["vendor_specific"] == 42
+    adata.uns["anndata_proteomics"] = {
+        "search_parameters": '{"software_name": "Sage", "vendor_specific": 42}',
+    }
+    with pytest.raises(Exception):
+        read_search_parameters(adata)
 
 
 def test_read_validates_against_current_schema():
