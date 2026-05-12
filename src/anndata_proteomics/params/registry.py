@@ -11,6 +11,7 @@ from anndata_proteomics.params.maxquant import extract_params as _maxquant_extra
 from anndata_proteomics.params.metamorpheus import extract_params as _metamorpheus_extract
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.msaid import extract_params as _msaid_extract
+from anndata_proteomics.params.peaks import extract_params as _peaks_extract
 from anndata_proteomics.params.sage import extract_params as _sage_extract
 from anndata_proteomics.params.wombat import extract_params as _wombat_extract
 
@@ -24,6 +25,7 @@ _REGISTRY: dict[str, ParseFn] = {
     "maxquant": _maxquant_extract,
     "metamorpheus": _metamorpheus_extract,
     "msaid": _msaid_extract,
+    "peaks": _peaks_extract,
     "sage": _sage_extract,
     "wombat": _wombat_extract,
 }
