@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Union
 
 from anndata_proteomics.params.alphapept import extract_params as _alphapept_extract
+from anndata_proteomics.params.fragpipe import extract_params as _fragpipe_extract
 from anndata_proteomics.params.maxquant import extract_params as _maxquant_extract
 from anndata_proteomics.params.metamorpheus import extract_params as _metamorpheus_extract
 from anndata_proteomics.params.model import Parameters
@@ -19,6 +20,7 @@ ParseFn = Callable[..., Parameters]
 
 _REGISTRY: dict[str, ParseFn] = {
     "alphapept": _alphapept_extract,
+    "fragpipe": _fragpipe_extract,
     "maxquant": _maxquant_extract,
     "metamorpheus": _metamorpheus_extract,
     "msaid": _msaid_extract,
