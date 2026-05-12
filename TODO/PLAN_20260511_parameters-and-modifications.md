@@ -229,6 +229,11 @@ De novo parsers are out of scope; do not create `params/denovo/`.
 
 Define an APB-owned typed parameter model before moving parser logic.
 
+This model must be strict Pydantic, not a dynamic dataclass. There should be no
+`Any` in public parameter or modification models. If primitive types are not
+expressive enough, introduce named domain models rather than weakening the
+schema.
+
 Candidate fields are the current ProteoBench parameter fields, including:
 
 - software name and version
@@ -246,19 +251,71 @@ Candidate fields are the current ProteoBench parameter fields, including:
 - protein inference
 - scan window
 
-Open model decisions:
+Hard typing requirements:
 
-- Use Pydantic or dataclasses. Prefer Pydantic if strict validation and stable
-  serialization matter; prefer dataclasses if the model should stay lightweight.
-- Decide whether unknown or unsupported parameters are stored as `None`,
-  omitted, or tracked in an explicit `unparsed` / `warnings` field.
-- Preserve current ProteoBench CSV-compatible serialization during migration.
+- Use `pydantic.BaseModel` with `ConfigDict(extra="forbid")`.
+- Do not use `Any`.
+- FDR fields are numeric probabilities, not strings:
+  - `ident_fdr_psm: Probability | None`
+  - `ident_fdr_peptide: Probability | None`
+  - `ident_fdr_protein: Probability | None`
+- Charges are integers:
+  - `min_precursor_charge: PositiveInt | None`
+  - `max_precursor_charge: PositiveInt | None`
+- Peptide lengths and missed cleavages are non-negative integers.
+- m/z fields are non-negative floats:
+  - `min_precursor_mz: NonNegativeFloat | None`
+  - `max_precursor_mz: NonNegativeFloat | None`
+  - `min_fragment_mz: NonNegativeFloat | None`
+  - `max_fragment_mz: NonNegativeFloat | None`
+- Tolerances should not be unstructured strings when parsed into the core model.
+  Use a typed model such as `MassTolerance`.
+- Predictor library, quantification method, protein inference, software names,
+  and versions are strings or constrained enums where the vocabulary is stable.
+- Unknown or unsupported parsed fields should be represented as typed warnings
+  or typed `UnparsedParameter` entries, not free-form `Any`.
+
+Suggested domain models:
+
+```python
+class Probability(BaseModel):
+    value: float  # 0 <= value <= 1
+
+class MassTolerance(BaseModel):
+    lower: float | None = None
+    upper: float | None = None
+    value: float | None = None
+    unit: Literal["ppm", "Da", "Th"]
+    mode: Literal["absolute", "range", "automatic"]
+
+class ChargeRange(BaseModel):
+    minimum: PositiveInt | None = None
+    maximum: PositiveInt | None = None
+
+class MzRange(BaseModel):
+    minimum: NonNegativeFloat | None = None
+    maximum: NonNegativeFloat | None = None
+```
+
+Validation requirements:
+
+- FDR values must be `0 <= value <= 1`.
+- Charges must be positive integers.
+- m/z values must be non-negative.
+- Range models must enforce `minimum <= maximum` when both bounds are present.
+- Mass tolerances must be non-negative unless the model represents a signed
+  lower/upper range where `lower <= upper`.
+- Parser adapters may accept vendor strings, but they must convert to typed
+  models before returning APB parameter objects.
+- Preserve current ProteoBench CSV-compatible serialization during migration via
+  explicit serializers, not by weakening the model.
 - Avoid adding public API beyond the parser entry points needed by ProteoBench
   and APB tests.
 
 ## Modification Models
 
 Use separate models for searched modifications and sequence occurrences.
+These are Pydantic models and must not use `Any`.
 
 ### SearchedModification
 
@@ -273,6 +330,14 @@ For parameter files and SDRF export:
 - `source`
 
 This model exports to SDRF key=value strings.
+Validation rules:
+
+- `accession` must be a controlled vocabulary accession such as `UNIMOD:35` or
+  `MOD:00425` when present.
+- `mod_type` is a constrained literal, not a string bag.
+- `mass_delta` is a float when present.
+- `target` and `position` should be constrained literals or small typed value
+  objects once the supported vocabulary is known.
 
 ### ModificationOccurrence
 
@@ -287,6 +352,13 @@ For modified peptide/peptidoform sequences:
 - `source_token`
 
 This model exports to ProForma when localization is known.
+Validation rules:
+
+- `sequence_index` must be non-negative when present.
+- `accession` follows the same controlled-vocabulary rule as
+  `SearchedModification`.
+- Unknown tokens are carried explicitly in `unknown_tokens`; they are not hidden
+  in loosely typed fields.
 
 ### ModifiedSequence
 
