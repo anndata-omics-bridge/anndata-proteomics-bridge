@@ -83,9 +83,17 @@ def test_parameters_reject_invalid_range_ordering():
         Parameters(min_precursor_mz=900, max_precursor_mz=300)
 
 
-def test_mass_tolerance_rejects_invalid_range_ordering():
-    with pytest.raises(ValidationError):
-        MassTolerance(mode="range", lower=20, upper=-20, unit="ppm")
+def test_mass_tolerance_normalises_signed_range_to_half_width():
+    parsed = MassTolerance.parse("[-20 ppm, 20 ppm]")
+    assert parsed.mode == "absolute"
+    assert parsed.value == 20.0
+    assert parsed.unit == "ppm"
+    assert parsed.to_legacy() == "20 ppm"
+
+
+def test_mass_tolerance_normalises_asymmetric_range_to_half_width():
+    parsed = MassTolerance.parse("[-10 ppm, 30 ppm]")
+    assert parsed.value == 20.0
 
 
 def test_mass_tolerance_accepts_only_ppm_or_da_units():

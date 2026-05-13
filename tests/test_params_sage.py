@@ -85,7 +85,7 @@ def test_sage_accepts_filelike_object(tmp_path):
     assert params.software_name == "Sage"
     assert params.software_version == "0.14.6"
     assert params.precursor_mass_tolerance is not None
-    assert params.precursor_mass_tolerance.to_legacy() == "[-20 ppm, 20 ppm]"
+    assert params.precursor_mass_tolerance.to_legacy() == "20 ppm"
     # restrict is present (null) → enzyme stays raw (ProteoBench parity)
     assert params.enzyme == "KR"
 

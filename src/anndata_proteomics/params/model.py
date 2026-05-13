@@ -22,7 +22,7 @@ from anndata_proteomics.modifications.model import SearchedModification
 
 ScalarValue = str | int | float | bool | None
 ToleranceUnit = Literal["ppm", "Da"]
-ToleranceMode = Literal["absolute", "range", "automatic"]
+ToleranceMode = Literal["absolute", "automatic"]
 
 _MISSING_STRINGS = {"", "none", "nan", "n/a", "na", "not specified", "unknown"}
 _RANGE_RE = re.compile(
@@ -57,10 +57,16 @@ class Probability(_Strict):
 
 
 class MassTolerance(_Strict):
-    """Mass tolerance as an absolute value, signed range, or automatic mode."""
+    """Mass tolerance centered at the theoretical mass.
 
-    lower: float | None = None
-    upper: float | None = None
+    Vendor tolerances are conceptually ± a half-width around the
+    theoretical peak; APB stores only that half-width as ``value`` plus
+    a ``unit``. A vendor-reported signed range like ``[-20 ppm, 20 ppm]``
+    is normalised to ``value = 20 ppm`` (half-width). Asymmetric ranges
+    collapse to ``value = (upper - lower) / 2``; the midpoint offset is
+    intentionally discarded.
+    """
+
     value: NonNegativeFloat | None = None
     unit: ToleranceUnit | None = None
     mode: ToleranceMode
@@ -73,21 +79,10 @@ class MassTolerance(_Strict):
                 raise ValueError("absolute tolerance requires value")
             if self.unit is None:
                 raise ValueError("absolute tolerance requires unit")
-            if self.lower is not None or self.upper is not None:
-                raise ValueError("absolute tolerance cannot also define lower/upper")
-        elif self.mode == "range":
-            if self.lower is None or self.upper is None:
-                raise ValueError("range tolerance requires lower and upper")
-            if self.unit is None:
-                raise ValueError("range tolerance requires unit")
-            if self.lower > self.upper:
-                raise ValueError("range tolerance requires lower <= upper")
-            if self.value is not None:
-                raise ValueError("range tolerance cannot also define value")
         elif self.mode == "automatic":
             if self.unit is not None:
                 raise ValueError("automatic tolerance cannot define unit")
-            if self.value is not None or self.lower is not None or self.upper is not None:
+            if self.value is not None:
                 raise ValueError("automatic tolerance cannot define numeric bounds")
         return self
 
@@ -118,12 +113,10 @@ class MassTolerance(_Strict):
             unit = _normalize_unit(
                 range_match.group("unit1") or range_match.group("unit2")
             )
-            return cls(
-                mode="range",
-                lower=float(range_match.group("lower")),
-                upper=float(range_match.group("upper")),
-                unit=unit,
-            )
+            lower = float(range_match.group("lower"))
+            upper = float(range_match.group("upper"))
+            half_width = (upper - lower) / 2
+            return cls(mode="absolute", value=half_width, unit=unit)
 
         absolute_match = _ABSOLUTE_RE.match(text)
         if absolute_match:
@@ -137,15 +130,10 @@ class MassTolerance(_Strict):
         raise ValueError(f"could not parse mass tolerance: {value!r}")
 
     def to_legacy(self) -> str:
-        """Return the scalar representation used in ProteoBench CSV fixtures."""
+        """Return the scalar representation used in CSV/round-trip output."""
         if self.mode == "automatic":
             return self.label or "Dynamic"
-        if self.mode == "absolute":
-            return _format_number(self.value) + _format_unit(self.unit)
-        return (
-            f"[{_format_number(self.lower)}{_format_unit(self.unit)}, "
-            f"{_format_number(self.upper)}{_format_unit(self.unit)}]"
-        )
+        return _format_number(self.value) + _format_unit(self.unit)
 
 
 class ChargeRange(_Strict):

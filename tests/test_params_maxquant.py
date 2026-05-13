@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 
 from anndata_proteomics.params.maxquant import extract_params
+from anndata_proteomics.params.model import MassTolerance
+
+_TOLERANCE_FIELDS = {"precursor_mass_tolerance", "fragment_mass_tolerance"}
 
 PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
 
@@ -61,6 +64,10 @@ def test_maxquant_matches_proteobench(xml_name, expected_name):
     for field in fields:
         actual = _normalize(params.get(field))
         expected_value = _normalize(expected.get(field))
+        if field in _TOLERANCE_FIELDS and isinstance(expected_value, str):
+            parsed = MassTolerance.parse(expected_value)
+            if parsed is not None:
+                expected_value = parsed.to_legacy()
         if actual != expected_value:
             mismatches.append((field, actual, expected_value))
     assert not mismatches, f"Mismatched fields: {mismatches}"
