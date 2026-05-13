@@ -7,7 +7,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["R_FileName"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "FG_Quantity"
 
 [axis.duplicates]
@@ -28,7 +28,7 @@ PG_ProteinGroups = "PG.ProteinGroups"
 PG_ProteinAccessions = "PG.ProteinAccessions"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["EG_ModifiedSequence"]
 how = "proforma_sequence"
 
@@ -38,8 +38,8 @@ from = ["EG_ModifiedSequence"]
 how = "stripped_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "FG_Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "FG_Charge"]
 how = "proforma_ion"
 
 [[layers]]

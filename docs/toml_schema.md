@@ -58,17 +58,18 @@ Three reserved compute names mirror those three levels:
 | Compute name | `how` | Meaning |
 |---|---|---|
 | `ProForma_peptide` | `stripped_sequence` | bare sequence, no mods |
-| `Peptidoform` | `proforma_sequence` | sequence + mods |
-| `ProForma` | `proforma_ion` | peptidoform + `/charge` |
+| `ProForma_peptidoform` | `proforma_sequence` | sequence + mods |
+| `ProForma_ion` | `proforma_ion` | peptidoform + `/charge` |
 
 How rules use them:
 - **Peptidoform-level rules** (`quantification_level = "peptidoform"`):
-  `var_keys = ["ProForma"]` produced by `how = "proforma_sequence"`.
-  Optionally also expose `ProForma_peptide`.
+  `var_keys = ["ProForma_peptidoform"]` produced by
+  `how = "proforma_sequence"`. Optionally also expose
+  `ProForma_peptide`.
 - **Ion-level rules** (`quantification_level = "ion"`):
-  `var_keys = ["ProForma"]` produced by `how = "proforma_ion"`. The
-  ion compute chains through a `Peptidoform` intermediate (local to
-  the TOML); `ProForma_peptide` may be exposed alongside.
+  `var_keys = ["ProForma_ion"]` produced by `how = "proforma_ion"`,
+  chained from a `ProForma_peptidoform` intermediate. Optionally also
+  expose `ProForma_peptide`.
 
 Why `ProForma_peptide` is computed from the modified-sequence column
 rather than the vendor's "peptide" column: stripping the modification
@@ -271,7 +272,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Precursor_Normalised"
 
 [axis.duplicates]
@@ -287,13 +288,13 @@ Protein_Ids = "Protein.Ids"
 Genes = "Genes"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Precursor_Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
 how = "proforma_ion"
 
 [[layers]]
@@ -334,7 +335,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Intensity"
 
 [axis.duplicates]
@@ -351,13 +352,13 @@ Protein_ID = "Protein ID"
 Gene = "Gene"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Charge"]
 how = "proforma_ion"
 
 [[layers]]

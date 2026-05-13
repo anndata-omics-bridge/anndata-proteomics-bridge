@@ -22,7 +22,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Intensity"
 
 [axis.duplicates]
@@ -36,18 +36,18 @@ Vendor_Sequence = "Modified.Sequence"
 Precursor_Charge = "Precursor.Charge"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Vendor_Sequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "Stripped"
+name = "ProForma_peptide"
 from = ["Vendor_Sequence"]
 how = "stripped_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Precursor_Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
 how = "proforma_ion"
 
 [[layers]]
@@ -94,11 +94,11 @@ def _make_df() -> pd.DataFrame:
 
 def test_convert_adds_proforma_column_to_var():
     adata = convert(_make_df(), _make_rule())
-    assert "ProForma" in adata.var.columns
-    proforma_values = sorted(adata.var["ProForma"].tolist())
+    assert "ProForma_ion" in adata.var.columns
+    proforma_values = sorted(adata.var["ProForma_ion"].tolist())
     assert "PEPM[UNIMOD:35]TIDE/2" in proforma_values
     assert "PEPC[UNIMOD:4]TIDE/2" in proforma_values
-    peptidoform_values = sorted(adata.var["Peptidoform"].tolist())
+    peptidoform_values = sorted(adata.var["ProForma_peptidoform"].tolist())
     assert "PEPM[UNIMOD:35]TIDE" in peptidoform_values
 
 

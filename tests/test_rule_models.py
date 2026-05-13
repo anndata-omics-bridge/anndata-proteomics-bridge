@@ -20,7 +20,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Precursor_Normalised"
 
 [axis.duplicates]
@@ -37,13 +37,13 @@ Precursor_Charge = "Precursor.Charge"
 Genes = "Genes"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Precursor_Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
 how = "proforma_ion"
 
 [[layers]]
@@ -246,15 +246,17 @@ def test_missing_quantification_level():
 
 def test_proforma_ion_requires_two_sources():
     bad = LONG_EXAMPLE.replace(
-        'from = ["Peptidoform", "Precursor_Charge"]',
-        'from = ["Peptidoform"]',
+        'from = ["ProForma_peptidoform", "Precursor_Charge"]',
+        'from = ["ProForma_peptidoform"]',
     )
     with pytest.raises(ValidationError, match="exactly two"):
         _parse(bad)
 
 
 def test_proforma_ion_must_be_var_axis_key():
-    bad = LONG_EXAMPLE.replace('var_keys = ["ProForma"]', 'var_keys = ["Peptidoform"]')
+    bad = LONG_EXAMPLE.replace(
+        'var_keys = ["ProForma_ion"]', 'var_keys = ["ProForma_peptidoform"]'
+    )
     with pytest.raises(ValidationError, match="axis.var_keys"):
         _parse(bad)
 

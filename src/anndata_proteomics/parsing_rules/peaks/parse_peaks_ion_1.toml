@@ -7,7 +7,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Normalized_Area"
 
 [axis.duplicates]
@@ -27,7 +27,7 @@ Avg_Area = "Avg. Area"
 Accession = "Accession"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Peptide"]
 how = "proforma_sequence"
 
@@ -37,8 +37,8 @@ from = ["Peptide"]
 how = "stripped_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Charge"]
 how = "proforma_ion"
 
 [[layers]]

@@ -7,7 +7,7 @@ quantification_level = "peptidoform"
 
 [axis]
 obs_keys = ["sample"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_peptidoform"]
 x_layer = "Abundance"
 
 [axis.duplicates]
@@ -21,7 +21,7 @@ modified_peptide = "modified_peptide"
 protein_group = "protein_group"
 
 [[columns.var.compute]]
-name = "ProForma"
+name = "ProForma_peptidoform"
 from = ["modified_peptide"]
 how = "proforma_sequence"
 

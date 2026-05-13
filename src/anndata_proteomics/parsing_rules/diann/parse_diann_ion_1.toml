@@ -7,7 +7,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Precursor_Normalised"
 
 [axis.duplicates]
@@ -27,7 +27,7 @@ Protein_Names = "Protein.Names"
 Genes = "Genes"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
@@ -37,8 +37,8 @@ from = ["Modified_Sequence"]
 how = "stripped_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Precursor_Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
 how = "proforma_ion"
 
 [[layers]]

@@ -7,7 +7,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Raw_File"]
-var_keys = ["ProForma"]
+var_keys = ["ProForma_ion"]
 x_layer = "Intensity"
 
 [axis.duplicates]
@@ -28,7 +28,7 @@ Proteins = "Proteins"
 Leading_Razor_Protein = "Leading razor protein"
 
 [[columns.var.compute]]
-name = "Peptidoform"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
@@ -38,8 +38,8 @@ from = ["Modified_Sequence"]
 how = "stripped_sequence"
 
 [[columns.var.compute]]
-name = "ProForma"
-from = ["Peptidoform", "Charge"]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Charge"]
 how = "proforma_ion"
 
 [[layers]]
