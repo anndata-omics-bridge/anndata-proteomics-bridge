@@ -46,15 +46,26 @@ declared in the TOML.)
 
 ### Var-axis naming convention
 
-Two derived sequence representations are produced by every TOML and the
-names are reserved across vendors:
+The convention is a single reserved name `ProForma` for the public
+var-axis identifier. Per the
+[HUPO-PSI ProForma 2.0 spec](https://github.com/HUPO-PSI/ProForma),
+both the bare-sequence string `M[UNIMOD:35]PEPTIDE` and the
+charge-augmented form `M[UNIMOD:35]PEPTIDE/2` are valid ProForma —
+charge is an optional extension (spec §7.1).
 
-- `Peptidoform` — the per-sequence ProForma string, produced by
-  `how = "proforma_sequence"`. Use this as `var_keys` for
-  peptidoform-level rules.
-- `ProForma` — the per-ion combined string `<peptidoform>/<charge>`,
-  produced by `how = "proforma_ion"` (ion-level only). Use this as
-  `var_keys` for ion-level rules.
+- **Peptidoform-level rules**: `var_keys = ["ProForma"]`, produced by
+  a single compute `how = "proforma_sequence"`.
+- **Ion-level rules**: `var_keys = ["ProForma"]`, produced by a compute
+  `how = "proforma_ion"` that takes a sequence-level intermediate plus
+  a charge column. The intermediate sequence compute is conventionally
+  named `Peptidoform` within the TOML; it is a local stepping-stone,
+  not part of the public axis convention.
+
+Schema invariants worth knowing:
+- Any `how = "proforma_ion"` compute must appear in `axis.var_keys`
+  (`schema.py:198-206`).
+- `how = "proforma_ion"` requires exactly two source columns
+  (sequence-level intermediate + charge).
 
 ### Column naming
 
