@@ -32,7 +32,7 @@ from = ["Peptide"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "Stripped_Sequence_Normalized"
+name = "ProForma_peptide"
 from = ["Peptide"]
 how = "stripped_sequence"
 

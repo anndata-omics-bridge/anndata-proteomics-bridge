@@ -46,26 +46,44 @@ declared in the TOML.)
 
 ### Var-axis naming convention
 
-The convention is a single reserved name `ProForma` for the public
-var-axis identifier. Per the
-[HUPO-PSI ProForma 2.0 spec](https://github.com/HUPO-PSI/ProForma),
-both the bare-sequence string `M[UNIMOD:35]PEPTIDE` and the
-charge-augmented form `M[UNIMOD:35]PEPTIDE/2` are valid ProForma —
-charge is an optional extension (spec §7.1).
+Per the [HUPO-PSI ProForma 2.0 spec](https://github.com/HUPO-PSI/ProForma),
+ProForma covers three quantification levels:
+- bare peptide `PEPTIDE` — a degenerate ProForma with no modifications;
+- peptidoform `M[UNIMOD:35]PEPTIDE` — sequence + mods;
+- ion `M[UNIMOD:35]PEPTIDE/2` — peptidoform + charge (spec §7.1,
+  optional extension).
 
-- **Peptidoform-level rules**: `var_keys = ["ProForma"]`, produced by
-  a single compute `how = "proforma_sequence"`.
-- **Ion-level rules**: `var_keys = ["ProForma"]`, produced by a compute
-  `how = "proforma_ion"` that takes a sequence-level intermediate plus
-  a charge column. The intermediate sequence compute is conventionally
-  named `Peptidoform` within the TOML; it is a local stepping-stone,
-  not part of the public axis convention.
+Three reserved compute names mirror those three levels:
+
+| Compute name | `how` | Meaning |
+|---|---|---|
+| `ProForma_peptide` | `stripped_sequence` | bare sequence, no mods |
+| `Peptidoform` | `proforma_sequence` | sequence + mods |
+| `ProForma` | `proforma_ion` | peptidoform + `/charge` |
+
+How rules use them:
+- **Peptidoform-level rules** (`quantification_level = "peptidoform"`):
+  `var_keys = ["ProForma"]` produced by `how = "proforma_sequence"`.
+  Optionally also expose `ProForma_peptide`.
+- **Ion-level rules** (`quantification_level = "ion"`):
+  `var_keys = ["ProForma"]` produced by `how = "proforma_ion"`. The
+  ion compute chains through a `Peptidoform` intermediate (local to
+  the TOML); `ProForma_peptide` may be exposed alongside.
+
+Why `ProForma_peptide` is computed from the modified-sequence column
+rather than the vendor's "peptide" column: stripping the modification
+tokens with one controlled algorithm gives a consistent result across
+vendors. Vendor "peptide" columns disagree (case, flanking residues,
+presence-or-absence), so deriving from the modification-bearing column
+keeps a single source of truth.
 
 Schema invariants worth knowing:
 - Any `how = "proforma_ion"` compute must appear in `axis.var_keys`
   (`schema.py:198-206`).
 - `how = "proforma_ion"` requires exactly two source columns
-  (sequence-level intermediate + charge).
+  (peptidoform intermediate + charge).
+- `how = "proforma_sequence"` and `how = "stripped_sequence"` each
+  require exactly one source column and a `[modifications]` block.
 
 ### Column naming
 

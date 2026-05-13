@@ -33,7 +33,7 @@ from = ["EG_ModifiedSequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "Stripped_Sequence_Normalized"
+name = "ProForma_peptide"
 from = ["EG_ModifiedSequence"]
 how = "stripped_sequence"
 
