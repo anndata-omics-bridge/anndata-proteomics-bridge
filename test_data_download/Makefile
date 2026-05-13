@@ -1,4 +1,4 @@
-.PHONY: help catalog select download clean
+.PHONY: help catalog select download fasta clean
 
 .DEFAULT_GOAL := help
 
@@ -25,5 +25,13 @@ download: raw_file_db_selected.csv  ## Download raw quantification files for the
 		--json-dir ./json_dir \
 		--output ./raw_file_db_downloaded.csv
 
-clean:  ## Remove downloaded JSON folders and all CSVs.
-	rm -rf ./json_dir ./raw_file_db_full.csv ./raw_file_db_selected.csv ./raw_file_db_downloaded.csv
+fasta: ## Download the ProteoBench FASTA databases (HYE + HY mixed-species) to ./fasta/.
+	mkdir -p ./fasta
+	cd ./fasta && curl -sLO https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HYE.zip
+	cd ./fasta && curl -sLO https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HY.zip
+	cd ./fasta && unzip -q -o ProteoBenchFASTA_MixedSpecies_HYE.zip
+	cd ./fasta && unzip -q -o ProteoBenchFASTA_MixedSpecies_HY.zip
+	rm -rf ./fasta/__MACOSX
+
+clean:  ## Remove downloaded JSON folders, FASTAs, and all CSVs.
+	rm -rf ./json_dir ./fasta ./raw_file_db_full.csv ./raw_file_db_selected.csv ./raw_file_db_downloaded.csv

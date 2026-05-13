@@ -46,6 +46,7 @@ benchmark_data/
 
 # test_data_download generated artifacts (52GB cache, all regenerable via Makefile)
 test_data_download/json_dir/
+test_data_download/fasta/
 test_data_download/raw_file_db_full.csv
 test_data_download/raw_file_db_selected.csv
 test_data_download/raw_file_db_downloaded.csv
