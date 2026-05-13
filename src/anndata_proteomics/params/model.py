@@ -51,20 +51,15 @@ class Probability(_Strict):
             return float(text)
         return value
 
-    def to_legacy(self) -> float:
-        """Return the scalar representation used in ProteoBench CSV fixtures."""
-        return self.value
-
-
 class MassTolerance(_Strict):
     """Mass tolerance centered at the theoretical mass.
 
-    Vendor tolerances are conceptually ± a half-width around the
-    theoretical peak; APB stores only that half-width as ``value`` plus
-    a ``unit``. A vendor-reported signed range like ``[-20 ppm, 20 ppm]``
-    is normalised to ``value = 20 ppm`` (half-width). Asymmetric ranges
-    collapse to ``value = (upper - lower) / 2``; the midpoint offset is
-    intentionally discarded.
+    Mass tolerances are physically symmetric: a vendor saying
+    ``[-20 ppm, 20 ppm]`` and a vendor saying ``20 ppm`` mean the same
+    thing — a ± half-width around the theoretical peak. APB stores
+    only that half-width as ``value`` plus a ``unit``. Asymmetric
+    ranges are rejected at parse time; we have not seen a tool that
+    actually means ``[-10 ppm, +30 ppm]`` in earnest.
     """
 
     value: NonNegativeFloat | None = None
@@ -88,7 +83,7 @@ class MassTolerance(_Strict):
 
     @classmethod
     def parse(cls, value: object) -> "MassTolerance | None":
-        """Parse vendor/legacy tolerance values into a typed tolerance."""
+        """Parse vendor tolerance values into a typed tolerance."""
         if _is_missing(value):
             return None
         if isinstance(value, MassTolerance):
@@ -115,8 +110,11 @@ class MassTolerance(_Strict):
             )
             lower = float(range_match.group("lower"))
             upper = float(range_match.group("upper"))
-            half_width = (upper - lower) / 2
-            return cls(mode="absolute", value=half_width, unit=unit)
+            if not math.isclose(lower, -upper, abs_tol=1e-9):
+                raise ValueError(
+                    f"asymmetric mass tolerance ranges are not supported: {value!r}"
+                )
+            return cls(mode="absolute", value=abs(upper), unit=unit)
 
         absolute_match = _ABSOLUTE_RE.match(text)
         if absolute_match:
@@ -128,12 +126,6 @@ class MassTolerance(_Strict):
             )
 
         raise ValueError(f"could not parse mass tolerance: {value!r}")
-
-    def to_legacy(self) -> str:
-        """Return the scalar representation used in CSV/round-trip output."""
-        if self.mode == "automatic":
-            return self.label or "Dynamic"
-        return _format_number(self.value) + _format_unit(self.unit)
 
 
 class ChargeRange(_Strict):
@@ -375,12 +367,12 @@ class Parameters(_Strict):
             data["unparsed_parameters"] = unparsed
         return cls(**data)
 
-    def _legacy_value(self, field: str) -> ScalarValue:
+    def _legacy_value(self, field: str) -> object:
         value = getattr(self, field)
         if isinstance(value, Probability):
-            return value.to_legacy()
+            return value.value
         if isinstance(value, MassTolerance):
-            return value.to_legacy()
+            return value.model_dump(exclude_none=True)
         if isinstance(value, list):
             return _serialize_modifications(value)
         return _to_scalar(value)
@@ -437,18 +429,6 @@ def _normalize_unit(unit: str | None) -> ToleranceUnit:
     if normalized is None:
         raise ValueError("mass tolerance unit must be ppm or Da")
     return normalized
-
-
-def _format_unit(unit: ToleranceUnit | None) -> str:
-    if unit is None:
-        raise ValueError("cannot format mass tolerance without unit")
-    return f" {unit}"
-
-
-def _format_number(value: float | None) -> str:
-    if value is None:
-        raise ValueError("cannot format missing numeric value")
-    return f"{value:g}"
 
 
 def _coerce_float(value: object) -> float | None:

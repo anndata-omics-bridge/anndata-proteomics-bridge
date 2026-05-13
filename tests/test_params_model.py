@@ -88,12 +88,11 @@ def test_mass_tolerance_normalises_signed_range_to_half_width():
     assert parsed.mode == "absolute"
     assert parsed.value == 20.0
     assert parsed.unit == "ppm"
-    assert parsed.to_legacy() == "20 ppm"
 
 
-def test_mass_tolerance_normalises_asymmetric_range_to_half_width():
-    parsed = MassTolerance.parse("[-10 ppm, 30 ppm]")
-    assert parsed.value == 20.0
+def test_mass_tolerance_rejects_asymmetric_range():
+    with pytest.raises(ValueError, match="asymmetric"):
+        MassTolerance.parse("[-10 ppm, 30 ppm]")
 
 
 def test_mass_tolerance_accepts_only_ppm_or_da_units():

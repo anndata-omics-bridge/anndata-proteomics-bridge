@@ -67,7 +67,7 @@ def test_maxquant_matches_proteobench(xml_name, expected_name):
         if field in _TOLERANCE_FIELDS and isinstance(expected_value, str):
             parsed = MassTolerance.parse(expected_value)
             if parsed is not None:
-                expected_value = parsed.to_legacy()
+                expected_value = parsed.model_dump(exclude_none=True)
         if actual != expected_value:
             mismatches.append((field, actual, expected_value))
     assert not mismatches, f"Mismatched fields: {mismatches}"

@@ -46,7 +46,9 @@ def write_search_parameters(
 ) -> None:
     """Serialize ``params`` into ``adata.uns`` (and the original source path)."""
     adata.uns.setdefault(_UNS_KEY, {})
-    adata.uns[_UNS_KEY][_PARAMS_KEY] = json.dumps(params.model_dump(mode="json"))
+    adata.uns[_UNS_KEY][_PARAMS_KEY] = json.dumps(
+        params.model_dump(mode="json", exclude_none=True)
+    )
     if source_path is not None:
         adata.uns[_UNS_KEY][_PARAMS_PATH_KEY] = str(source_path)
 
