@@ -15,6 +15,12 @@ TokenPosition = Literal["before_residue", "after_residue", "n_term", "c_term", "
 UnknownPolicy = Literal["preserve", "drop", "error"]
 ColumnComputeMode = Literal["proforma_sequence", "stripped_sequence", "proforma_ion"]
 
+_PROFORMA_COMPUTE_NAME = {
+    "stripped_sequence": "ProForma_peptide",
+    "proforma_sequence": "ProForma_peptidoform",
+    "proforma_ion": "ProForma_ion",
+}
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -187,6 +193,12 @@ class ParseRule(_Strict):
                 raise ValueError(
                     f"computed column {column.name!r} references undeclared "
                     f"var column(s): {missing_sources}"
+                )
+            expected_name = _PROFORMA_COMPUTE_NAME[column.how]
+            if column.name != expected_name:
+                raise ValueError(
+                    f"computed column with how={column.how!r} must be named "
+                    f"{expected_name!r}, got {column.name!r}"
                 )
             if column.how in {"proforma_sequence", "stripped_sequence"}:
                 if self.modifications is None:

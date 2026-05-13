@@ -79,8 +79,11 @@ presence-or-absence), so deriving from the modification-bearing column
 keeps a single source of truth.
 
 Schema invariants worth knowing:
-- Any `how = "proforma_ion"` compute must appear in `axis.var_keys`
-  (`schema.py:198-206`).
+- The compute `name` is pinned by `how`: `stripped_sequence` →
+  `ProForma_peptide`, `proforma_sequence` → `ProForma_peptidoform`,
+  `proforma_ion` → `ProForma_ion`. The validator rejects any other
+  name.
+- Any `how = "proforma_ion"` compute must appear in `axis.var_keys`.
 - `how = "proforma_ion"` requires exactly two source columns
   (peptidoform intermediate + charge).
 - `how = "proforma_sequence"` and `how = "stripped_sequence"` each

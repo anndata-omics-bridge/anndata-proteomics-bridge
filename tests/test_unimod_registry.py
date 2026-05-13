@@ -25,7 +25,7 @@ quantification_level = "ion"
 
 [axis]
 obs_keys = ["Run"]
-var_keys = ["Proforma", "Charge"]
+var_keys = ["ProForma_peptidoform", "Charge"]
 x_layer = "Intensity"
 
 [axis.duplicates]
@@ -39,7 +39,7 @@ Modified_Sequence = "Modified Sequence"
 Charge = "Charge"
 
 [[columns.var.compute]]
-name = "Proforma"
+name = "ProForma_peptidoform"
 from = ["Modified_Sequence"]
 how = "proforma_sequence"
 

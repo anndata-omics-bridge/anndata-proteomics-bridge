@@ -261,6 +261,12 @@ def test_proforma_ion_must_be_var_axis_key():
         _parse(bad)
 
 
+def test_proforma_compute_names_are_pinned():
+    bad = LONG_EXAMPLE.replace('name = "ProForma_peptidoform"', 'name = "MyPeptidoform"')
+    with pytest.raises(ValidationError, match="ProForma_peptidoform"):
+        _parse(bad)
+
+
 def test_apb_derived_columns_cannot_be_selected():
     bad = LONG_EXAMPLE.replace(
         'Modified_Sequence = "Modified.Sequence"',
