@@ -8,7 +8,7 @@ from typing import IO, Union
 import yaml
 
 from anndata_proteomics.params._common import read_text
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.model import MassTolerance, Parameters
 
 MODIFICATION_MAPPING = {
     "cC": "C[Carbamidomethyl]",
@@ -37,8 +37,8 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     variable = list(fasta["mods_variable"]) + list(fasta["mods_variable_terminal"]) + list(fasta["mods_variable_terminal_prot"])
 
     unit = "ppm" if search["ppm"] else "Da"
-    prec_tol = f"[-{search['prec_tol']} {unit}, {search['prec_tol']} {unit}]"
-    frag_tol = f"[-{search['frag_tol']} {unit}, {search['frag_tol']} {unit}]"
+    prec_tol = MassTolerance(mode="absolute", value=float(search["prec_tol"]), unit=unit)
+    frag_tol = MassTolerance(mode="absolute", value=float(search["frag_tol"]), unit=unit)
 
     return Parameters(
         software_name="AlphaPept",

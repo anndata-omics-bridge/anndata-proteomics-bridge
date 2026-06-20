@@ -7,16 +7,19 @@ from pathlib import Path
 from typing import IO, Union
 
 from anndata_proteomics.params._common import read_text
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.model import MassTolerance, Parameters
 
 _Source = Union[str, Path, IO]
 
 
-def _format_tolerance(tolerance: str) -> str:
-    """Format ``"±20.0000 PPM"`` → ``"[-20.00 PPM, 20.00 PPM]"``."""
+def _format_tolerance(tolerance: str) -> MassTolerance:
+    """Parse ``"±20.0000 PPM"`` into a typed symmetric tolerance."""
     value, unit = tolerance.split()
-    value = float(value.strip("±"))
-    return f"[-{value:.2f} {unit}, {value:.2f} {unit}]"
+    return MassTolerance(
+        mode="absolute",
+        value=float(value.strip("±")),
+        unit="ppm" if unit.lower() == "ppm" else "Da",
+    )
 
 
 def _homogenize_mod(mod_str: str) -> str:

@@ -9,7 +9,8 @@ from typing import IO, Union
 
 import pandas as pd
 
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params._common import homogenize_paren_mods
+from anndata_proteomics.params.model import MassTolerance, Parameters
 
 XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
 FlatValue = str | None
@@ -22,33 +23,15 @@ _MODIFICATION_MAPPING = {
 }
 
 
-def _homogenize_mod(mod_str: str) -> str:
-    """Convert a single MaxQuant modification token to ProForma-like notation.
-
-    MaxQuant format is ``{modname} ({residues})`` where residues can be single
-    letters (``M``), multi-letter (``STY``, one per letter), or terminal
-    qualifiers (``N-term``, ``Protein N-term``, ``C-term``, ``Protein C-term``).
-    Examples: ``Carbamidomethyl (C)`` -> ``C[Carbamidomethyl]``,
-    ``Phospho (STY)`` -> ``S[Phospho], T[Phospho], Y[Phospho]``,
-    ``Acetyl (Protein N-term)`` -> ``Protein N-term[Acetyl]``.
-    """
-    mod_str = mod_str.strip()
-    idx = mod_str.rfind("(")
-    if idx == -1:
-        return _MODIFICATION_MAPPING.get(mod_str, mod_str)
-    name = mod_str[:idx].strip()
-    residues = mod_str[idx + 1 :].rstrip(")").strip()
-    lower = residues.lower()
-    if "n-term" in lower or "c-term" in lower:
-        return f"{residues}[{name}]"
-    return ", ".join(f"{aa}[{name}]" for aa in residues)
-
-
 def _homogenize_mods(raw_mods: str, sep: str = ",") -> str:
-    """Parse and homogenize a separator-delimited modification string."""
+    """Parse and homogenize a separator-delimited ``{name} ({residues})`` string."""
     if not raw_mods or not raw_mods.strip():
         return ""
-    return ", ".join(_homogenize_mod(mod) for mod in raw_mods.split(sep) if mod.strip())
+    return ", ".join(
+        homogenize_paren_mods(mod, _MODIFICATION_MAPPING)
+        for mod in raw_mods.split(sep)
+        if mod.strip()
+    )
 
 
 def _add_record(data: dict[str, XmlValue], tag: str, record: XmlValue) -> dict[str, XmlValue]:
@@ -145,14 +128,12 @@ def extract_params(
     series = _build_series(record, 4).sort_index()
 
     version = str(series.loc["maxQuantVersion"].squeeze())
-    prec_tol = f"{series.loc[pd.IndexSlice['parameterGroups', 'parameterGroup', 'mainSearchTol', :]].squeeze()} ppm"
-    precursor_tolerance = f"[-{prec_tol}, {prec_tol}]"
+    prec_value = float(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze())
+    precursor_tolerance = MassTolerance(mode="absolute", value=prec_value, unit="ppm")
 
-    frag_tol = series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze()
+    frag_value = float(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze())
     in_ppm = bool(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchToleranceInPpm", :]].squeeze())
-    if in_ppm:
-        frag_tol = f"{frag_tol} ppm"
-    fragment_tolerance = f"[-{frag_tol}, {frag_tol}]"
+    fragment_tolerance = MassTolerance(mode="absolute", value=frag_value, unit="ppm" if in_ppm else "Da")
 
     enzyme_mode = int(series.loc[("parameterGroups", "parameterGroup", "enzymeMode")].squeeze())
 

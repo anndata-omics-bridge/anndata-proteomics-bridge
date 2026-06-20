@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import IO, Union
 
-from anndata_proteomics.params._common import format_tolerance_range, read_text
+from anndata_proteomics.params._common import format_tolerance_range, lookup_mass_mod, read_text
 from anndata_proteomics.params.model import Parameters
 
 # Mass shift (Da) -> human-readable modification name, matched within MASS_TOLERANCE.
@@ -23,10 +23,7 @@ RESIDUE_MAP = {"[": "Protein N-term", "]": "Protein C-term", "^": "N-term", "$":
 
 def _lookup_mod_name(mass: float) -> str:
     """Return a modification name for a mass shift within tolerance, else the raw mass."""
-    for ref_mass, name in MASS_TO_MOD_MAPPING.items():
-        if abs(mass - ref_mass) < MASS_TOLERANCE:
-            return name
-    return str(mass)
+    return lookup_mass_mod(mass, MASS_TO_MOD_MAPPING, tol=MASS_TOLERANCE) or str(mass)
 
 
 def _parse_static_mods(mods: dict) -> str:

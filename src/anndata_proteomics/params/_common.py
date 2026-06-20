@@ -55,3 +55,38 @@ def format_tolerance_range(tolerance: Mapping[str, Sequence[float | int]]) -> st
             unit = unit_lookup[normalized]
             return "[" + ", ".join(f"{v} {unit}" for v in values) + "]"
     raise KeyError(f"unsupported tolerance unit(s): {list(tolerance.keys())}")
+
+
+def homogenize_paren_mods(mod: str, mapping: Mapping[str, str]) -> str:
+    """Convert a ``{name} (residues)`` modification token to ProForma-like notation.
+
+    ``Carbamidomethyl (C)`` -> ``C[Carbamidomethyl]``;
+    ``Phospho (STY)`` -> ``S[Phospho], T[Phospho], Y[Phospho]``;
+    ``Acetyl (Protein N-term)`` -> ``Protein N-term[Acetyl]``. Multi-letter
+    residue specs expand one token per letter. Tokens without a parenthesized
+    residue spec fall back to *mapping* (unrecognized names pass through). The
+    mapping data is per-vendor; only this mechanic is shared.
+    """
+    mod = mod.strip()
+    idx = mod.rfind("(")
+    if idx == -1:
+        return mapping.get(mod, mod)
+    name = mod[:idx].strip()
+    residues = mod[idx + 1 :].rstrip(")").strip()
+    if "n-term" in residues.lower() or "c-term" in residues.lower():
+        return f"{residues}[{name}]"
+    return ", ".join(f"{aa}[{name}]" for aa in residues)
+
+
+def lookup_mass_mod(
+    mass: float, mapping: Mapping[float, str], *, tol: float = 0.001
+) -> str | None:
+    """Return the modification name whose reference mass is within *tol* of *mass*, else ``None``.
+
+    The mass→name table and any fallback are per-vendor; only this nearest-match
+    lookup is shared.
+    """
+    for ref_mass, name in mapping.items():
+        if abs(mass - ref_mass) < tol:
+            return name
+    return None

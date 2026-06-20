@@ -10,8 +10,8 @@ from typing import IO, Union
 
 import pandas as pd
 
-from anndata_proteomics.params._common import read_text
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params._common import lookup_mass_mod, read_text
+from anndata_proteomics.params.model import MassTolerance, Parameters
 
 Parameter = namedtuple("Parameter", ["name", "value", "comment"])
 
@@ -43,10 +43,7 @@ _MASS_TOLERANCE = 0.001
 
 def _lookup_mod_name(mass: float) -> str | None:
     """Look up a modification name by mass shift within tolerance."""
-    for ref_mass, name in _MASS_TO_MOD.items():
-        if abs(mass - ref_mass) < _MASS_TOLERANCE:
-            return name
-    return None
+    return lookup_mass_mod(mass, _MASS_TO_MOD, tol=_MASS_TOLERANCE)
 
 
 def _parse_fixed_mods(raw: str) -> str:
@@ -201,8 +198,11 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
         f'{fp.loc["msfragger.precursor_mass_upper"]} {precursor_unit}]'
     )
     fragment_unit = "ppm" if int(fp.loc["msfragger.fragment_mass_units"]) else "Da"
-    fragment_tol_value = fp.loc["msfragger.fragment_mass_tolerance"]
-    fragment_tol = f"[-{fragment_tol_value} {fragment_unit}, {fragment_tol_value} {fragment_unit}]"
+    fragment_tol = MassTolerance(
+        mode="absolute",
+        value=float(fp.loc["msfragger.fragment_mass_tolerance"]),
+        unit=fragment_unit,
+    )
 
     if fp.loc["diann.run-dia-nn"] == "true":
         psm = pep = float(fp.loc["diann.q-value"])

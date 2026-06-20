@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import IO, Optional, Union
 
-from anndata_proteomics.params._common import read_lines
+from anndata_proteomics.params._common import homogenize_paren_mods, read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
@@ -29,30 +29,15 @@ MODIFICATION_MAPPING = {
 }
 
 
-def _homogenize_mod(mod: str) -> str:
-    """Convert a Spectronaut ``{name} ({residues})`` modification to ProForma-like form.
-
-    Examples:
-        ``Carbamidomethyl (C)`` -> ``C[Carbamidomethyl]``
-        ``Phospho (STY)`` -> ``S[Phospho], T[Phospho], Y[Phospho]``
-        ``Acetyl (Protein N-term)`` -> ``Protein N-term[Acetyl]``
-    """
-    mod = mod.strip()
-    idx = mod.rfind("(")
-    if idx == -1:
-        return MODIFICATION_MAPPING.get(mod, mod)
-    name = mod[:idx].strip()
-    residues = mod[idx + 1 :].rstrip(")").strip()
-    if "n-term" in residues.lower() or "c-term" in residues.lower():
-        return f"{residues}[{name}]"
-    return ", ".join(f"{aa}[{name}]" for aa in residues)
-
-
 def _homogenize_mods(raw_mods: Optional[str], sep: str = ",") -> Optional[str]:
-    """Map a separator-delimited modification string to ProForma-like notation."""
+    """Map a separator-delimited ``{name} ({residues})`` string to ProForma-like notation."""
     if not raw_mods or not raw_mods.strip():
         return raw_mods
-    return ", ".join(_homogenize_mod(mod) for mod in raw_mods.split(sep) if mod.strip())
+    return ", ".join(
+        homogenize_paren_mods(mod, MODIFICATION_MAPPING)
+        for mod in raw_mods.split(sep)
+        if mod.strip()
+    )
 
 
 def _clean(text: str) -> str:
