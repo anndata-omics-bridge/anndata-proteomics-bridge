@@ -137,29 +137,18 @@ def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
 
 def _format_charge(value: object) -> str:
     """Normalize charge values for ProForma ion identifiers."""
-    if value is None:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
         raise ValueError("cannot derive proforma_ion from missing charge")
-    if isinstance(value, float) and math.isnan(value):
-        raise ValueError("cannot derive proforma_ion from missing charge")
-    if isinstance(value, int):
-        numeric = value
-        if numeric <= 0:
-            raise ValueError(f"charge must be positive, got {value!r}")
-        return str(numeric)
-    if isinstance(value, float):
-        if value.is_integer():
-            numeric = int(value)
-            if numeric <= 0:
-                raise ValueError(f"charge must be positive, got {value!r}")
-            return str(numeric)
-        raise ValueError(f"charge must be an integer value, got {value!r}")
-    text = str(value).strip()
-    if not text:
-        raise ValueError("cannot derive proforma_ion from empty charge")
-    try:
-        numeric = float(text)
-    except ValueError as exc:
-        raise ValueError(f"charge must be numeric, got {value!r}") from exc
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            raise ValueError("cannot derive proforma_ion from empty charge")
+        try:
+            numeric = float(text)
+        except ValueError as exc:
+            raise ValueError(f"charge must be numeric, got {value!r}") from exc
     if not numeric.is_integer():
         raise ValueError(f"charge must be an integer value, got {value!r}")
     charge = int(numeric)
