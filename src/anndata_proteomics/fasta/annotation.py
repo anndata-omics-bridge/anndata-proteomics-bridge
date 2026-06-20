@@ -101,17 +101,39 @@ def fasta_to_dataframe(
             for fid, (hdr, seq) in records.items()
         ]
     )
+    frame = _drop_decoys(frame, decoy_pattern)
+    frame = _add_annotation_columns(
+        frame, is_uniprot=is_uniprot, min_length=min_length, max_length=max_length
+    )
 
-    if decoy_pattern:
-        decoy_match = frame["fasta.id"].str.contains(decoy_pattern, regex=True)
-        if 0 < decoy_match.mean() < 0.1:
-            logger.warning(
-                "decoy pattern %r matched only %.1f%% of records",
-                decoy_pattern,
-                100 * decoy_match.mean(),
-            )
-        frame = frame.loc[~decoy_match].reset_index(drop=True)
+    if not include_sequence:
+        frame = frame.drop(columns=["sequence"])
 
+    return frame
+
+
+def _drop_decoys(frame: pd.DataFrame, decoy_pattern: str) -> pd.DataFrame:
+    """Drop decoy rows matching *decoy_pattern*, warning on a suspiciously low hit rate."""
+    if not decoy_pattern:
+        return frame
+    decoy_match = frame["fasta.id"].str.contains(decoy_pattern, regex=True)
+    if 0 < decoy_match.mean() < 0.1:
+        logger.warning(
+            "decoy pattern %r matched only %.1f%% of records",
+            decoy_pattern,
+            100 * decoy_match.mean(),
+        )
+    return frame.loc[~decoy_match].reset_index(drop=True)
+
+
+def _add_annotation_columns(
+    frame: pd.DataFrame,
+    *,
+    is_uniprot: bool,
+    min_length: int,
+    max_length: int,
+) -> pd.DataFrame:
+    """Add proteinname, optional gene_name, protein_length, and tryptic-peptide counts."""
     if is_uniprot:
         frame["proteinname"] = frame["fasta.id"].map(_uniprot_proteinname)
     else:
@@ -127,10 +149,6 @@ def fasta_to_dataframe(
             seq, min_length=min_length, max_length=max_length
         )
     )
-
-    if not include_sequence:
-        frame = frame.drop(columns=["sequence"])
-
     return frame
 
 
