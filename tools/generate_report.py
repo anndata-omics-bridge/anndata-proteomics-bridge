@@ -30,6 +30,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from loguru import logger
 
@@ -49,6 +50,32 @@ DEV_RENDER_SCRIPT = WORKSPACE_ROOT / "annProtSum" / "inst" / "bin" / "render_rep
 LOG_FORMAT_FILE = "{time:YYYY-MM-DD HH:mm:ss} | {level: <7} | {message}"
 
 
+class LayerDesc(TypedDict):
+    """One AnnData layer's shape, as recorded in an Outcome / meta record."""
+
+    name: str
+    n_obs: int
+    n_var: int
+
+
+class MetaRecord(TypedDict):
+    """The JSON-serialized per-run record written to ``<stem>.meta.json``."""
+
+    status: str
+    software: str
+    stem: str
+    input_path: str | None
+    h5ad_path: str | None
+    html_path: str | None
+    log_path: str
+    input_size_bytes: int | None
+    h5ad_size_bytes: int | None
+    n_obs: int | None
+    n_var: int | None
+    layers: list[LayerDesc]
+    error: str | None
+
+
 @dataclass(frozen=True)
 class Outcome:
     status: str  # "ok" | "skipped" | "failed"
@@ -63,7 +90,7 @@ class Outcome:
     h5ad_size_bytes: int | None
     n_obs: int | None
     n_var: int | None
-    layers: list[dict[str, int | str]]
+    layers: list[LayerDesc]
     error: str | None
 
 
@@ -140,7 +167,7 @@ def _clear_output_dir(output_dir: Path) -> None:
 
 
 def _write_meta(outcome: Outcome) -> None:
-    meta = {
+    meta: MetaRecord = {
         "status": outcome.status,
         "software": outcome.software,
         "stem": outcome.stem,
@@ -212,7 +239,7 @@ def _run_one(rule: ParseRule, output_dir: Path, log_level: str) -> Outcome:
             adata.write_h5ad(h5ad_path)
             logger.info(f"wrote {h5ad_path}  shape={adata.shape}  layers={list(adata.layers)}")
 
-            layer_descs = [
+            layer_descs: list[LayerDesc] = [
                 {
                     "name": name,
                     "n_obs": int(adata.layers[name].shape[0]),
@@ -285,7 +312,7 @@ def _path_link(path_str: str) -> str:
     return f'<a href="{escaped}" title="{escaped}"><code>{base}</code></a>'
 
 
-def _meta_to_row(meta: dict) -> str:
+def _meta_to_row(meta: MetaRecord) -> str:
     """Render one <tr> for the index."""
     software = html.escape(meta["software"])
     log_cell = f'<a href="{html.escape(meta["log_path"])}">log</a>' if meta.get("log_path") else ""
@@ -295,8 +322,8 @@ def _meta_to_row(meta: dict) -> str:
 
     if meta["status"] == "ok":
         layer_lis = "".join(
-            f"<li><code>{html.escape(l['name'])}</code>: ({l['n_obs']}, {l['n_var']})</li>"
-            for l in meta["layers"]
+            f"<li><code>{html.escape(layer['name'])}</code>: ({layer['n_obs']}, {layer['n_var']})</li>"
+            for layer in meta["layers"]
         )
         dim_cell = (
             f"({meta['n_obs']}, {meta['n_var']})"

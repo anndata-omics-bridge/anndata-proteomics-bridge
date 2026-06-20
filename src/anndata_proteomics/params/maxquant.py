@@ -14,6 +14,7 @@ from anndata_proteomics.params.model import MassTolerance, Parameters
 
 XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
 FlatValue = str | None
+KeyPath = tuple[str | None, ...]
 
 # Fallback mapping for modifications without parenthesized residue specifiers.
 _MODIFICATION_MAPPING = {
@@ -79,16 +80,16 @@ def _read_xml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict[str, XmlValu
     return parsed
 
 
-def _extend(t: tuple, target_length: int) -> tuple:
+def _extend(t: KeyPath, target_length: int) -> KeyPath:
     if len(t) > target_length:
         raise ValueError(f"tuple too long for index width {target_length}: {t!r}")
     return t + (None,) * (target_length - len(t))
 
 
 def _flatten(
-    d: dict[str, XmlValue], parent_key: tuple = ()
-) -> list[tuple[tuple, FlatValue]]:
-    items: list[tuple[tuple, FlatValue]] = []
+    d: dict[str, XmlValue], parent_key: KeyPath = ()
+) -> list[tuple[KeyPath, FlatValue]]:
+    items: list[tuple[KeyPath, FlatValue]] = []
     for key, value in d.items():
         new_key = parent_key + (key,)
         if isinstance(value, collections.abc.MutableMapping):
@@ -104,7 +105,7 @@ def _flatten(
     return items
 
 
-def _build_series(record: dict, index_length: int = 4) -> pd.Series:
+def _build_series(record: dict[str, XmlValue], index_length: int = 4) -> pd.Series:
     items = _flatten(record)
     idx = pd.MultiIndex.from_tuples(_extend(k, index_length) for (k, _) in items)
     return pd.Series((v for (_, v) in items), index=idx)

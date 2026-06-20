@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -17,4 +16,4 @@ class ConversionPieces:
     obs: pd.DataFrame
     var: pd.DataFrame
     layers: dict[str, np.ndarray] = field(default_factory=dict)
-    uns: dict[str, Any] = field(default_factory=dict)
+    uns: dict[str, object] = field(default_factory=dict)

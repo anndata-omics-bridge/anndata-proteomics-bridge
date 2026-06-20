@@ -26,7 +26,7 @@ def _lookup_mod_name(mass: float) -> str:
     return lookup_mass_mod(mass, MASS_TO_MOD_MAPPING, tol=MASS_TOLERANCE) or str(mass)
 
 
-def _parse_static_mods(mods: dict) -> str:
+def _parse_static_mods(mods: dict[str, float]) -> str:
     """Render Sage ``static_mods`` ({residue: mass}) as a ProForma-like string."""
     results = []
     for residue, mass in mods.items():
@@ -35,7 +35,7 @@ def _parse_static_mods(mods: dict) -> str:
     return ", ".join(results)
 
 
-def _parse_variable_mods(mods: dict) -> str:
+def _parse_variable_mods(mods: dict[str, list[float]]) -> str:
     """Render Sage ``variable_mods`` ({residue: [masses]}) as a ProForma-like string."""
     results = []
     for residue, masses in mods.items():

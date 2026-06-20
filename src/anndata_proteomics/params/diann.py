@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Optional, Union
 
@@ -127,7 +128,7 @@ def _find_cmdline(lines: list[str]) -> Optional[str]:
     return None
 
 
-def _parse_cmdline(cmd: str, software_version: str) -> dict:
+def _parse_cmdline(cmd: str, software_version: str) -> dict[str, _SettingValue]:
     settings: dict[str, _SettingValue] = {}
     var_mods: list[str] = []
     fixed_mods: list[str] = []
@@ -158,7 +159,7 @@ def _parse_cmdline(cmd: str, software_version: str) -> dict:
     return settings
 
 
-def _coerce(setting_name: str, values: list[str]):
+def _coerce(setting_name: str, values: list[str]) -> float | int | str:
     if setting_name in _SETTINGS_PB_FLOAT:
         return float(values[0])
     if setting_name in _SETTINGS_PB_INT:
@@ -180,7 +181,13 @@ def _extract_with_regex(lines: list[str], regex: str, search_all: bool = False) 
     return container[-1] if container else None
 
 
-def _extract_cfg(lines: list[str], regex: str, cast_type=str, default=None, search_all: bool = False):
+def _extract_cfg(
+    lines: list[str],
+    regex: str,
+    cast_type: Callable[[str], object] = str,
+    default: object = None,
+    search_all: bool = False,
+) -> object:
     raw = _extract_with_regex(lines, regex, search_all=search_all)
     if raw is None:
         return default
@@ -202,7 +209,7 @@ def _extract_modifications(lines: list[str], regexes: list[str]) -> Optional[str
     return ",".join(mods).replace("\n", "") if mods else None
 
 
-def _protein_inference(cmd_dict: dict) -> str:
+def _protein_inference(cmd_dict: dict[str, _SettingValue]) -> str:
     if "no-prot-inf" in cmd_dict:
         return "Disabled"
     if "pg-level" in cmd_dict:
@@ -211,7 +218,7 @@ def _protein_inference(cmd_dict: dict) -> str:
     return "Genes"
 
 
-def _quantification_strategy(cmd_dict: dict) -> str:
+def _quantification_strategy(cmd_dict: dict[str, _SettingValue]) -> str:
     if "direct-quant" in cmd_dict:
         return "Legacy"
     if "high-acc" in cmd_dict:
@@ -219,7 +226,7 @@ def _quantification_strategy(cmd_dict: dict) -> str:
     return "QuantUMS high-precision"
 
 
-def _predictors_library(cmd_dict: dict) -> str | None:
+def _predictors_library(cmd_dict: dict[str, _SettingValue]) -> str | None:
     if "predictor" in cmd_dict:
         return "{'RT': 'DIANN', 'IM': 'DIANN', 'MS2_int': 'DIANN'}"
     if "lib" in cmd_dict and not isinstance(cmd_dict["lib"], bool):

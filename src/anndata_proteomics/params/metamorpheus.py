@@ -10,6 +10,8 @@ from anndata_proteomics.params._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 _Source = Union[str, Path, IO]
+# A parsed TOML mapping, or the first line of the version-text file.
+_Loaded = dict[str, object] | str
 
 
 def _format_tolerance(tolerance: str) -> MassTolerance:
@@ -59,10 +61,10 @@ def _parse_modifications(mods: str) -> str:
     return ", ".join(parsed)
 
 
-def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict]:
+def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict[str, object]]:
     """Identify which input is the version-text file and which is the TOML."""
     version_line: str | None = None
-    settings: dict | None = None
+    settings: dict[str, object] | None = None
 
     for source in (file_a, file_b):
         loaded = _try_load(source)
@@ -76,7 +78,7 @@ def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict]:
     return version_line, settings
 
 
-def _try_load(source: _Source):
+def _try_load(source: _Source) -> _Loaded:
     """Return a parsed TOML mapping, or the first line of a version-text file."""
     text = read_text(source, errors="replace")
     try:
