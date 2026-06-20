@@ -9,6 +9,21 @@ import pandas as pd
 
 from anndata_proteomics.params.model import Parameters
 
+# Map MSAID modification strings to ProForma-like notation.
+MODIFICATION_MAPPING = {
+    "Carbamidomethyl (C)": "C[Carbamidomethyl]",
+    "Oxidation (M)": "M[Oxidation]",
+    "Acetylation (N-term)": "N-term[Acetylation]",
+}
+
+
+def _homogenize_mods(raw_mods: str) -> str:
+    """Map a comma-separated MSAID modification string to ProForma-like notation."""
+    if not isinstance(raw_mods, str) or not raw_mods.strip():
+        return ""
+    mapped = [MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in raw_mods.split(",")]
+    return ", ".join(mapped)
+
 
 def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     """Parse an MSAID parameter CSV into :class:`Parameters`.
@@ -41,8 +56,8 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         allowed_miscleavages=int(raw["Max. Missed Cleavage Sites"]),
         min_peptide_length=int(raw["Min. Peptide Length"]),
         max_peptide_length=int(raw["Max. Peptide Length"]),
-        fixed_mods=raw["Static Modifications"],
-        variable_mods=raw["Variable Modifications"],
+        fixed_mods=_homogenize_mods(raw["Static Modifications"]),
+        variable_mods=_homogenize_mods(raw["Variable Modifications"]),
         max_mods=int(raw["Maximum Number of Modifications"]),
         min_precursor_charge=int(raw["Min. Peptide Charge"]),
         max_precursor_charge=int(raw["Max. Peptide Charge"]),

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import tomllib
-from io import BytesIO
 from pathlib import Path
 from typing import IO, Union
 
+from anndata_proteomics.params._common import read_text
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
@@ -19,14 +19,41 @@ def _format_tolerance(tolerance: str) -> str:
     return f"[-{value:.2f} {unit}, {value:.2f} {unit}]"
 
 
+def _homogenize_mod(mod_str: str) -> str:
+    """Convert a MetaMorpheus modification spec to ProForma-like notation.
+
+    MetaMorpheus format: ``{modname} on {residue}`` with optional terminal
+    qualifiers like ``(Pep N-Term)`` or ``(Prot N-Term)``.
+
+    Examples:
+        ``Carbamidomethyl on C`` -> ``C[Carbamidomethyl]``
+        ``Acetylation on X (Prot N-Term)`` -> ``Protein N-term[Acetylation]``
+        ``Oxidation on M`` -> ``M[Oxidation]``
+    """
+    mod_str = mod_str.strip()
+    if " on " not in mod_str:
+        return mod_str
+    name, residue_part = mod_str.split(" on ", 1)
+    residue_part = residue_part.strip()
+    if "(Prot N-Term)" in residue_part:
+        return f"Protein N-term[{name}]"
+    if "(Pep N-Term)" in residue_part:
+        return f"N-term[{name}]"
+    if "(Prot C-Term)" in residue_part:
+        return f"Protein C-term[{name}]"
+    if "(Pep C-Term)" in residue_part:
+        return f"C-term[{name}]"
+    return f"{residue_part}[{name}]"
+
+
 def _parse_modifications(mods: str) -> str:
-    """Convert MetaMorpheus tab-delimited mod blocks into a ``;``-joined string."""
+    """Convert MetaMorpheus tab-delimited mod blocks into a ``, ``-joined string."""
     parsed: list[str] = []
     for entry in mods.split("\t\t"):
         parts = entry.split("\t")
         if len(parts) > 1:
-            parsed.append(parts[1])
-    return ";".join(parsed)
+            parsed.append(_homogenize_mod(parts[1]))
+    return ", ".join(parsed)
 
 
 def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict]:
@@ -47,39 +74,12 @@ def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict]:
 
 
 def _try_load(source: _Source):
-    if hasattr(source, "read"):
-        return _try_load_filelike(source)
-    path = Path(source)
+    """Return a parsed TOML mapping, or the first line of a version-text file."""
+    text = read_text(source, errors="replace")
     try:
-        with open(path, "rb") as fh:
-            return tomllib.load(fh)
+        return tomllib.loads(text)
     except tomllib.TOMLDecodeError:
-        return path.read_text(encoding="utf-8").splitlines()[0].strip()
-
-
-def _try_load_filelike(source: IO):
-    try:
-        source.seek(0)
-    except Exception:
-        pass
-    try:
-        content = source.read()
-    finally:
-        try:
-            source.seek(0)
-        except Exception:
-            pass
-    if isinstance(content, str):
-        try:
-            return tomllib.load(BytesIO(content.encode("utf-8")))
-        except tomllib.TOMLDecodeError:
-            return content.splitlines()[0].strip()
-    if isinstance(content, bytes):
-        try:
-            return tomllib.load(BytesIO(content))
-        except tomllib.TOMLDecodeError:
-            return content.decode("utf-8", errors="replace").splitlines()[0].strip()
-    raise TypeError(f"unsupported file-like content type: {type(content).__name__}")
+        return text.splitlines()[0].strip()
 
 
 def extract_params(file_a: _Source, file_b: _Source) -> Parameters:

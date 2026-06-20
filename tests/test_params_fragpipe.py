@@ -11,7 +11,7 @@ import pytest
 from anndata_proteomics.params.fragpipe import extract_params
 from anndata_proteomics.params.model import Parameters
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 CASES = [
     "fragpipe.workflow",
@@ -20,6 +20,7 @@ CASES = [
     "fragpipe_v22.workflow",
     "fragpipe_fdr_test.workflow",
     "fragpipe-version.workflow",
+    "fragpipe_v23_noMBR.workflow",
 ]
 
 

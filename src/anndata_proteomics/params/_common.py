@@ -3,6 +3,35 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import IO, Union
+
+Source = Union[str, Path, IO[bytes], IO[str]]
+
+
+def read_text(source: Source, *, errors: str = "strict") -> str:
+    """Read a path, text file-like, or bytes file-like into text.
+
+    Rewinds seekable streams first (a no-op on fresh sources) and decodes bytes
+    as UTF-8. Centralizes the source-acquisition logic that each vendor parser
+    used to re-implement; only the per-vendor parse step legitimately varies.
+    """
+    if hasattr(source, "read"):
+        try:
+            source.seek(0)
+        except Exception:
+            pass
+        raw = source.read()
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors=errors)
+        return raw
+    return Path(source).read_text(encoding="utf-8", errors=errors)
+
+
+def read_lines(source: Source, *, strip: bool = False) -> list[str]:
+    """Read *source* into a list of lines, optionally stripping each line."""
+    lines = read_text(source).splitlines()
+    return [line.strip() for line in lines] if strip else lines
 
 
 def format_tolerance_range(tolerance: Mapping[str, Sequence[float | int]]) -> str:

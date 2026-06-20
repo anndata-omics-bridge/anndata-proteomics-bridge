@@ -10,7 +10,7 @@ import pytest
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.msaid import extract_params
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 
 def _expected_tsv(path: Path) -> Parameters:

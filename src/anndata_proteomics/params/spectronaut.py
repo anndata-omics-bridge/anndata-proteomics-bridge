@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import IO, Optional, Union
 
+from anndata_proteomics.params._common import read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
@@ -19,6 +20,39 @@ _MS2_STATIC = re.compile(r"MS2 Tolerance \(Th\):\s*(\d*)")
 _MS1_RELATIVE = re.compile(r"MS1 Tolerance \(ppm\):\s*(\d*)")
 _MS2_RELATIVE = re.compile(r"MS2 Tolerance \(ppm\):\s*(\d*)")
 _MAIN_SEARCH = re.compile(r"Main Search:\s*(.*)")
+
+# Fallback mapping for modifications without parenthesized residue specifiers.
+MODIFICATION_MAPPING = {
+    "Cys-Cys": "C[Disulfide]",
+    "Cysteinyl": "C[Cysteinyl]",
+    "Cysteinyl - carbamidomethyl": "C[Cysteinyl + Carbamidomethyl]",
+}
+
+
+def _homogenize_mod(mod: str) -> str:
+    """Convert a Spectronaut ``{name} ({residues})`` modification to ProForma-like form.
+
+    Examples:
+        ``Carbamidomethyl (C)`` -> ``C[Carbamidomethyl]``
+        ``Phospho (STY)`` -> ``S[Phospho], T[Phospho], Y[Phospho]``
+        ``Acetyl (Protein N-term)`` -> ``Protein N-term[Acetyl]``
+    """
+    mod = mod.strip()
+    idx = mod.rfind("(")
+    if idx == -1:
+        return MODIFICATION_MAPPING.get(mod, mod)
+    name = mod[:idx].strip()
+    residues = mod[idx + 1 :].rstrip(")").strip()
+    if "n-term" in residues.lower() or "c-term" in residues.lower():
+        return f"{residues}[{name}]"
+    return ", ".join(f"{aa}[{name}]" for aa in residues)
+
+
+def _homogenize_mods(raw_mods: Optional[str], sep: str = ",") -> Optional[str]:
+    """Map a separator-delimited modification string to ProForma-like notation."""
+    if not raw_mods or not raw_mods.strip():
+        return raw_mods
+    return ", ".join(_homogenize_mod(mod) for mod in raw_mods.split(sep) if mod.strip())
 
 
 def _clean(text: str) -> str:
@@ -83,21 +117,12 @@ def _extract_tolerances(
     return None, None
 
 
-def _load_lines(source: _Source) -> list[str]:
-    if hasattr(source, "read"):
-        raw = source.read()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return [line.strip() for line in raw.splitlines()]
-    return [line.strip() for line in Path(source).read_text(encoding="utf-8").splitlines()]
-
-
 def extract_params(source: _Source) -> Parameters:
     """Parse a Spectronaut settings-export text file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.spectronaut.read_spectronaut_settings``.
     """
-    lines = _load_lines(source)
+    lines = read_lines(source, strip=True)
     vendor = _value(lines, "Vendor:")
     if vendor not in _VENDOR_SYSTEM_MAP:
         raise ValueError(
@@ -139,8 +164,8 @@ def extract_params(source: _Source) -> Parameters:
         allowed_miscleavages=int(_value(lines, "Missed Cleavages:")),
         max_peptide_length=int(_value(lines, "Max Peptide Length:")),
         min_peptide_length=int(_value(lines, "Min Peptide Length:")),
-        fixed_mods=_value(lines, "Fixed Modifications:"),
-        variable_mods=_value_regex(lines, r"^Variable Modifications:"),
+        fixed_mods=_homogenize_mods(_value(lines, "Fixed Modifications:")),
+        variable_mods=_homogenize_mods(_value_regex(lines, r"^Variable Modifications:")),
         max_mods=int(_value(lines, "Max Variable Modifications:")),
         min_precursor_charge=min_z,
         max_precursor_charge=max_z,

@@ -10,7 +10,7 @@ import pytest
 from anndata_proteomics.params.metamorpheus import extract_params
 from anndata_proteomics.params.model import Parameters
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 TOML_FILE = PROTEOBENCH_PARAMS / "metamorpheus_search_task_config.toml"
 VERSION_FILE = PROTEOBENCH_PARAMS / "metamorpheus_version_result.txt"
 EXPECTED_CSV = PROTEOBENCH_PARAMS / "metamorpheus_parameters.csv"

@@ -14,6 +14,42 @@ from anndata_proteomics.params.model import Parameters
 XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
 FlatValue = str | None
 
+# Fallback mapping for modifications without parenthesized residue specifiers.
+_MODIFICATION_MAPPING = {
+    "Cys-Cys": "C[Disulfide]",
+    "Cysteinyl": "C[Cysteinyl]",
+    "Cysteinyl - carbamidomethyl": "C[Cysteinyl + Carbamidomethyl]",
+}
+
+
+def _homogenize_mod(mod_str: str) -> str:
+    """Convert a single MaxQuant modification token to ProForma-like notation.
+
+    MaxQuant format is ``{modname} ({residues})`` where residues can be single
+    letters (``M``), multi-letter (``STY``, one per letter), or terminal
+    qualifiers (``N-term``, ``Protein N-term``, ``C-term``, ``Protein C-term``).
+    Examples: ``Carbamidomethyl (C)`` -> ``C[Carbamidomethyl]``,
+    ``Phospho (STY)`` -> ``S[Phospho], T[Phospho], Y[Phospho]``,
+    ``Acetyl (Protein N-term)`` -> ``Protein N-term[Acetyl]``.
+    """
+    mod_str = mod_str.strip()
+    idx = mod_str.rfind("(")
+    if idx == -1:
+        return _MODIFICATION_MAPPING.get(mod_str, mod_str)
+    name = mod_str[:idx].strip()
+    residues = mod_str[idx + 1 :].rstrip(")").strip()
+    lower = residues.lower()
+    if "n-term" in lower or "c-term" in lower:
+        return f"{residues}[{name}]"
+    return ", ".join(f"{aa}[{name}]" for aa in residues)
+
+
+def _homogenize_mods(raw_mods: str, sep: str = ",") -> str:
+    """Parse and homogenize a separator-delimited modification string."""
+    if not raw_mods or not raw_mods.strip():
+        return ""
+    return ", ".join(_homogenize_mod(mod) for mod in raw_mods.split(sep) if mod.strip())
+
 
 def _add_record(data: dict[str, XmlValue], tag: str, record: XmlValue) -> dict[str, XmlValue]:
     if tag in data:
@@ -132,10 +168,12 @@ def extract_params(
     fixed_mods = series.loc[fixed_path].squeeze()
     if not isinstance(fixed_mods, str):
         fixed_mods = ",".join(fixed_mods)
+    fixed_mods = _homogenize_mods(fixed_mods)
 
     variable_mods = series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]].squeeze()
     if not isinstance(variable_mods, str):
         variable_mods = ",".join(variable_mods)
+    variable_mods = _homogenize_mods(variable_mods)
 
     return Parameters(
         software_name="MaxQuant",

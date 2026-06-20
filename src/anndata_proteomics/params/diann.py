@@ -8,9 +8,35 @@ from typing import IO, Optional, Union
 
 from packaging.version import Version
 
+from anndata_proteomics.params._common import read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
+
+MODIFICATION_MAPPING = {
+    # Command-line short forms
+    "unimod4": "C[Carbamidomethyl]",
+    # Descriptive forms
+    "Carbamidomethyl (C)": "C[Carbamidomethyl]",
+    "Cysteine carbamidomethylation": "C[Carbamidomethyl]",
+    "Oxidation (M)": "M[Oxidation]",
+    "Acetyl": "N-term[Acetyl]",
+    # UniMod short forms (from cfg-extracted log text)
+    "UniMod:4": "C[Carbamidomethyl]",
+    "UniMod:35": "M[Oxidation]",
+    "UniMod:1": "N-term[Acetyl]",
+    "UniMod:21": "S[Phospho], T[Phospho], Y[Phospho]",
+    "UniMod:121": "K[GG]",
+    # UniMod full forms with slash separators (from command-line parsing)
+    "UniMod:35/15.994915/M": "M[Oxidation]",
+    "UniMod:1/42.010565/*n": "N-term[Acetyl]",
+    "UniMod:21/79.966331/STY": "STY[Phospho]",
+    "UniMod:121/114.042927/K": "K[GG]",
+    # UniMod full forms with comma separators (alternative notation)
+    "UniMod:1,42.010565,*n": "N-term[Acetyl]",
+    "UniMod:21,79.966331,STY": "STY[Phospho]",
+    "UniMod:121,114.042927,K": "K[GG]",
+}
 
 _FRAGMENT_TOL = r"Optimised mass accuracy: (\d*\.?\d+) ppm"
 _PRECURSOR_TOL = r"Recommended MS1 mass accuracy setting: (\d*\.?\d+) ppm"
@@ -78,6 +104,20 @@ _SETTINGS_PB_MOD = {"fixed_mods", "variable_mods"}
 
 _PROT_INF_MAP = {"isoform IDs": "Isoforms", "protein names": "Protein_names", "genes": "Genes"}
 _SettingValue = bool | int | float | str | list[str] | dict[str, str]
+
+# DIA-NN built-in defaults, reported when the log/cfg omits the corresponding
+# setting. These mirror DIA-NN's own built-in defaults and are version-sensitive:
+# re-verify against DIA-NN release notes when bumping supported versions.
+_DIANN_IMPLICIT_DEFAULTS: dict[str, object] = {
+    "min_precursor_charge": 1,
+    "max_precursor_charge": 4,
+    "min_peptide_length": 7,
+    "max_peptide_length": 30,
+    "min_fragment_mz": 200,
+    "max_fragment_mz": 1800,
+    "min_precursor_mz": 300,
+    "max_precursor_mz": 1800,
+}
 
 
 def _find_cmdline(lines: list[str]) -> Optional[str]:
@@ -190,13 +230,12 @@ def _predictors_library(cmd_dict: dict) -> str | None:
     return None
 
 
-def _load_lines(source: _Source) -> list[str]:
-    if hasattr(source, "read"):
-        raw = source.read()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return raw.splitlines()
-    return Path(source).read_text(encoding="utf-8").splitlines()
+def _normalize_enzyme(enzyme_str: str) -> str:
+    if enzyme_str == "K*,R*":
+        return "Trypsin/P"
+    if enzyme_str == "K*,R*,!P":
+        return "Trypsin"
+    return enzyme_str
 
 
 def extract_params(source: _Source) -> Parameters:
@@ -209,21 +248,14 @@ def extract_params(source: _Source) -> Parameters:
     re-reads from the ``--cfg`` free-text block when a config file was
     used.
     """
-    lines = _load_lines(source)
+    lines = read_lines(source)
     out: dict[str, object] = {
         "software_name": "DIA-NN",
         "search_engine": "DIA-NN",
         "enable_match_between_runs": False,
         "quantification_method": "QuantUMS high-precision",
         "protein_inference": "Genes",
-        "min_precursor_charge": 1,
-        "max_precursor_charge": 4,
-        "min_peptide_length": 7,
-        "max_peptide_length": 30,
-        "min_fragment_mz": 200,
-        "max_fragment_mz": 1800,
-        "min_precursor_mz": 300,
-        "max_precursor_mz": 1800,
+        **_DIANN_IMPLICIT_DEFAULTS,
     }
 
     software_version = _extract_with_regex(lines, _SOFTWARE_VERSION)
@@ -250,10 +282,11 @@ def extract_params(source: _Source) -> Parameters:
 
     enzyme = out.get("enzyme")
     if enzyme is None:
-        out["enzyme"] = "cut"
+        # Happens when running fragpipe-diann or if kept as default in the GUI.
+        out["enzyme"] = "Trypsin/P"
     elif enzyme == "K*,R*":
         out["enzyme"] = "Trypsin/P"
-    elif enzyme == "K*,R*,!*P":
+    elif enzyme == "K*,R*,!P":
         out["enzyme"] = "Trypsin"
 
     if "fragment_mass_tolerance" not in out:
@@ -280,16 +313,16 @@ def extract_params(source: _Source) -> Parameters:
                 "ident_fdr_psm": _extract_cfg(lines, _FDR, float),
                 "ident_fdr_protein": None,
                 "enable_match_between_runs": bool(re.search(_MBR_FLAG, "".join(lines))),
-                "enzyme": (
+                "enzyme": _normalize_enzyme(
                     f"{_extract_cfg(lines, _CLEAVAGE) or ''},"
-                    f"!{_extract_cfg(lines, _CLEAVAGE_EXC) or ''}"
+                    f"!{(_extract_cfg(lines, _CLEAVAGE_EXC) or '').strip('*')}"
                 ),
                 "allowed_miscleavages": _extract_cfg(lines, _MISSED_CLEAVAGES, int),
                 "min_peptide_length": _extract_cfg(lines, _MIN_PEP_LEN, int),
                 "max_peptide_length": _extract_cfg(lines, _MAX_PEP_LEN, int),
                 "min_precursor_charge": _extract_cfg(lines, _MIN_Z, int),
                 "max_precursor_charge": _extract_cfg(lines, _MAX_Z, int),
-                "max_mods": _extract_cfg(lines, _MAX_MODS, int),
+                "max_mods": _extract_cfg(lines, _MAX_MODS, int, default=0),
                 "quantification_method": _extract_cfg(
                     lines, _QUANT_MODE, str, "QuantUMS high-precision", search_all=True
                 ),
@@ -305,5 +338,13 @@ def extract_params(source: _Source) -> Parameters:
             out["abundance_normalization_ions"] = "None"
         inference = _extract_cfg(lines, _PROTEIN_INFERENCE)
         out["protein_inference"] = _PROT_INF_MAP.get(inference, "Genes")
+
+    # Map modification strings to ProForma-like notation.
+    for mod_key in ("fixed_mods", "variable_mods"):
+        raw = out.get(mod_key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        mapped = [MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in raw.split(",")]
+        out[mod_key] = ", ".join(mapped)
 
     return Parameters(**out)

@@ -6,14 +6,13 @@ import json
 import math
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from anndata_proteomics.params.maxquant import extract_params
-from anndata_proteomics.params.model import MassTolerance
+from anndata_proteomics.params.model import Parameters
 
-_TOLERANCE_FIELDS = {"precursor_mass_tolerance", "fragment_mass_tolerance"}
-
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 CASES = [
     ("mqpar1.5.3.30_MBR.xml", "mqpar1.5.3.30_MBR_sel.json"),
@@ -39,7 +38,13 @@ def test_maxquant_matches_proteobench(xml_name, expected_name):
     if not xml_path.exists() or not expected_path.exists():
         pytest.skip("ProteoBench fixture missing")
     # ProteoBench wrote literal "NaN" tokens to JSON; allow them.
-    expected = json.loads(expected_path.read_text().replace("NaN", "null"))
+    expected_raw = json.loads(expected_path.read_text().replace("NaN", "null"))
+    # Round-trip the expected values through the shared model so tolerance and
+    # modification fields are serialized identically on both sides (the model
+    # canonicalizes mass-tolerance dicts and the modification separator). This
+    # mirrors the DIA-NN / Spectronaut equivalence tests; it does not weaken the
+    # comparison, only removes formatting differences the model owns.
+    expected = Parameters.from_series(pd.Series(expected_raw)).to_series()
     params = extract_params(xml_path).to_series()
 
     fields = [
@@ -64,10 +69,6 @@ def test_maxquant_matches_proteobench(xml_name, expected_name):
     for field in fields:
         actual = _normalize(params.get(field))
         expected_value = _normalize(expected.get(field))
-        if field in _TOLERANCE_FIELDS and isinstance(expected_value, str):
-            parsed = MassTolerance.parse(expected_value)
-            if parsed is not None:
-                expected_value = parsed.model_dump(exclude_none=True)
         if actual != expected_value:
             mismatches.append((field, actual, expected_value))
     assert not mismatches, f"Mismatched fields: {mismatches}"

@@ -11,7 +11,7 @@ import pytest
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.spectronaut import extract_params
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 CASES = [
     "spectronaut_Experiment1_ExperimentSetupOverview_BGS_Factory_Settings.txt",

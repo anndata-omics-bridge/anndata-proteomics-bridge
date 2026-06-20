@@ -10,6 +10,7 @@ from typing import IO, Union
 
 import pandas as pd
 
+from anndata_proteomics.params._common import read_text
 from anndata_proteomics.params.model import Parameters
 
 Parameter = namedtuple("Parameter", ["name", "value", "comment"])
@@ -17,11 +18,102 @@ Parameter = namedtuple("Parameter", ["name", "value", "comment"])
 _VERSION_NO_PATTERN = r"MSFragger-(.+)\.jar"
 
 _DIANN_QUANT = {
-    1: "An" "y LC (high accuracy)",
-    2: "An" "y LC (high precision)",
+    1: "Any LC (high accuracy)",
+    2: "Any LC (high precision)",
     3: "Robust LC (high accuracy)",
     4: "Robust LC (high precision)",
 }
+
+# Common mass shifts mapped to modification names (ProForma notation).
+_MASS_TO_MOD = {
+    57.02146: "Carbamidomethyl",
+    15.9949: "Oxidation",
+    42.0106: "Acetyl",
+    79.96633: "Phospho",
+    114.04293: "GG",
+    -17.0265: "Pyro-glu",
+    -18.0106: "Pyro-glu",
+    4.025107: "Label:2H(4)",
+    6.020129: "Label:13C(6)",
+    8.014199: "Label:13C(6)15N(2)",
+    10.008269: "Label:13C(6)15N(4)",
+}
+_MASS_TOLERANCE = 0.001
+
+
+def _lookup_mod_name(mass: float) -> str | None:
+    """Look up a modification name by mass shift within tolerance."""
+    for ref_mass, name in _MASS_TO_MOD.items():
+        if abs(mass - ref_mass) < _MASS_TOLERANCE:
+            return name
+    return None
+
+
+def _parse_fixed_mods(raw: str) -> str:
+    """Parse MSFragger fixed modifications string into ProForma-like format.
+
+    Input format: ``mass,residue_description,active,num_sites`` entries separated by ``; ``.
+    Example: ``57.02146,C (cysteine),true,-1``
+    """
+    if not raw or not raw.strip():
+        return ""
+    results = []
+    for entry in raw.split("; "):
+        parts = entry.strip().split(",", 3)
+        if len(parts) < 3:
+            continue
+        mass_str, residue_desc, active = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        if active != "true":
+            continue
+        mass = float(mass_str)
+        if abs(mass) < _MASS_TOLERANCE:
+            continue
+        mod_name = _lookup_mod_name(mass) or mass_str.strip()
+        residue_match = re.match(r"^([A-Z])\s*\(", residue_desc)
+        if residue_match:
+            residue = residue_match.group(1)
+        elif "N-Term" in residue_desc:
+            residue = "N-term"
+        elif "C-Term" in residue_desc:
+            residue = "C-term"
+        else:
+            residue = residue_desc
+        results.append(f"{residue}[{mod_name}]")
+    return ", ".join(results)
+
+
+def _parse_variable_mods(raw: str) -> str:
+    """Parse MSFragger variable modifications string into ProForma-like format.
+
+    Input format: ``mass,residue,active,max_occurrences`` entries separated by ``; ``.
+    Special residue notations: ``[^`` = protein N-term, ``nX`` = peptide N-term of residue X.
+    """
+    if not raw or not raw.strip():
+        return ""
+    results = []
+    for entry in raw.split("; "):
+        parts = entry.strip().split(",", 3)
+        if len(parts) < 3:
+            continue
+        mass_str, residue_field, active = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        if active != "true":
+            continue
+        mass = float(mass_str)
+        if abs(mass) < _MASS_TOLERANCE:
+            continue
+        mod_name = _lookup_mod_name(mass) or mass_str.strip()
+        if residue_field == "[^":
+            results.append(f"N-term[{mod_name}]")
+        elif residue_field.startswith("n"):
+            aa_residues = re.findall(r"n([A-Z])", residue_field)
+            if aa_residues:
+                for aa in aa_residues:
+                    results.append(f"N-term {aa}[{mod_name}]")
+            else:
+                results.append(f"N-term[{mod_name}]")
+        else:
+            results.append(f"{residue_field}[{mod_name}]")
+    return ", ".join(results)
 
 
 def _parse_lines(lines: list[str], sep: str = "=") -> list[Parameter]:
@@ -80,25 +172,12 @@ def _read_workflow(content: str) -> tuple[str, str | None, str | None, list[Para
     return header, msfragger_version, fragpipe_version, _parse_lines(lines)
 
 
-def _load_text(source: Union[str, Path, IO]) -> str:
-    if hasattr(source, "read"):
-        try:
-            source.seek(0)
-        except Exception:
-            pass
-        raw = source.read()
-        if isinstance(raw, bytes):
-            return raw.decode("utf-8")
-        return raw
-    return Path(source).read_text(encoding="utf-8")
-
-
 def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
     """Parse a FragPipe ``.workflow`` file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.fragger.extract_params``.
     """
-    content = _load_text(source)
+    content = read_text(source)
     header, msfragger_version, fragpipe_version, records = _read_workflow(content)
     fp = pd.DataFrame.from_records(records, columns=Parameter._fields).set_index("name")["value"]
 
@@ -169,8 +248,8 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
         enzyme=enzyme,
         allowed_miscleavages=int(fp.loc["msfragger.allowed_missed_cleavage_1"]),
         semi_enzymatic=fp.loc["msfragger.num_enzyme_termini"] != "2",
-        fixed_mods=fp.loc["msfragger.table.fix-mods"],
-        variable_mods=fp.loc["msfragger.table.var-mods"],
+        fixed_mods=_parse_fixed_mods(fp.loc["msfragger.table.fix-mods"]),
+        variable_mods=_parse_variable_mods(fp.loc["msfragger.table.var-mods"]),
         max_mods=int(fp.loc["msfragger.max_variable_mods_per_peptide"]),
         min_peptide_length=int(fp.loc["msfragger.digest_min_length"]),
         max_peptide_length=int(fp.loc["msfragger.digest_max_length"]),

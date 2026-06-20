@@ -6,8 +6,46 @@ import json
 from pathlib import Path
 from typing import IO, Union
 
-from anndata_proteomics.params._common import format_tolerance_range
+from anndata_proteomics.params._common import format_tolerance_range, read_text
 from anndata_proteomics.params.model import Parameters
+
+# Mass shift (Da) -> human-readable modification name, matched within MASS_TOLERANCE.
+MASS_TO_MOD_MAPPING = {
+    57.021464: "Carbamidomethyl",
+    15.9949: "Oxidation",
+    42.0106: "Acetyl",
+}
+MASS_TOLERANCE = 0.001
+
+# Sage uses "[" for N-terminal and "]" for C-terminal modifications.
+RESIDUE_MAP = {"[": "Protein N-term", "]": "Protein C-term", "^": "N-term", "$": "C-term"}
+
+
+def _lookup_mod_name(mass: float) -> str:
+    """Return a modification name for a mass shift within tolerance, else the raw mass."""
+    for ref_mass, name in MASS_TO_MOD_MAPPING.items():
+        if abs(mass - ref_mass) < MASS_TOLERANCE:
+            return name
+    return str(mass)
+
+
+def _parse_static_mods(mods: dict) -> str:
+    """Render Sage ``static_mods`` ({residue: mass}) as a ProForma-like string."""
+    results = []
+    for residue, mass in mods.items():
+        res = RESIDUE_MAP.get(residue, residue)
+        results.append(f"{res}[{_lookup_mod_name(mass)}]")
+    return ", ".join(results)
+
+
+def _parse_variable_mods(mods: dict) -> str:
+    """Render Sage ``variable_mods`` ({residue: [masses]}) as a ProForma-like string."""
+    results = []
+    for residue, masses in mods.items():
+        res = RESIDUE_MAP.get(residue, residue)
+        for mass in masses:
+            results.append(f"{res}[{_lookup_mod_name(mass)}]")
+    return ", ".join(results)
 
 
 def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
@@ -17,7 +55,7 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     Field mapping mirrors ProteoBench's ``proteobench.io.params.sage.extract_params``
     so existing expected-output CSVs are reproduced unchanged.
     """
-    data = _load_json(source)
+    data = json.loads(read_text(source))
 
     enzyme = data["database"]["enzyme"]["cleave_at"]
     if enzyme in ("KR", "RK"):
@@ -45,8 +83,8 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         enzyme=enzyme,
         semi_enzymatic=semi_enzymatic,
         allowed_miscleavages=data["database"]["enzyme"]["missed_cleavages"],
-        fixed_mods=data["database"]["static_mods"],
-        variable_mods=data["database"]["variable_mods"],
+        fixed_mods=_parse_static_mods(data["database"]["static_mods"]),
+        variable_mods=_parse_variable_mods(data["database"]["variable_mods"]),
         precursor_mass_tolerance=format_tolerance_range(data["precursor_tol"]),
         fragment_mass_tolerance=format_tolerance_range(data["fragment_tol"]),
         min_peptide_length=int(data["database"]["enzyme"]["min_len"]),
@@ -56,15 +94,3 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         max_precursor_charge=int(data["precursor_charge"][1]),
         enable_match_between_runs=True,
     )
-
-
-def _load_json(source: Union[str, Path, IO[bytes], IO[str]]) -> dict:
-    if hasattr(source, "getvalue"):
-        raw = source.getvalue()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return json.loads(raw)
-    if hasattr(source, "read"):
-        return json.load(source)
-    with open(source, "r", encoding="utf-8") as handle:
-        return json.load(handle)

@@ -11,7 +11,7 @@ import pytest
 from anndata_proteomics.params.diann import extract_params
 from anndata_proteomics.params.model import Parameters
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 # DIANN_1.7.16 excluded: its checked-in expected CSV predates a code change
 # (charges, abundance_normalization_ions, etc.) and disagrees with what

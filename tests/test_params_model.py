@@ -36,7 +36,8 @@ def test_to_series_roundtrip():
     s = p.to_series()
     assert s["software_name"] == "Sage"
     assert s["min_peptide_length"] == 7
-    assert s["enzyme"] == "KR"
+    # "KR" canonicalizes via _ENZYME_MAP (ProteoBench parity)
+    assert s["enzyme"] == "Trypsin/P"
     assert s["abundance_normalization_ions"] is None
 
 
@@ -105,7 +106,7 @@ def test_mass_tolerance_accepts_only_ppm_or_da_units():
         MassTolerance.parse("20 kg")
 
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 
 def test_from_series_reads_sage_expected_csv():
@@ -116,5 +117,6 @@ def test_from_series_reads_sage_expected_csv():
     series = df.iloc[:, 0]
     p = Parameters.from_series(series)
     assert p.software_name == "Sage"
-    assert p.enzyme == "KR"
+    # "KR" canonicalizes to Trypsin/P via the model's _ENZYME_MAP (ProteoBench parity)
+    assert p.enzyme == "Trypsin/P"
     assert p.min_peptide_length == 7

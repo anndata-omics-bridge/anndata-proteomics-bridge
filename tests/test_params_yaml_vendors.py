@@ -11,7 +11,7 @@ from anndata_proteomics.params.alphapept import extract_params as alphapept_extr
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.wombat import extract_params as wombat_extract
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 COMMON_FIELDS = [
     "software_name",

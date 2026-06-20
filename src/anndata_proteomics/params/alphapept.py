@@ -7,7 +7,14 @@ from typing import IO, Union
 
 import yaml
 
+from anndata_proteomics.params._common import read_text
 from anndata_proteomics.params.model import Parameters
+
+MODIFICATION_MAPPING = {
+    "cC": "C[Carbamidomethyl]",
+    "oxM": "M[Oxidation]",
+    "a<^": "N-term[Acetyl]",
+}
 
 
 def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
@@ -15,7 +22,7 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
 
     Mirrors ``proteobench.io.params.alphapept.extract_params``.
     """
-    record = _load_yaml(source)
+    record = yaml.safe_load(read_text(source))
     summary = record["summary"]
     fasta = record["fasta"]
     search = record["search"]
@@ -40,8 +47,8 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         search_engine_version=summary["version"],
         enzyme=enzyme,
         allowed_miscleavages=fasta["n_missed_cleavages"],
-        fixed_mods=",".join(fixed),
-        variable_mods=",".join(variable),
+        fixed_mods=", ".join(MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in fixed),
+        variable_mods=", ".join(MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in variable),
         max_mods=fasta["n_modifications_max"],
         min_peptide_length=fasta["pep_length_min"],
         max_peptide_length=fasta["pep_length_max"],
@@ -53,10 +60,3 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         max_precursor_charge=features["iso_charge_max"],
         enable_match_between_runs=workflow["match"],
     )
-
-
-def _load_yaml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict:
-    if hasattr(source, "read"):
-        return yaml.safe_load(source)
-    with open(source, "rb") as handle:
-        return yaml.safe_load(handle)

@@ -136,9 +136,7 @@ def test_convert_rejects_non_integral_charge_for_proforma_ion():
 
 
 def test_convert_with_params_path_attaches_search_parameters(tmp_path):
-    proteobench_params = Path(
-        "/Users/wolski/projects/anndata_bridge/ProteoBench/test/params/sage_parameterfile.json"
-    )
+    proteobench_params = Path(__file__).resolve().parent / "params" / "sage_parameterfile.json"
     if not proteobench_params.exists():
         pytest.skip("ProteoBench fixture missing")
     adata = convert(_make_df(), _make_rule(), params_path=proteobench_params)

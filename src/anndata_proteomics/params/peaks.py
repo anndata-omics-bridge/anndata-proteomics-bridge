@@ -6,9 +6,19 @@ import re
 from pathlib import Path
 from typing import IO, Union
 
+from anndata_proteomics.params._common import read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
+
+# PEAKS modification tokens -> ProForma-style names (ports ProteoBench's
+# ``peaks.MODIFICATION_MAPPING``). Applied via ``MAP.get(mod, mod)`` so
+# unrecognized modifications pass through unchanged.
+_MODIFICATION_MAPPING = {
+    "Carbamidomethylation (+57.02)": "C[Carbamidomethyl]",
+    "Oxidation (M) (+15.99)": "M[Oxidation]",
+    "Acetylation (Protein N-term) (+42.01)": "Protein N-term[Acetylation]",
+}
 
 
 def _clean(text: str) -> str:
@@ -25,6 +35,12 @@ def _value(lines: list[str], term: str) -> str | None:
 def _mass_tolerance(lines: list[str], term: str) -> str | None:
     raw = _value(lines, term)
     return "40 ppm" if raw == "System Default" else raw
+
+
+def _fdr(lines: list[str], term: str) -> str | None:
+    """Extract an FDR value, dropping any trailing ``%`` (e.g. ``1.0%`` -> ``1.0``)."""
+    raw = _value(lines, term)
+    return raw.replace("%", "").strip() if raw else raw
 
 
 def _between(lines: list[str], start: str, end: str, only_last: bool = False) -> list[str]:
@@ -52,24 +68,15 @@ def _between(lines: list[str], start: str, end: str, only_last: bool = False) ->
     return items
 
 
-def _load_lines(source: _Source) -> list[str]:
-    if hasattr(source, "read"):
-        raw = source.read()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return [line.strip() for line in raw.splitlines()]
-    return [line.strip() for line in Path(source).read_text(encoding="utf-8").splitlines()]
-
-
 def extract_params(source: _Source) -> Parameters:
     """Parse a PEAKS settings text file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.peaks.extract_params``.
     """
-    lines = _load_lines(source)
+    lines = read_lines(source, strip=True)
 
     version = _value(lines, "PEAKS Version:")
-    psm_fdr = _value(lines, "Precursor FDR:") or _value(lines, "PSM FDR:")
+    psm_fdr = _fdr(lines, "Precursor FDR:") or _fdr(lines, "PSM FDR:")
 
     try:
         peptide_range = _value(lines, "Peptide Length between:").split(",")
@@ -99,8 +106,8 @@ def extract_params(source: _Source) -> Parameters:
         search_engine="PEAKS",
         search_engine_version=version,
         ident_fdr_psm=psm_fdr,
-        ident_fdr_peptide=_value(lines, "Peptide FDR:"),
-        ident_fdr_protein=_value(lines, "Protein Group FDR:"),
+        ident_fdr_peptide=_fdr(lines, "Peptide FDR:"),
+        ident_fdr_protein=_fdr(lines, "Protein Group FDR:"),
         enable_match_between_runs=_value(lines, "Match Between Run:") == "Yes",
         precursor_mass_tolerance=_mass_tolerance(lines, "Precursor Mass Error Tolerance:"),
         fragment_mass_tolerance=_mass_tolerance(lines, "Fragment Mass Error Tolerance:"),
@@ -109,8 +116,8 @@ def extract_params(source: _Source) -> Parameters:
         allowed_miscleavages=int(_value(lines, "Max Missed Cleavage:")),
         min_peptide_length=int(peptide_range[0]),
         max_peptide_length=int(peptide_range[1]),
-        fixed_mods=" ,".join(fixed),
-        variable_mods=" ,".join(variable),
+        fixed_mods=", ".join(_MODIFICATION_MAPPING.get(m.strip(), m.strip()) for m in fixed),
+        variable_mods=", ".join(_MODIFICATION_MAPPING.get(m.strip(), m.strip()) for m in variable),
         max_mods=int(_value(lines, "Max Variable PTM per Peptide:")),
         min_precursor_charge=int(charge_range[0]),
         max_precursor_charge=int(charge_range[1]),

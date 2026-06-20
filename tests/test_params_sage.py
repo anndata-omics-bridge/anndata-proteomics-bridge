@@ -11,7 +11,7 @@ import pytest
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.sage import extract_params
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 SAGE_PARAMETERFILE = PROTEOBENCH_PARAMS / "sage_parameterfile.json"
 SAGE_PARAMETERFILE_CSV = PROTEOBENCH_PARAMS / "sage_parameterfile.csv"
 SAGE_RESULTS = PROTEOBENCH_PARAMS / "sage_results.json"
@@ -43,6 +43,8 @@ def _assert_matches_expected(params: Parameters, expected_csv: Path) -> None:
         "precursor_mass_tolerance",
         "fragment_mass_tolerance",
         "enable_match_between_runs",
+        "fixed_mods",
+        "variable_mods",
     ]
     mismatches = []
     for field in fields_to_check:
@@ -88,8 +90,8 @@ def test_sage_accepts_filelike_object(tmp_path):
     assert params.precursor_mass_tolerance.value == 20.0
     assert params.precursor_mass_tolerance.unit == "ppm"
     assert params.precursor_mass_tolerance.mode == "absolute"
-    # restrict is present (null) → enzyme stays raw (ProteoBench parity)
-    assert params.enzyme == "KR"
+    # "KR" canonicalizes to Trypsin/P via the model's _ENZYME_MAP (ProteoBench parity)
+    assert params.enzyme == "Trypsin/P"
 
 
 def test_sage_trypsin_p_when_restrict_missing():

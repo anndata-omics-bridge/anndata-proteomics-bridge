@@ -7,7 +7,31 @@ from typing import IO, Union
 
 import yaml
 
+from anndata_proteomics.params._common import read_text
 from anndata_proteomics.params.model import Parameters
+
+
+def _homogenize_mod_xtandem(mod_str: str) -> str:
+    """Convert a WOMBAT-P X!Tandem modification spec to ProForma-like notation.
+
+    Format: ``{modname} of {residue}``, e.g. ``Oxidation of M``,
+    ``Acetyl of Protein N-term``.
+    """
+    mod_str = mod_str.strip()
+    if " of " not in mod_str:
+        return mod_str
+    name, residue_part = mod_str.split(" of ", 1)
+    residue_part = residue_part.strip()
+    lower = residue_part.lower()
+    if "protein n-term" in lower:
+        return f"Protein N-term[{name}]"
+    if "n-term" in lower:
+        return f"N-term[{name}]"
+    if "protein c-term" in lower:
+        return f"Protein C-term[{name}]"
+    if "c-term" in lower:
+        return f"C-term[{name}]"
+    return f"{residue_part.upper()}[{name}]"
 
 
 def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
@@ -15,7 +39,7 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
 
     Mirrors ``proteobench.io.params.wombat.extract_params``.
     """
-    record = _load_yaml(source)
+    record = yaml.safe_load(read_text(source))
     p = record["params"]
 
     enzyme = p["enzyme"]
@@ -28,8 +52,8 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         search_engine="various",
         enzyme=enzyme,
         allowed_miscleavages=p["miscleavages"],
-        fixed_mods=p["fixed_mods"],
-        variable_mods=p["variable_mods"],
+        fixed_mods=", ".join(_homogenize_mod_xtandem(m) for m in p["fixed_mods"].split(",")),
+        variable_mods=", ".join(_homogenize_mod_xtandem(m) for m in p["variable_mods"].split(",")),
         max_mods=p["max_mods"],
         min_peptide_length=p["min_peptide_length"],
         max_peptide_length=p["max_peptide_length"],
@@ -43,10 +67,3 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         enable_match_between_runs=p["enable_match_between_runs"],
         abundance_normalization_ions=p["normalization_method"],
     )
-
-
-def _load_yaml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict:
-    if hasattr(source, "read"):
-        return yaml.safe_load(source)
-    with open(source, "rb") as handle:
-        return yaml.safe_load(handle)

@@ -11,7 +11,7 @@ import pytest
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.peaks import extract_params
 
-PROTEOBENCH_PARAMS = Path("/Users/wolski/projects/anndata_bridge/ProteoBench/test/params")
+PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
 CASES = [
     "PEAKS_parameters.txt",

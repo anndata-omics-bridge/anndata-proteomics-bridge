@@ -24,7 +24,49 @@ ScalarValue = str | int | float | bool | None
 ToleranceUnit = Literal["ppm", "Da"]
 ToleranceMode = Literal["absolute", "automatic"]
 
-_MISSING_STRINGS = {"", "none", "nan", "n/a", "na", "not specified", "unknown"}
+_MISSING_STRINGS = {"", "-", "none", "nan", "n/a", "na", "not specified", "unknown", "placeholder"}
+
+# Canonical enzyme-name mapping (lowercase key -> display name), ported from
+# ProteoBench's io/params `_ENZYME_MAP`. Applied symmetrically to parser output
+# and round-tripped CSV expectations via the `enzyme` before-validator.
+_ENZYME_MAP = {
+    "trypsin": "Trypsin",
+    "trypsin/p": "Trypsin/P",
+    "stricttrypsin": "Trypsin/P",
+    "k*,r*,!p*": "Trypsin",
+    "[rk]|{p}": "Trypsin",
+    "[rk]": "Trypsin/P",
+    "kr": "Trypsin/P",
+    "kr|p,true": "Trypsin",
+    "kr|p,t": "Trypsin",
+    "kr,true": "Trypsin/P",
+    "kr,t": "Trypsin/P",
+    "lys-c": "Lys-C",
+    "lysc": "Lys-C",
+    "arg-c": "Arg-C",
+    "argc": "Arg-C",
+    "asp-n": "Asp-N",
+    "aspn": "Asp-N",
+    "chymotrypsin": "Chymotrypsin",
+    "gluc": "Glu-C",
+    "glu-c": "Glu-C",
+}
+
+# Tolerance values that indicate automatic calibration (ported from ProteoBench
+# `_AUTO_CALIBRATION_SENTINELS`); collapsed to a single canonical label.
+_AUTO_CALIBRATION_LABEL = "Automatic calibration"
+_AUTO_CALIBRATION_SENTINELS = frozenset(
+    {
+        "dynamic",
+        "automatic",
+        "automatic calibration",
+        "auto",
+        "auto detected",
+        "0",
+        "0 ppm",
+        "[-0.0 ppm, 0.0 ppm]",
+    }
+)
 _RANGE_RE = re.compile(
     r"^\[\s*(?P<lower>[+-]?\d+(?:\.\d+)?)\s*(?P<unit1>[A-Za-z]*)\s*,\s*"
     r"(?P<upper>[+-]?\d+(?:\.\d+)?)\s*(?P<unit2>[A-Za-z]*)\s*\]$"
@@ -89,19 +131,15 @@ class MassTolerance(_Strict):
         if isinstance(value, MassTolerance):
             return value
         if isinstance(value, int | float):
+            if value == 0:
+                return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
             raise ValueError("mass tolerance numeric values require an explicit unit")
         if not isinstance(value, str):
             raise TypeError(f"unsupported mass tolerance value: {value!r}")
 
         text = value.strip()
-        if text.lower() in {
-            "dynamic",
-            "automatic",
-            "automatic calibration",
-            "auto",
-            "auto detected",
-        }:
-            return cls(mode="automatic", label=text)
+        if text.lower() in _AUTO_CALIBRATION_SENTINELS:
+            return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
 
         range_match = _RANGE_RE.match(text)
         if range_match:
@@ -126,34 +164,6 @@ class MassTolerance(_Strict):
             )
 
         raise ValueError(f"could not parse mass tolerance: {value!r}")
-
-
-class ChargeRange(_Strict):
-    """Optional precursor charge range."""
-
-    minimum: PositiveInt | None = None
-    maximum: PositiveInt | None = None
-
-    @model_validator(mode="after")
-    def _ordered(self) -> "ChargeRange":
-        if self.minimum is not None and self.maximum is not None:
-            if self.minimum > self.maximum:
-                raise ValueError("minimum charge cannot exceed maximum charge")
-        return self
-
-
-class MzRange(_Strict):
-    """Optional m/z range."""
-
-    minimum: NonNegativeFloat | None = None
-    maximum: NonNegativeFloat | None = None
-
-    @model_validator(mode="after")
-    def _ordered(self) -> "MzRange":
-        if self.minimum is not None and self.maximum is not None:
-            if self.minimum > self.maximum:
-                raise ValueError("minimum m/z cannot exceed maximum m/z")
-        return self
 
 
 class UnparsedParameter(_Strict):
@@ -203,7 +213,6 @@ class Parameters(_Strict):
         "software_version",
         "search_engine",
         "search_engine_version",
-        "enzyme",
         "quantification_method",
         "protein_inference",
         "abundance_normalization_ions",
@@ -213,6 +222,15 @@ class Parameters(_Strict):
     @classmethod
     def _empty_strings_to_none(cls, value: object) -> object:
         return None if _is_missing(value) else value
+
+    @field_validator("enzyme", mode="before")
+    @classmethod
+    def _canonicalize_enzyme(cls, value: object) -> object:
+        if _is_missing(value):
+            return None
+        if isinstance(value, str):
+            return _ENZYME_MAP.get(value.strip().lower(), value)
+        return value
 
     @field_validator(
         "ident_fdr_psm",
@@ -229,7 +247,9 @@ class Parameters(_Strict):
         numeric = _coerce_float(value)
         if numeric is None:
             return None
-        if numeric > 1:
+        # FDR values >= 1 are percentages (e.g. a "1.0%" threshold) and divided
+        # by 100, matching ProteoBench's normalize() (FDR is always < 1).
+        if numeric >= 1:
             numeric /= 100
         return Probability(value=numeric)
 
