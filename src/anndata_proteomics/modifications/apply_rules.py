@@ -126,15 +126,21 @@ class _PendingToken:
     adjacent_residue: str | None
 
 
-def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequence:
-    """Normalize a vendor modified sequence via ``rule``."""
-    pattern = re.compile(rule.token_pattern)
-    seq = modified_sequence
+def _strip_terminal_markers(seq: str) -> str:
+    """Drop leading/trailing terminal markers (``_``, ``-``, ``.``)."""
     while seq and seq[0] in _TERM_MARKERS:
         seq = seq[1:]
     while seq and seq[-1] in _TERM_MARKERS:
         seq = seq[:-1]
+    return seq
 
+
+def _tokenize(
+    seq: str, pattern: re.Pattern[str], token_position: str
+) -> tuple[list[str], list[_PendingToken]]:
+    """Walk regex matches, building the stripped residue sequence and the
+    position-classified pending tokens (N-term / C-term / before-residue / Anywhere).
+    """
     stripped_chars: list[str] = []
     pending: list[_PendingToken] = []
     cursor = 0
@@ -151,11 +157,11 @@ def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequen
             position = "N-term"
             residue_idx = None
             adjacent = seq[match.end() : match.end() + 1] or None
-        elif match.end() == len(seq) and rule.token_position != "before_residue":
+        elif match.end() == len(seq) and token_position != "before_residue":
             position = "C-term"
             residue_idx = None
             adjacent = stripped_chars[-1] if stripped_chars else None
-        elif rule.token_position == "before_residue":
+        elif token_position == "before_residue":
             next_residue = seq[match.end() : match.end() + 1]
             if next_residue.isalpha():
                 stripped_chars.append(next_residue)
@@ -180,7 +186,15 @@ def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequen
         if ch.isalpha():
             stripped_chars.append(ch)
 
-    stripped = "".join(stripped_chars)
+    return stripped_chars, pending
+
+
+def _resolve_tokens(
+    pending: list[_PendingToken], rule: ModificationRule, stripped: str
+) -> tuple[list[ModificationOccurrence], dict[int, str], list[str]]:
+    """Match pending tokens to map entries; apply ``unknown_policy`` and record
+    terminal/residue indices for unresolved tokens.
+    """
     occurrences: list[ModificationOccurrence] = []
     unknown_tokens: dict[int, str] = {}
     unknown_list: list[str] = []
@@ -215,6 +229,16 @@ def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequen
         elif tok.residue_index is not None:
             unknown_tokens[tok.residue_index] = tok.raw_token
 
+    return occurrences, unknown_tokens, unknown_list
+
+
+def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequence:
+    """Normalize a vendor modified sequence via ``rule``: strip → tokenize → resolve → render."""
+    pattern = re.compile(rule.token_pattern)
+    seq = _strip_terminal_markers(modified_sequence)
+    stripped_chars, pending = _tokenize(seq, pattern, rule.token_position)
+    stripped = "".join(stripped_chars)
+    occurrences, unknown_tokens, unknown_list = _resolve_tokens(pending, rule, stripped)
     proforma = render_proforma(stripped, occurrences, unknown_tokens=unknown_tokens)
     return ModifiedSequence(
         stripped_sequence=stripped,
