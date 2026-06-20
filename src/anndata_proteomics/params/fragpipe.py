@@ -169,29 +169,26 @@ def _read_workflow(content: str) -> tuple[str, str | None, str | None, list[Para
     return header, msfragger_version, fragpipe_version, _parse_lines(lines)
 
 
-def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
-    """Parse a FragPipe ``.workflow`` file into :class:`Parameters`.
-
-    Mirrors ``proteobench.io.params.fragger.extract_params``.
-    """
-    content = read_text(source)
-    header, msfragger_version, fragpipe_version, records = _read_workflow(content)
-    fp = pd.DataFrame.from_records(records, columns=Parameter._fields).set_index("name")["value"]
-
-    if not fragpipe_version:
-        match = re.match(r"FragPipe \((\d+\.\d+.*)\)", header)
-        if match:
-            fragpipe_version = match.group(1)
-
+def _resolve_enzyme(fp: pd.Series) -> str:
+    """Combine the two MSFragger enzyme slots and canonicalize trypsin variants."""
     enzyme = fp.loc["msfragger.search_enzyme_name_1"]
     second = fp.loc["msfragger.search_enzyme_name_2"]
     if second != "null":
         enzyme = f"{enzyme}|{second}"
     if enzyme == "stricttrypsin":
-        enzyme = "Trypsin/P"
-    elif enzyme == "trypsin":
-        enzyme = "Trypsin"
+        return "Trypsin/P"
+    if enzyme == "trypsin":
+        return "Trypsin"
+    return enzyme
 
+
+def _tolerances(fp: pd.Series) -> tuple[str, MassTolerance]:
+    """Return ``(precursor_tolerance, fragment_tolerance)``.
+
+    The precursor range carries independent lower/upper bounds (structurally
+    asymmetric), so it stays a bracketed string that ``MassTolerance.parse``
+    validates; the symmetric fragment tolerance is built as a typed object.
+    """
     precursor_unit = "ppm" if int(fp.loc["msfragger.precursor_mass_units"]) else "Da"
     precursor_tol = (
         f'[{fp.loc["msfragger.precursor_mass_lower"]} {precursor_unit}, '
@@ -203,49 +200,96 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
         value=float(fp.loc["msfragger.fragment_mass_tolerance"]),
         unit=fragment_unit,
     )
+    return precursor_tol, fragment_tol
 
-    if fp.loc["diann.run-dia-nn"] == "true":
-        psm = pep = float(fp.loc["diann.q-value"])
-        protein_fdr = float(fp.loc["diann.q-value"])
-        peptide_fdr = None
-        abundance_norm = None
+
+def _fdr_and_mbr(
+    fp: pd.Series,
+) -> tuple[float, float | None, float, None, bool | None, str | None]:
+    """Resolve the FDR triplet plus match-between-runs / quantification strategy.
+
+    The FDR branch keys on ``diann.run-dia-nn``; the MBR/quant branch keys on
+    label-free-first-then-DIA-NN. The two conditions differ, so both ``if``
+    structures are preserved (sharing only ``is_diann``).
+    """
+    is_diann = fp.loc["diann.run-dia-nn"] == "true"
+    if is_diann:
+        psm = protein_fdr = float(fp.loc["diann.q-value"])
+        peptide_fdr: float | None = None
     else:
         psm, pep, protein_fdr = _parse_phi_report_filters(fp.loc["phi-report.filter"])
         peptide_fdr = pep
-        abundance_norm = None
-
-    if fp.loc["msfragger.override_charge"] == "true":
-        min_z = int(fp.loc["msfragger.misc.fragger.precursor-charge-lo"])
-        max_z = int(fp.loc["msfragger.misc.fragger.precursor-charge-hi"])
-    else:
-        min_z, max_z = 1, None
-
-    digest_lo = int(fp.loc["msfragger.misc.fragger.digest-mass-lo"])
-    digest_hi = int(fp.loc["msfragger.misc.fragger.digest-mass-hi"])
-    min_prec_mz = digest_lo / max_z if max_z else None
-    max_prec_mz = digest_hi / min_z if min_z else None
+    abundance_norm = None
 
     quantification_method = None
     enable_mbr: bool | None = None
     if fp.loc["quantitation.run-label-free-quant"] == "true":
         enable_mbr = bool(int(fp.loc["ionquant.mbr"]))
-    elif fp.loc["diann.run-dia-nn"] == "true":
+    elif is_diann:
         enable_mbr = (
             ("diann.fragpipe.cmd-opts" in fp.index and "--reanalyse" in fp.loc["diann.fragpipe.cmd-opts"])
             or ("diann.cmd-opts" in fp.index and "--reanalyse" in fp.loc["diann.cmd-opts"])
         )
         quantification_method = _DIANN_QUANT[int(fp.loc["diann.quantification-strategy"])]
 
-    protein_inference = None
+    return psm, peptide_fdr, protein_fdr, abundance_norm, enable_mbr, quantification_method
+
+
+def _charge_range(fp: pd.Series) -> tuple[int, int | None]:
+    """Precursor charge bounds, overridden only when ``override_charge`` is set."""
+    if fp.loc["msfragger.override_charge"] == "true":
+        return (
+            int(fp.loc["msfragger.misc.fragger.precursor-charge-lo"]),
+            int(fp.loc["msfragger.misc.fragger.precursor-charge-hi"]),
+        )
+    return 1, None
+
+
+def _precursor_mz(
+    fp: pd.Series, min_z: int | None, max_z: int | None
+) -> tuple[float | None, float | None]:
+    """Derive precursor m/z bounds from digest mass limits and the charge range."""
+    digest_lo = int(fp.loc["msfragger.misc.fragger.digest-mass-lo"])
+    digest_hi = int(fp.loc["msfragger.misc.fragger.digest-mass-hi"])
+    min_prec_mz = digest_lo / max_z if max_z else None
+    max_prec_mz = digest_hi / min_z if min_z else None
+    return min_prec_mz, max_prec_mz
+
+
+def _protein_inference(fp: pd.Series) -> str | None:
+    """Describe the ProteinProphet configuration when protein inference ran."""
     if fp.loc["protein-prophet.run-protein-prophet"] == "true":
-        protein_inference = f"ProteinProphet: {fp.loc['protein-prophet.cmd-opts']}"
+        return f"ProteinProphet: {fp.loc['protein-prophet.cmd-opts']}"
+    return None
+
+
+def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
+    """Parse a FragPipe ``.workflow`` file into :class:`Parameters`.
+
+    Mirrors ``proteobench.io.params.fragger.extract_params``. Loads the workflow
+    into a ``pd.Series`` indexed by key, then delegates each independent
+    derivation to a pure helper before assembling :class:`Parameters`.
+    """
+    content = read_text(source)
+    header, msfragger_version, fragpipe_version, records = _read_workflow(content)
+    fp = pd.DataFrame.from_records(records, columns=Parameter._fields).set_index("name")["value"]
+
+    if not fragpipe_version:
+        match = re.match(r"FragPipe \((\d+\.\d+.*)\)", header)
+        if match:
+            fragpipe_version = match.group(1)
+
+    precursor_tol, fragment_tol = _tolerances(fp)
+    psm, peptide_fdr, protein_fdr, abundance_norm, enable_mbr, quantification_method = _fdr_and_mbr(fp)
+    min_z, max_z = _charge_range(fp)
+    min_prec_mz, max_prec_mz = _precursor_mz(fp, min_z, max_z)
 
     return Parameters(
         software_name="FragPipe",
         software_version=fragpipe_version,
         search_engine="MSFragger",
         search_engine_version=msfragger_version,
-        enzyme=enzyme,
+        enzyme=_resolve_enzyme(fp),
         allowed_miscleavages=int(fp.loc["msfragger.allowed_missed_cleavage_1"]),
         semi_enzymatic=fp.loc["msfragger.num_enzyme_termini"] != "2",
         fixed_mods=_parse_fixed_mods(fp.loc["msfragger.table.fix-mods"]),
@@ -260,7 +304,7 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
         ident_fdr_protein=protein_fdr,
         enable_match_between_runs=enable_mbr,
         quantification_method=quantification_method,
-        protein_inference=protein_inference,
+        protein_inference=_protein_inference(fp),
         min_precursor_charge=min_z,
         max_precursor_charge=max_z,
         min_precursor_mz=min_prec_mz,
