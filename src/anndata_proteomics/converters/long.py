@@ -5,34 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from anndata_proteomics.converters._axis import build_axis_frame, join_keys
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.rules.schema import ParseRule
-
-_KEY_SEPARATOR = "_"
-
-
-def _join_keys(row: pd.Series) -> str:
-    return _KEY_SEPARATOR.join(str(v) for v in row)
-
-
-def _build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
-    """Build a string index from one or more key columns."""
-    if len(keys) == 1:
-        return df[keys[0]].astype(str)
-    return df[keys].apply(_join_keys, axis=1)
-
-
-def _build_axis_frame(
-    df: pd.DataFrame, keys: list[str], output_columns: list[str]
-) -> pd.DataFrame:
-    """Take first occurrence per key tuple for already-materialized output columns."""
-    needed_cols = list(dict.fromkeys(list(keys) + output_columns))
-    block = df[needed_cols].drop_duplicates(subset=keys).copy()
-    out = block[output_columns].copy()
-    out.index = _build_index(block, keys).values
-    out.index.name = _KEY_SEPARATOR.join(keys)
-    return out
 
 
 def _aggfunc_for(rule: ParseRule) -> str:
@@ -61,12 +37,12 @@ def _pivot_layer(
     pivot.index = (
         pivot.index.astype(str)
         if len(obs_keys) == 1
-        else pivot.index.to_frame().apply(_join_keys, axis=1).values
+        else pivot.index.to_frame().apply(join_keys, axis=1).values
     )
     pivot.columns = (
         pivot.columns.astype(str)
         if len(var_keys) == 1
-        else pivot.columns.to_frame().apply(_join_keys, axis=1).values
+        else pivot.columns.to_frame().apply(join_keys, axis=1).values
     )
     return pivot
 
@@ -79,8 +55,8 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     obs_keys = list(rule.axis.obs_keys)
     var_keys = list(rule.axis.var_keys)
 
-    obs_df = _build_axis_frame(df, obs_keys, rule.columns.obs.names)
-    var_df = _build_axis_frame(df, var_keys, rule.columns.var.names)
+    obs_df = build_axis_frame(df, obs_keys, rule.columns.obs.names)
+    var_df = build_axis_frame(df, var_keys, rule.columns.var.names)
 
     aggfunc = _aggfunc_for(rule)
 

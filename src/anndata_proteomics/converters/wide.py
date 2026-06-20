@@ -7,16 +7,12 @@ import re
 import numpy as np
 import pandas as pd
 
+from anndata_proteomics.converters._axis import build_axis_frame
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.rules.schema import Layer, ParseRule
 
-_KEY_SEPARATOR = "_"
 _SAMPLE_PLACEHOLDER = "<sample>"
-
-
-def _join_keys(row: pd.Series) -> str:
-    return _KEY_SEPARATOR.join(str(v) for v in row)
 
 
 def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]:
@@ -32,20 +28,6 @@ def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]
         except (IndexError, KeyError):
             sample = m.group(0)
         out.append((h, sample))
-    return out
-
-
-def _build_var_frame(df: pd.DataFrame, rule: ParseRule) -> pd.DataFrame:
-    var_keys = list(rule.axis.var_keys)
-    output_columns = rule.columns.var.names
-    needed_cols = list(dict.fromkeys(var_keys + output_columns))
-    block = df[needed_cols].drop_duplicates(subset=var_keys).copy()
-    out = block[output_columns].copy()
-    if len(var_keys) == 1:
-        out.index = block[var_keys[0]].astype(str).values
-    else:
-        out.index = block[var_keys].apply(_join_keys, axis=1).values
-    out.index.name = _KEY_SEPARATOR.join(var_keys)
     return out
 
 
@@ -108,7 +90,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
             f"layers: {[layer.column_pattern for layer in rule.layers]}"
         )
 
-    var_df = _build_var_frame(df, rule)
+    var_df = build_axis_frame(df, list(rule.axis.var_keys), rule.columns.var.names)
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
