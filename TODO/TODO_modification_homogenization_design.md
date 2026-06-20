@@ -1,13 +1,30 @@
 # Plan — Centralized (registry-backed) Modification Homogenization for Parameter Parsing
 
-**Status:** PLANNED — next up (2026-06-20). The *functional* homogenization is already done
-(the ProteoBench-sync integration makes every vendor emit correct ProForma-style mod strings;
-code-review Action 15 deduped the shared mechanics). What remains — and what this plan delivers —
-is the **registry-backed architecture**: resolve every vendor mod to a *typed*
+**Status:** DEFERRED (2026-06-20). The *functional* homogenization is already done (the
+ProteoBench-sync integration makes every vendor emit correct ProForma-style mod strings; code-review
+Action 15 deduped the shared mechanics), and the current state is green and ProteoBench-matched.
+This plan would add the **registry-backed architecture** — resolve every vendor mod to a *typed*
 `SearchedModification` (accession + target + mass_delta from `unimod_registry`), collapsing the
-per-vendor `MASS_TO_MOD` / alias dicts into one source of truth and enabling accession-backed
-SDRF export. Companion to the archived ProteoBench-sync plan and `TODO_code_review_june.md`
-(Actions 4 + 15).
+per-vendor `MASS_TO_MOD` / alias dicts into one source of truth and enabling accession-backed SDRF
+export.
+
+**Why deferred:** nothing consumes that metadata yet. SDRF export (`to_sdrf_value`) and accession
+resolution are wired only for the modified-*sequence* path (`apply_rules`/`pipeline`), **not** the
+parameter-file path — so this would build a new module + resolver + per-vendor adapters + TOML alias
+tables + registry expansion + a 10-vendor rewrite to populate fields no caller reads. Revisit when
+SDRF export of search *parameters* is a real deliverable.
+
+**Two caveats for whoever picks it up (see analysis below):**
+1. The lower-risk first step is **choke-point enrichment** in `_coerce_modifications` (fill
+   `accession`/`target`/`mass_delta` from the registry *after* the string is built, leaving the
+   rendered `name`/`source` untouched) — not the full per-vendor rewrite. The byte-for-byte mod
+   tests then guarantee parity because the rendered string never changes.
+2. Collapsing FragPipe/Sage `MASS_TO_MOD` into the registry **changes rendered names**
+   (`Pyro-glu` → `Glu->pyro-Glu`; `GG` and `Label:*` are absent from the 6-entry registry), so it
+   needs vendor-name overrides to keep the ProteoBench match. "Delete the mass dict" is not free.
+
+Companion to the archived ProteoBench-sync plan and `TODO_code_review_june.md` (Actions 4 + 15).
+The design below is retained as the reference for when this is revisited.
 
 ## Current state (2026-06-20) — the baseline this plan builds on
 
