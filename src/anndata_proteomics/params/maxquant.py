@@ -110,6 +110,41 @@ def _build_series(record: dict, index_length: int = 4) -> pd.Series:
     return pd.Series((v for (_, v) in items), index=idx)
 
 
+def _tolerance_pair(series: pd.Series) -> tuple[MassTolerance, MassTolerance]:
+    """Build precursor (ppm) and fragment (ppm/Da) tolerances from the mqpar series."""
+    prec_value = float(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze())
+    precursor = MassTolerance(mode="absolute", value=prec_value, unit="ppm")
+    frag_value = float(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze())
+    in_ppm = bool(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchToleranceInPpm", :]].squeeze())
+    fragment = MassTolerance(mode="absolute", value=frag_value, unit="ppm" if in_ppm else "Da")
+    return precursor, fragment
+
+
+def _min_peptide_length(series: pd.Series) -> int:
+    """Read the minimum peptide length, tolerating the pre/post-rename key."""
+    try:
+        return int(series.loc["minPepLen"].squeeze())
+    except KeyError:
+        return int(series.loc["minPeptideLength"].squeeze())
+
+
+def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:
+    """Homogenize fixed/variable modifications, handling the 1.6.0.0 path change."""
+    if version > "1.6.0.0":
+        fixed_path = pd.IndexSlice["parameterGroups", "parameterGroup", "fixedModifications", :]
+    else:
+        fixed_path = pd.IndexSlice["fixedModifications", :]
+    fixed_mods = series.loc[fixed_path].squeeze()
+    if not isinstance(fixed_mods, str):
+        fixed_mods = ",".join(fixed_mods)
+
+    variable_mods = series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]].squeeze()
+    if not isinstance(variable_mods, str):
+        variable_mods = ",".join(variable_mods)
+
+    return _homogenize_mods(fixed_mods), _homogenize_mods(variable_mods)
+
+
 def extract_params(
     source: Union[str, Path, IO[bytes], IO[str]],
     ms2frac: str = "FTMS",
@@ -128,33 +163,9 @@ def extract_params(
     series = _build_series(record, 4).sort_index()
 
     version = str(series.loc["maxQuantVersion"].squeeze())
-    prec_value = float(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze())
-    precursor_tolerance = MassTolerance(mode="absolute", value=prec_value, unit="ppm")
-
-    frag_value = float(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze())
-    in_ppm = bool(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchToleranceInPpm", :]].squeeze())
-    fragment_tolerance = MassTolerance(mode="absolute", value=frag_value, unit="ppm" if in_ppm else "Da")
-
+    precursor_tolerance, fragment_tolerance = _tolerance_pair(series)
     enzyme_mode = int(series.loc[("parameterGroups", "parameterGroup", "enzymeMode")].squeeze())
-
-    try:
-        min_pep_len = int(series.loc["minPepLen"].squeeze())
-    except KeyError:
-        min_pep_len = int(series.loc["minPeptideLength"].squeeze())
-
-    if version > "1.6.0.0":
-        fixed_path = pd.IndexSlice["parameterGroups", "parameterGroup", "fixedModifications", :]
-    else:
-        fixed_path = pd.IndexSlice["fixedModifications", :]
-    fixed_mods = series.loc[fixed_path].squeeze()
-    if not isinstance(fixed_mods, str):
-        fixed_mods = ",".join(fixed_mods)
-    fixed_mods = _homogenize_mods(fixed_mods)
-
-    variable_mods = series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]].squeeze()
-    if not isinstance(variable_mods, str):
-        variable_mods = ",".join(variable_mods)
-    variable_mods = _homogenize_mods(variable_mods)
+    fixed_mods, variable_mods = _mods_for_version(series, version)
 
     return Parameters(
         software_name="MaxQuant",
@@ -169,7 +180,7 @@ def extract_params(
         enzyme=series.loc[("parameterGroups", "parameterGroup", "enzymes", "string")].squeeze(),
         semi_enzymatic=enzyme_mode != 0,
         allowed_miscleavages=int(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "maxMissedCleavages", :]].squeeze()),
-        min_peptide_length=min_pep_len,
+        min_peptide_length=_min_peptide_length(series),
         max_peptide_length=None,
         fixed_mods=fixed_mods,
         variable_mods=variable_mods,
