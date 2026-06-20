@@ -398,37 +398,11 @@ class Parameters(_Strict):
         return _to_scalar(value)
 
 
-_SERIES_FIELDS = (
-    "software_name",
-    "software_version",
-    "search_engine",
-    "search_engine_version",
-    "ident_fdr_psm",
-    "ident_fdr_peptide",
-    "ident_fdr_protein",
-    "enable_match_between_runs",
-    "precursor_mass_tolerance",
-    "fragment_mass_tolerance",
-    "enzyme",
-    "semi_enzymatic",
-    "allowed_miscleavages",
-    "min_peptide_length",
-    "max_peptide_length",
-    "fixed_mods",
-    "variable_mods",
-    "max_mods",
-    "min_precursor_charge",
-    "max_precursor_charge",
-    "min_precursor_mz",
-    "max_precursor_mz",
-    "min_fragment_mz",
-    "max_fragment_mz",
-    "quantification_method",
-    "protein_inference",
-    "abundance_normalization_ions",
-    "predictors_library",
-    "scan_window",
-)
+# Round-trip auxiliary field, reconstructed by ``from_series`` — never a CSV column.
+_SERIES_EXCLUDE = frozenset({"unparsed_parameters"})
+# Ordered ProteoBench CSV field list, derived from the model so it cannot drift
+# when a ``Parameters`` field is added or renamed (pydantic preserves declaration order).
+_SERIES_FIELDS = tuple(name for name in Parameters.model_fields if name not in _SERIES_EXCLUDE)
 
 
 def _is_missing(value: object) -> bool:
