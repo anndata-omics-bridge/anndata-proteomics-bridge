@@ -7,18 +7,21 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 InputShape = Literal["long", "wide"]
-QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein"]
+QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein", "fragment"]
 EncodingMode = Literal["numeric", "factor"]
 DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_table"]
 ModificationParser = Literal["token_regex", "already_proforma", "separate_mod_column"]
 TokenPosition = Literal["before_residue", "after_residue", "n_term", "c_term", "embedded", "unknown"]
 UnknownPolicy = Literal["preserve", "drop", "error"]
-ColumnComputeMode = Literal["proforma_sequence", "stripped_sequence", "proforma_ion"]
+ColumnComputeMode = Literal[
+    "proforma_sequence", "stripped_sequence", "proforma_ion", "proforma_fragment"
+]
 
 _PROFORMA_COMPUTE_NAME = {
     "stripped_sequence": "ProForma_peptide",
     "proforma_sequence": "ProForma_peptidoform",
     "proforma_ion": "ProForma_ion",
+    "proforma_fragment": "ProForma_fragment",
 }
 
 
@@ -118,6 +121,23 @@ class Modifications(_Strict):
         return self
 
 
+class Fragments(_Strict):
+    """Declares packed parallel-list fragment columns to explode before conversion.
+
+    DIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside
+    each precursor row (``Fragment.Info`` plus parallel ``Fragment.Quant.*`` lists, aligned
+    by index). ``converters._fragments.explode_fragments`` splits these into one row per
+    fragment before the normal long-conversion pivot. The split label column yields
+    ``label_output`` (the token before ``/``, e.g. ``b4-unknown^1``), available as a source
+    for a ``proforma_fragment`` computed column. Only valid for ``quantification_level="fragment"``.
+    """
+
+    label_column: str
+    value_columns: list[str] = Field(min_length=1)
+    delimiter: str = ";"
+    label_output: str = "fragment_label"
+
+
 class ParseRule(_Strict):
     schema_version: str
     file_version: str
@@ -130,6 +150,7 @@ class ParseRule(_Strict):
     layers: list[Layer] = Field(min_length=1)
     sample_name_cleanup: SampleNameCleanup | None = None
     modifications: Modifications | None = None
+    fragments: Fragments | None = None
 
     @model_validator(mode="after")
     def _shape_layer_consistency(self) -> ParseRule:
@@ -183,8 +204,25 @@ class ParseRule(_Strict):
         return self
 
     @model_validator(mode="after")
+    def _fragments_only_for_fragment_level(self) -> ParseRule:
+        is_fragment = self.quantification_level == "fragment"
+        if is_fragment and self.fragments is None:
+            raise ValueError(
+                "quantification_level='fragment' requires a [fragments] block."
+            )
+        if self.fragments is not None and not is_fragment:
+            raise ValueError(
+                "[fragments] is only valid for quantification_level='fragment'."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _computed_column_consistency(self) -> ParseRule:
         available_var_columns = set(self.columns.var.select)
+        if self.fragments is not None:
+            # explode_fragments injects this column before materialization, so it is a
+            # legal `from` source even though it is not a selected vendor column.
+            available_var_columns.add(self.fragments.label_output)
         for column in self.columns.var.compute:
             missing_sources = [
                 source for source in column.from_ if source not in available_var_columns
@@ -208,13 +246,33 @@ class ParseRule(_Strict):
                 if len(column.from_) != 1:
                     raise ValueError(f"how={column.how!r} requires exactly one source column.")
             elif column.how == "proforma_ion":
-                if self.quantification_level != "ion":
-                    raise ValueError("how='proforma_ion' is valid only for ion rules.")
+                # At ion level ProForma_ion is the feature key; at fragment level it is an
+                # intermediate used to build ProForma_fragment (not a var key itself).
+                if self.quantification_level not in {"ion", "fragment"}:
+                    raise ValueError(
+                        "how='proforma_ion' is valid only for ion or fragment rules."
+                    )
                 if len(column.from_) != 2:
                     raise ValueError("how='proforma_ion' requires exactly two source columns.")
-                if column.name not in self.axis.var_keys:
+                if (
+                    self.quantification_level == "ion"
+                    and column.name not in self.axis.var_keys
+                ):
                     raise ValueError(
                         "computed ProForma ion columns must be used in axis.var_keys."
+                    )
+            elif column.how == "proforma_fragment":
+                if self.quantification_level != "fragment":
+                    raise ValueError(
+                        "how='proforma_fragment' is valid only for fragment rules."
+                    )
+                if len(column.from_) != 2:
+                    raise ValueError(
+                        "how='proforma_fragment' requires exactly two source columns."
+                    )
+                if column.name not in self.axis.var_keys:
+                    raise ValueError(
+                        "computed ProForma fragment columns must be used in axis.var_keys."
                     )
             available_var_columns.add(column.name)
         if self.columns.obs.compute:

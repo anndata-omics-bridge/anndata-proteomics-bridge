@@ -54,7 +54,8 @@
           "enum": [
             "proforma_sequence",
             "stripped_sequence",
-            "proforma_ion"
+            "proforma_ion",
+            "proforma_fragment"
           ],
           "title": "How",
           "type": "string"
@@ -122,6 +123,40 @@
         }
       },
       "title": "Duplicates",
+      "type": "object"
+    },
+    "Fragments": {
+      "additionalProperties": false,
+      "description": "Declares packed parallel-list fragment columns to explode before conversion.\n\nDIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside\neach precursor row (``Fragment.Info`` plus parallel ``Fragment.Quant.*`` lists, aligned\nby index). ``converters._fragments.explode_fragments`` splits these into one row per\nfragment before the normal long-conversion pivot. The split label column yields\n``label_output`` (the token before ``/``, e.g. ``b4-unknown^1``), available as a source\nfor a ``proforma_fragment`` computed column. Only valid for ``quantification_level=\"fragment\"``.",
+      "properties": {
+        "label_column": {
+          "title": "Label Column",
+          "type": "string"
+        },
+        "value_columns": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Value Columns",
+          "type": "array"
+        },
+        "delimiter": {
+          "default": ";",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "label_output": {
+          "default": "fragment_label",
+          "title": "Label Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label_column",
+        "value_columns"
+      ],
+      "title": "Fragments",
       "type": "object"
     },
     "Layer": {
@@ -346,7 +381,8 @@
         "ion",
         "peptidoform",
         "peptide",
-        "protein"
+        "protein",
+        "fragment"
       ],
       "title": "Quantification Level",
       "type": "string"
@@ -380,6 +416,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/Modifications"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "fragments": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Fragments"
         },
         {
           "type": "null"

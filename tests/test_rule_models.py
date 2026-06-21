@@ -226,6 +226,7 @@ def test_json_schema_export_has_expected_top_level_properties():
         "layers",
         "sample_name_cleanup",
         "modifications",
+        "fragments",
     }
     assert set(schema["properties"]) == expected
 

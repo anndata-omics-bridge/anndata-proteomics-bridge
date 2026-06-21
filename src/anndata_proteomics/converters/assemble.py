@@ -73,6 +73,13 @@ def convert(
     if rule.modifications is not None:
         df = apply_modifications(df, rule.modifications)
 
+    if rule.fragments is not None:
+        # Fan packed per-precursor fragment lists out to one row per fragment before
+        # the computed columns (ProForma_ion → ProForma_fragment) are materialized.
+        from anndata_proteomics.converters._fragments import explode_fragments
+
+        df = explode_fragments(df, rule.fragments)
+
     df = _materialize_columns(df, rule)
 
     if rule.input_shape == "long":
@@ -129,6 +136,20 @@ def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
             [
                 f"{sequence}/{_format_charge(charge)}"
                 for sequence, charge in zip(df[sequence_key], df[charge_key], strict=True)
+            ],
+            index=df.index,
+        )
+    if column.how == "proforma_fragment":
+        ion_key, label_key = column.from_
+        missing = [key for key in (ion_key, label_key) if key not in df.columns]
+        if missing:
+            raise ValueError(
+                f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
+            )
+        return pd.Series(
+            [
+                f"{ion}/{label}"
+                for ion, label in zip(df[ion_key], df[label_key], strict=True)
             ],
             index=df.index,
         )
