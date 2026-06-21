@@ -1,0 +1,60 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+software_version = "2.3.0"
+input_shape = "long"
+quantification_level = "peptide"
+
+# Like the peptidoform rule, peptide quantities are an APB-derived rollup: precursor
+# quantities summed across charge states AND modification states per stripped sequence
+# (duplicates.mode = "aggregate" -> pivot sum). Simple sum, NOT MaxLFQ. Protein_Group is
+# carried as a foreign key (note: shared peptides may map to several groups; here the
+# AIF dataset is fully proteotypic so the column is a usable scalar).
+[axis]
+obs_keys = ["Run"]
+var_keys = ["ProForma_peptide"]
+x_layer = "Precursor_Quantity"
+
+[axis.duplicates]
+mode = "aggregate"
+
+[columns.obs.select]
+Run = "Run"
+
+[columns.var.select]
+Modified_Sequence = "Modified.Sequence"
+Protein_Group = "Protein.Group"
+
+[[columns.var.compute]]
+name = "ProForma_peptide"
+from = ["Modified_Sequence"]
+how = "stripped_sequence"
+
+[[layers]]
+name = "Precursor_Quantity"
+source_column = "Precursor.Quantity"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
+[modifications]
+source_column = "Modified.Sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "UniMod:1"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "UniMod:4"
+accession = "UNIMOD:4"
+
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"

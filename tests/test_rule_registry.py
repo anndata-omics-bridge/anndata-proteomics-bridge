@@ -16,9 +16,9 @@ def test_packaged_rules_root_exists() -> None:
     assert packaged_rules_root().exists()
 
 
-def test_iter_packaged_rules_returns_six_sorted() -> None:
+def test_iter_packaged_rules_returns_ten_sorted() -> None:
     rules = list(iter_packaged_rules())
-    assert len(rules) == 6
+    assert len(rules) == 10
     vendors = [p.parent.name for p in rules]
     assert vendors == sorted(vendors)
 
@@ -37,5 +37,5 @@ def test_find_rule_unknown_software() -> None:
 
 def test_find_rule_unknown_level_lists_available() -> None:
     with pytest.raises(RuleNotFound) as exc_info:
-        find_rule("diann", "protein")
+        find_rule("diann", "psm")  # not a shipped level
     assert "parse_diann_ion_1.toml" in str(exc_info.value)

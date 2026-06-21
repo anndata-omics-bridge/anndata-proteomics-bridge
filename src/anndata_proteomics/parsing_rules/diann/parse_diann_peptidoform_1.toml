@@ -1,0 +1,64 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+software_version = "2.3.0"
+input_shape = "long"
+quantification_level = "peptidoform"
+
+# DIA-NN reports no native peptidoform-level quantity, so the layers below are an
+# APB-derived rollup: precursor quantities summed across charge states per peptidoform
+# (duplicates.mode = "aggregate" -> pivot sum). This is a simple sum, NOT MaxLFQ.
+# ProForma_peptide and Protein_Group are carried as foreign keys into the parent levels.
+[axis]
+obs_keys = ["Run"]
+var_keys = ["ProForma_peptidoform"]
+x_layer = "Precursor_Quantity"
+
+[axis.duplicates]
+mode = "aggregate"
+
+[columns.obs.select]
+Run = "Run"
+
+[columns.var.select]
+Modified_Sequence = "Modified.Sequence"
+Protein_Group = "Protein.Group"
+
+[[columns.var.compute]]
+name = "ProForma_peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma_peptide"
+from = ["Modified_Sequence"]
+how = "stripped_sequence"
+
+[[layers]]
+name = "Precursor_Quantity"
+source_column = "Precursor.Quantity"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
+[modifications]
+source_column = "Modified.Sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "UniMod:1"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "UniMod:4"
+accession = "UNIMOD:4"
+
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"

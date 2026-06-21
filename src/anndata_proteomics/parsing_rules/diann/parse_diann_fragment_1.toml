@@ -1,0 +1,81 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+software_version = "2.3.0"
+input_shape = "long"
+quantification_level = "fragment"
+
+# DIA-NN packs fragments as parallel ;-delimited lists inside each precursor row. The
+# [fragments] block below tells convert() to explode those into one row per fragment
+# before pivoting. Each list column appears twice on purpose: in [fragments].value_columns
+# (so explode knows to split it) and in [[layers]] (so it gets pivoted post-explode).
+# Feature key grammar: ProForma_fragment = "{ProForma_peptidoform}/{charge}/{fragment_label}".
+[axis]
+obs_keys = ["Run"]
+var_keys = ["ProForma_fragment"]
+x_layer = "Fragment_Quant_Corrected"
+
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
+Run = "Run"
+
+[columns.var.select]
+Modified_Sequence = "Modified.Sequence"
+Precursor_Charge = "Precursor.Charge"
+Protein_Group = "Protein.Group"
+
+[[columns.var.compute]]
+name = "ProForma_peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
+
+[[columns.var.compute]]
+name = "ProForma_fragment"
+from = ["ProForma_ion", "fragment_label"]
+how = "proforma_fragment"
+
+[[layers]]
+name = "Fragment_Quant_Corrected"
+source_column = "Fragment.Quant.Corrected"
+
+[[layers]]
+name = "Fragment_Quant_Raw"
+source_column = "Fragment.Quant.Raw"
+
+[[layers]]
+name = "Fragment_Correlations"
+source_column = "Fragment.Correlations"
+
+[fragments]
+label_column = "Fragment.Info"
+value_columns = ["Fragment.Quant.Raw", "Fragment.Quant.Corrected", "Fragment.Correlations"]
+delimiter = ";"
+label_output = "fragment_label"
+
+[modifications]
+source_column = "Modified.Sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "UniMod:1"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "UniMod:4"
+accession = "UNIMOD:4"
+
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"
