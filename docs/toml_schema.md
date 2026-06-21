@@ -53,13 +53,14 @@ ProForma covers three quantification levels:
 - ion `M[UNIMOD:35]PEPTIDE/2` — peptidoform + charge (spec §7.1,
   optional extension).
 
-Three reserved compute names mirror those three levels:
+Four reserved compute names mirror the quantification levels:
 
 | Compute name | `how` | Meaning |
 |---|---|---|
 | `ProForma_peptide` | `stripped_sequence` | bare sequence, no mods |
 | `ProForma_peptidoform` | `proforma_sequence` | sequence + mods |
 | `ProForma_ion` | `proforma_ion` | peptidoform + `/charge` |
+| `ProForma_fragment` | `proforma_fragment` | ion + `/fragment_label` |
 
 How rules use them:
 - **Peptidoform-level rules** (`quantification_level = "peptidoform"`):
@@ -70,6 +71,16 @@ How rules use them:
   `var_keys = ["ProForma_ion"]` produced by `how = "proforma_ion"`,
   chained from a `ProForma_peptidoform` intermediate. Optionally also
   expose `ProForma_peptide`.
+- **Fragment-level rules** (`quantification_level = "fragment"`):
+  `var_keys = ["ProForma_fragment"]` produced by `how = "proforma_fragment"`,
+  chained from a `ProForma_ion` intermediate (so here `proforma_ion` is an
+  *intermediate*, not the var key). Requires a `[fragments]` block (see below).
+  Grammar: `ProForma_fragment = "{peptidoform}/{charge}/{fragment_label}"`, e.g.
+  `M[UNIMOD:35]PEPTIDE/2/b4-unknown^1` — note the `/` separator carries charge
+  after the peptidoform and the fragment label after the ion.
+
+**Protein-level rules** (`quantification_level = "protein"`) use a plain vendor
+column as `var_keys` (e.g. `Protein_Group`) with no ProForma compute.
 
 Why `ProForma_peptide` is computed from the modified-sequence column
 rather than the vendor's "peptide" column: stripping the modification
@@ -83,9 +94,14 @@ Schema invariants worth knowing:
   `ProForma_peptide`, `proforma_sequence` → `ProForma_peptidoform`,
   `proforma_ion` → `ProForma_ion`. The validator rejects any other
   name.
-- Any `how = "proforma_ion"` compute must appear in `axis.var_keys`.
+- At **ion** level a `how = "proforma_ion"` compute must appear in
+  `axis.var_keys`; at **fragment** level it is an intermediate and must
+  *not* be a var key (the var key is `ProForma_fragment`).
 - `how = "proforma_ion"` requires exactly two source columns
   (peptidoform intermediate + charge).
+- `how = "proforma_fragment"` is fragment-level only, requires exactly two
+  source columns (a `ProForma_ion` intermediate + the `[fragments].label_output`
+  column), and must appear in `axis.var_keys`.
 - `how = "proforma_sequence"` and `how = "stripped_sequence"` each
   require exactly one source column and a `[modifications]` block.
 
@@ -156,8 +172,9 @@ These entries are valid for both long and wide rules.
   Example: `"FragPipe"`.
 - `software_version` — string, optional.
 - `input_shape` — `"long"` or `"wide"`.
-- `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`, or
-  `"protein"`. Must match the filename token.
+- `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`,
+  `"protein"`, or `"fragment"`. Must match the filename token.
+  `"fragment"` requires a `[fragments]` block.
 
 - `[axis]`
   - `obs_keys` — array of strings. Must reference declared output
@@ -187,9 +204,13 @@ These entries are valid for both long and wide rules.
   - `from` — list of declared var column names (from `select` or
     earlier `compute` entries).
   - `how` — one of `"proforma_sequence"`, `"stripped_sequence"`,
-    `"proforma_ion"`. The first two require a `[modifications]` block
-    and exactly one source column. `proforma_ion` is ion-level only,
-    requires exactly two source columns, and its `name` must appear in
+    `"proforma_ion"`, `"proforma_fragment"`. The first two require a
+    `[modifications]` block and exactly one source column. `proforma_ion`
+    requires exactly two source columns and is valid at ion level (where
+    its `name` must appear in `axis.var_keys`) and fragment level (as an
+    intermediate). `proforma_fragment` is fragment-level only, requires
+    exactly two source columns (a `ProForma_ion` intermediate +
+    `[fragments].label_output`), and its `name` must appear in
     `axis.var_keys`.
 
 - `[[layers]]`
@@ -262,6 +283,45 @@ requires adding it to that registry first.
 Vendor tokens may be numeric mass deltas (`"15.9949"`, `"+57.02"`),
 named labels (`"Acetyl (Protein N-term)"`), or UniMod-style strings
 (`"UniMod:35"`) — see the worked examples below.
+
+### Fragments
+
+Only for `quantification_level = "fragment"`. Some vendors (DIA-NN) do not emit one
+row per fragment; instead they pack per-fragment values as parallel, delimiter-joined
+lists inside each precursor row (`Fragment.Info`, `Fragment.Quant.Raw`, …, aligned by
+index and often terminated by a trailing delimiter). The `[fragments]` block tells
+`convert()` to **explode** those lists into one row per fragment *before* column
+materialization and the long-format pivot, so the rest of the pipeline is reused
+unchanged.
+
+- `[fragments]`
+  - `label_column` — packed column whose tokens identify each fragment
+    (e.g. `"Fragment.Info"`, tokens like `b4-unknown^1/327.16`).
+  - `value_columns` — array of the parallel packed value columns to split
+    (e.g. `["Fragment.Quant.Raw", "Fragment.Quant.Corrected", "Fragment.Correlations"]`).
+    All must be the same length per row as `label_column`; a mismatch raises.
+  - `delimiter` — token separator, default `";"`.
+  - `label_output` — name of the column the explode produces from `label_column`
+    (the token before `/`, e.g. `b4-unknown^1`), default `"fragment_label"`.
+    Use it as a source for a `how = "proforma_fragment"` compute.
+
+Each packed value column appears **twice** on purpose: in `[fragments].value_columns`
+(so explode knows to split it) and in `[[layers]]` with a matching `source_column` (so
+the now-scalar column is pivoted into a layer like any other long column).
+
+**Caveats.** Explode multiplies the row count by the fragments-per-precursor (~12 for
+DIA-NN), so converting a full report into a dense fragment matrix is memory-heavy
+(a single 6-run report can peak at >10 GB in the pivot). DIA-NN fragment columns also
+vary by version/config — some exports drop `Fragment.Info` or carry a reduced set of
+`Fragment.Quant.*` columns, so a fragment rule may not fit every DIA-NN file.
+
+### Multiple levels per vendor
+
+A vendor's single export can back several levels (DIA-NN's `report.tsv` backs ion,
+peptidoform, peptide, protein, and fragment — see below). Ship one TOML per level
+(`parse_diann_<level>_1.toml`). Because every level reads the same columns, header-based
+`recognize()` cannot pick a *level* and returns `None` for such a file; callers select
+the level explicitly with `load_packaged_rule(software, level)`.
 
 ## Long example (DIA-NN)
 
@@ -400,6 +460,10 @@ accession = "UNIMOD:35"
 
 - Long: DIA-NN, Spectronaut, MaxQuant (evidence-like).
 - Wide: FragPipe, PEAKS, WOMBAT.
+
+DIA-NN ships all five levels from one `report.tsv` —
+`parse_diann_{ion,peptidoform,peptide,protein,fragment}_1.toml` — demonstrating the
+one-TOML-per-level pattern.
 
 This is why the rule schema supports both `source_column` and
 `column_pattern`.

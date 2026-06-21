@@ -1,5 +1,52 @@
 # TODO: Multi-level quantification and MuData
 
+## Status (2026-06-21): core question answered — feasibility proven on DIA-NN
+
+The basic question ("each level as its own AnnData, MuData as a thin container") is
+answered **yes** and demonstrated end-to-end for DIA-NN. Shipped:
+
+- **Five DIA-NN level rules from one `report.tsv`**:
+  `parse_diann_{ion,peptidoform,peptide,protein,fragment}_1.toml`.
+  - protein uses **native** `PG.MaxLFQ`/`PG.Normalised`/`PG.Quantity`
+    (`duplicates="keep_first"` — they are pre-aggregated and repeated per
+    `(Run, Protein.Group)`).
+  - peptidoform/peptide quant is an **APB-derived rollup** = summed
+    `Precursor.Quantity` (`duplicates="aggregate"`), NOT MaxLFQ. Open question
+    below: is a sum acceptable, or should a MaxLFQ-style rollup be implemented?
+- **Fragment level** added as a fifth `QuantificationLevel` (decision: name is
+  **`fragment`**, not `fragment_ion`). DIA-NN packs fragments as parallel
+  `;`-delimited lists in each precursor row, so a new `[fragments]` TOML block +
+  `converters/_fragments.explode_fragments` fan them out (pandas multi-column
+  `explode`) before the normal pivot. New compute mode `proforma_fragment`
+  (`ProForma_fragment = "{peptidoform}/{charge}/{fragment_label}"`).
+- **MuData proof** (test-only, no public API per step 7): `tests/test_mudata_levels.py`
+  builds all five AnnData, wraps them in `MuData(axis=0)`, and verifies the FK links
+  and `.h5mu` round-trip. `tests/test_diann_levels.py` checks the per-level hierarchy.
+
+Resolved design points (deviating from / refining this doc):
+- **var_names must be prefixed per level** (`frg:/ion:/pfm:/pep:/prt:`). Empirically,
+  axis=0 MuData tolerates colliding var_names but then *silently empties the merged
+  `.var`*; peptide and peptidoform collide for unmodified peptides, so prefixing is
+  mandatory, not optional.
+- **FK link columns carry the PREFIXED parent id** (e.g. `ion.var["peptidoform_fk"] =
+  "pfm:" + ProForma_peptidoform`). This refines the doc's "keep the bare identifier":
+  a bare FK can't match a prefixed parent index. The bare id stays available as the
+  non-key `.var` columns the rules already compute.
+- **`recognize()` can't pick a level** for a multi-level vendor (all DIA-NN levels match
+  the same headers) — it returns `None`; the level is selected explicitly via
+  `load_packaged_rule(software, level)`.
+
+Known limitation / follow-up:
+- **Fragment pivot is memory-heavy**: explode multiplies rows ~12x; a full 6-run DIA-NN
+  report peaks at >10 GB in `pivot_table`. Tests run on a row-capped subset. A
+  sparse/streamed fragment builder is a separate optimization if fragment-level at full
+  scale is needed.
+- DIA-NN fragment columns vary by version (some exports lack `Fragment.Info` or carry a
+  reduced `Fragment.Quant.*` set), so the fragment rule does not fit every DIA-NN file.
+
+Still open (see sections below): protein↔peptide ambiguity / relation table, whether to
+add the other vendors' levels, and the peptide/peptidoform rollup semantics.
+
 ## Question
 
 The current project has TOML parse rules for one quantification level at a time,
