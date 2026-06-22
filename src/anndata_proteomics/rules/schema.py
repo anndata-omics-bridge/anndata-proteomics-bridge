@@ -124,16 +124,20 @@ class Modifications(_Strict):
 class Fragments(_Strict):
     """Declares packed parallel-list fragment columns to explode before conversion.
 
-    DIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside
-    each precursor row (``Fragment.Info`` plus parallel ``Fragment.Quant.*`` lists, aligned
-    by index). ``converters._fragments.explode_fragments`` splits these into one row per
-    fragment before the normal long-conversion pivot. The split label column yields
-    ``label_output`` (the token before ``/``, e.g. ``b4-unknown^1``), available as a source
-    for a ``proforma_fragment`` computed column. Only valid for ``quantification_level="fragment"``.
+    DIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside each
+    precursor row (parallel ``Fragment.Quant.*`` lists, aligned by index).
+    ``converters._fragments.explode_fragments`` splits these into one row per fragment before
+    the normal long-conversion pivot, producing ``label_output`` as a source for a
+    ``proforma_fragment`` computed column. Only valid for ``quantification_level="fragment"``.
+
+    ``label_column`` is the packed column carrying fragment identities (e.g. ``Fragment.Info``,
+    tokens like ``b4-unknown^1/327.16``); ``label_output`` then = the token before ``/``. When
+    ``label_column`` is ``None`` (older DIA-NN with no ``Fragment.Info``), labels are
+    **positional** — ``frag_0``, ``frag_1``, … by index within the precursor.
     """
 
-    label_column: str
     value_columns: list[str] = Field(min_length=1)
+    label_column: str | None = None
     delimiter: str = ";"
     label_output: str = "fragment_label"
 

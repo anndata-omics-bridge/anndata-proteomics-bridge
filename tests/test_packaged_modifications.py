@@ -24,12 +24,12 @@ def _load(rel: str) -> ParseRule:
     ("rule_path", "modified_sequence", "expected_proforma"),
     [
         (
-            "diann/parse_diann_ion_1.toml",
+            "diann/parse_diann_ion.toml",
             "(UniMod:1)AAPEPTIDE",
             "[UNIMOD:1]-AAPEPTIDE",
         ),
         (
-            "diann/parse_diann_ion_1.toml",
+            "diann/parse_diann_ion.toml",
             "PEPM(UniMod:35)TIDE",
             "PEPM[UNIMOD:35]TIDE",
         ),

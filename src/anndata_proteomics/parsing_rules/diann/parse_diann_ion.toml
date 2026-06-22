@@ -1,42 +1,64 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "2.3.0"
 input_shape = "long"
-quantification_level = "peptide"
+quantification_level = "ion"
 
-# Like the peptidoform rule, peptide quantities are an APB-derived rollup: precursor
-# quantities summed across charge states AND modification states per stripped sequence
-# (duplicates.mode = "aggregate" -> pivot sum). Simple sum, NOT MaxLFQ. Protein_Group is
-# carried as a foreign key (note: shared peptides may map to several groups; here the
-# AIF dataset is fully proteotypic so the column is a usable scalar).
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma_peptide"]
-x_layer = "Precursor_Quantity"
+var_keys = ["ProForma_ion"]
+x_layer = "Precursor_Normalised"
 
 [axis.duplicates]
-mode = "aggregate"
+mode = "error"
 
 [columns.obs.select]
 Run = "Run"
 
 [columns.var.select]
 Modified_Sequence = "Modified.Sequence"
+Stripped_Sequence = "Stripped.Sequence"
+Precursor_Charge = "Precursor.Charge"
+Precursor_Id = "Precursor.Id"
 Protein_Group = "Protein.Group"
+Protein_Ids = "Protein.Ids"
+Protein_Names = "Protein.Names"
+Genes = "Genes"
+
+[[columns.var.compute]]
+name = "ProForma_peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
 
 [[columns.var.compute]]
 name = "ProForma_peptide"
 from = ["Modified_Sequence"]
 how = "stripped_sequence"
 
+[[columns.var.compute]]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
 [[layers]]
 name = "Precursor_Quantity"
 source_column = "Precursor.Quantity"
 
 [[layers]]
-name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+name = "Ms1_Area"
+source_column = "Ms1.Area"
+
+[[layers]]
+name = "Q_Value"
+source_column = "Q.Value"
+
+[[layers]]
+name = "RT"
+source_column = "RT"
 
 [modifications]
 source_column = "Modified.Sequence"

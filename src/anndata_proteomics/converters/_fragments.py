@@ -31,13 +31,19 @@ def _split_packed(value: object, delimiter: str) -> list[str]:
 def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
     """Return a long DataFrame with one row per fragment.
 
-    Splits ``fragments.label_column`` and every ``fragments.value_columns`` entry on
-    ``fragments.delimiter`` and explodes them together (so they stay index-aligned;
-    mismatched list lengths raise ``ValueError``). Adds ``fragments.label_output`` =
-    the token before ``/`` of the label column (e.g. ``b4-unknown^1`` from
-    ``b4-unknown^1/327.166``). All other columns are replicated per fragment.
+    Splits every ``fragments.value_columns`` entry on ``fragments.delimiter`` and explodes them
+    together (index-aligned; mismatched list lengths raise ``ValueError``). The per-fragment
+    ``fragments.label_output`` is either:
+
+    - **labelled** (``fragments.label_column`` set, e.g. ``Fragment.Info``): the token before
+      ``/`` of the label column (``b4-unknown^1`` from ``b4-unknown^1/327.166``); or
+    - **positional** (``label_column`` is ``None``, e.g. older DIA-NN with no ``Fragment.Info``):
+      ``frag_0``, ``frag_1``, … by index within the precursor.
+
+    Value columns are coerced to numeric; all other columns replicate per fragment.
     """
-    packed_columns = [fragments.label_column, *fragments.value_columns]
+    value_columns = list(fragments.value_columns)
+    packed_columns = ([fragments.label_column] if fragments.label_column else []) + value_columns
     missing = [c for c in packed_columns if c not in df.columns]
     if missing:
         raise KeyError(
@@ -49,18 +55,26 @@ def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
     for column in packed_columns:
         work[column] = work[column].map(lambda v: _split_packed(v, fragments.delimiter))
 
-    # Multi-column explode keeps the lists aligned and raises if their lengths differ.
-    work = work.explode(packed_columns, ignore_index=True)
-    # Precursors with no fragments explode to a NaN row; drop them.
-    work = work.dropna(subset=[fragments.label_column]).reset_index(drop=True)
+    if fragments.label_column is None:
+        # Positional: a parallel index list per precursor, exploded alongside the values.
+        work["_frag_pos"] = work[value_columns[0]].map(lambda tokens: list(range(len(tokens))))
+        work = work.explode([*value_columns, "_frag_pos"], ignore_index=True)
+        work = work.dropna(subset=[value_columns[0]]).reset_index(drop=True)
+        work[fragments.label_output] = [f"frag_{int(pos)}" for pos in work["_frag_pos"]]
+        work = work.drop(columns=["_frag_pos"])
+    else:
+        # Multi-column explode keeps the lists aligned and raises if their lengths differ.
+        work = work.explode(packed_columns, ignore_index=True)
+        # Precursors with no fragments explode to a NaN row; drop them.
+        work = work.dropna(subset=[fragments.label_column]).reset_index(drop=True)
+        work[fragments.label_output] = (
+            work[fragments.label_column].astype(str).str.split("/").str[0]
+        )
+        # Drop the packed label column so the (now ~12x longer) frame doesn't carry a redundant
+        # long string column.
+        work = work.drop(columns=[fragments.label_column])
 
-    work[fragments.label_output] = (
-        work[fragments.label_column].astype(str).str.split("/").str[0]
-    )
-    # The packed label column has served its purpose; drop it so the (now ~12x longer)
-    # frame doesn't carry a redundant long string column. Coerce the value columns to
-    # numeric now so they ride the explode-expanded frame as float64, not object strings.
-    work = work.drop(columns=[fragments.label_column])
-    for column in fragments.value_columns:
+    # Coerce values to numeric so they ride the expanded frame as float64, not object strings.
+    for column in value_columns:
         work[column] = pd.to_numeric(work[column], errors="coerce")
     return work

@@ -29,6 +29,23 @@ def _df() -> pd.DataFrame:
     )
 
 
+def test_positional_labels_when_no_label_column() -> None:
+    # Older DIA-NN (no Fragment.Info): label_column omitted -> positional frag_0, frag_1, ...
+    frags = Fragments(value_columns=["Fragment.Quant.Raw", "Fragment.Correlations"], delimiter=";")
+    df = pd.DataFrame(
+        {
+            "Run": ["r1", "r2"],
+            "Fragment.Quant.Raw": ["100;200;300;", "9;"],
+            "Fragment.Correlations": ["0.9;0.8;0.7;", "0.5;"],
+        }
+    )
+    out = explode_fragments(df, frags)
+    assert len(out) == 4  # 3 + 1
+    assert list(out["fragment_label"]) == ["frag_0", "frag_1", "frag_2", "frag_0"]
+    assert list(out["Fragment.Quant.Raw"]) == [100.0, 200.0, 300.0, 9.0]
+    assert list(out["Run"]) == ["r1", "r1", "r1", "r2"]
+
+
 def test_explodes_one_row_per_fragment_and_drops_trailing_empty() -> None:
     out = explode_fragments(_df(), _FRAGS)
     assert len(out) == 3  # 2 + 1, trailing empty terminator dropped

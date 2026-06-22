@@ -127,12 +127,8 @@
     },
     "Fragments": {
       "additionalProperties": false,
-      "description": "Declares packed parallel-list fragment columns to explode before conversion.\n\nDIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside\neach precursor row (``Fragment.Info`` plus parallel ``Fragment.Quant.*`` lists, aligned\nby index). ``converters._fragments.explode_fragments`` splits these into one row per\nfragment before the normal long-conversion pivot. The split label column yields\n``label_output`` (the token before ``/``, e.g. ``b4-unknown^1``), available as a source\nfor a ``proforma_fragment`` computed column. Only valid for ``quantification_level=\"fragment\"``.",
+      "description": "Declares packed parallel-list fragment columns to explode before conversion.\n\nDIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside each\nprecursor row (parallel ``Fragment.Quant.*`` lists, aligned by index).\n``converters._fragments.explode_fragments`` splits these into one row per fragment before\nthe normal long-conversion pivot, producing ``label_output`` as a source for a\n``proforma_fragment`` computed column. Only valid for ``quantification_level=\"fragment\"``.\n\n``label_column`` is the packed column carrying fragment identities (e.g. ``Fragment.Info``,\ntokens like ``b4-unknown^1/327.16``); ``label_output`` then = the token before ``/``. When\n``label_column`` is ``None`` (older DIA-NN with no ``Fragment.Info``), labels are\n**positional** \u2014 ``frag_0``, ``frag_1``, \u2026 by index within the precursor.",
       "properties": {
-        "label_column": {
-          "title": "Label Column",
-          "type": "string"
-        },
         "value_columns": {
           "items": {
             "type": "string"
@@ -140,6 +136,18 @@
           "minItems": 1,
           "title": "Value Columns",
           "type": "array"
+        },
+        "label_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label Column"
         },
         "delimiter": {
           "default": ";",
@@ -153,7 +161,6 @@
         }
       },
       "required": [
-        "label_column",
         "value_columns"
       ],
       "title": "Fragments",

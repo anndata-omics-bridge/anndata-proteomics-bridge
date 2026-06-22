@@ -1,17 +1,17 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "2.3.0"
 input_shape = "long"
-quantification_level = "peptidoform"
+quantification_level = "peptide"
 
-# DIA-NN reports no native peptidoform-level quantity, so the layers below are an
-# APB-derived rollup: precursor quantities summed across charge states per peptidoform
-# (duplicates.mode = "aggregate" -> pivot sum). This is a simple sum, NOT MaxLFQ.
-# ProForma_peptide and Protein_Group are carried as foreign keys into the parent levels.
+# Like the peptidoform rule, peptide quantities are an APB-derived rollup: precursor
+# quantities summed across charge states AND modification states per stripped sequence
+# (duplicates.mode = "aggregate" -> pivot sum). Simple sum, NOT MaxLFQ. Protein_Group is
+# carried as a foreign key (note: shared peptides may map to several groups; here the
+# AIF dataset is fully proteotypic so the column is a usable scalar).
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma_peptidoform"]
+var_keys = ["ProForma_peptide"]
 x_layer = "Precursor_Quantity"
 
 [axis.duplicates]
@@ -23,11 +23,6 @@ Run = "Run"
 [columns.var.select]
 Modified_Sequence = "Modified.Sequence"
 Protein_Group = "Protein.Group"
-
-[[columns.var.compute]]
-name = "ProForma_peptidoform"
-from = ["Modified_Sequence"]
-how = "proforma_sequence"
 
 [[columns.var.compute]]
 name = "ProForma_peptide"

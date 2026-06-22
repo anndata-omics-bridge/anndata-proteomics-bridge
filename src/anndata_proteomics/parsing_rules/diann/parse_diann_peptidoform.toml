@@ -1,30 +1,27 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "2.3.0"
 input_shape = "long"
-quantification_level = "ion"
+quantification_level = "peptidoform"
 
+# DIA-NN reports no native peptidoform-level quantity, so the layers below are an
+# APB-derived rollup: precursor quantities summed across charge states per peptidoform
+# (duplicates.mode = "aggregate" -> pivot sum). This is a simple sum, NOT MaxLFQ.
+# ProForma_peptide and Protein_Group are carried as foreign keys into the parent levels.
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma_ion"]
-x_layer = "Precursor_Normalised"
+var_keys = ["ProForma_peptidoform"]
+x_layer = "Precursor_Quantity"
 
 [axis.duplicates]
-mode = "error"
+mode = "aggregate"
 
 [columns.obs.select]
 Run = "Run"
 
 [columns.var.select]
 Modified_Sequence = "Modified.Sequence"
-Stripped_Sequence = "Stripped.Sequence"
-Precursor_Charge = "Precursor.Charge"
-Precursor_Id = "Precursor.Id"
 Protein_Group = "Protein.Group"
-Protein_Ids = "Protein.Ids"
-Protein_Names = "Protein.Names"
-Genes = "Genes"
 
 [[columns.var.compute]]
 name = "ProForma_peptidoform"
@@ -36,30 +33,13 @@ name = "ProForma_peptide"
 from = ["Modified_Sequence"]
 how = "stripped_sequence"
 
-[[columns.var.compute]]
-name = "ProForma_ion"
-from = ["ProForma_peptidoform", "Precursor_Charge"]
-how = "proforma_ion"
-
-[[layers]]
-name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
-
 [[layers]]
 name = "Precursor_Quantity"
 source_column = "Precursor.Quantity"
 
 [[layers]]
-name = "Ms1_Area"
-source_column = "Ms1.Area"
-
-[[layers]]
-name = "Q_Value"
-source_column = "Q.Value"
-
-[[layers]]
-name = "RT"
-source_column = "RT"
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
 
 [modifications]
 source_column = "Modified.Sequence"

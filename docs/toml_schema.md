@@ -130,13 +130,14 @@ mapping is stored both in the TOML and in `uns` at conversion time.
 
 Filename convention:
 
-- `parse_<software>_<quantification_level>_<file_version>.toml`
-- The folder and filename use the lowercase vendor short-name
-  (`diann/parse_diann_ion_1.toml`); the `software_name` value inside
-  the TOML preserves the canonical spelling (`"DIA-NN"`).
-- `quantification_level` in the filename must match the in-TOML
-  `quantification_level` value. `tests/test_packaged_rules.py`
-  enforces this.
+- `parse_<software>_<quantification_level>.toml` inside a vendor (and, for version-specific
+  DIA-NN levels, a `vN`/`vN_M` subfolder — see "Version folders" below). Single-version vendors may
+  keep a legacy flat `parse_<software>_<quantification_level>_<n>.toml`.
+- The folder and filename use the lowercase vendor short-name (`diann/parse_diann_ion.toml`,
+  `diann/v1/parse_diann_protein.toml`); the `software_name` value inside the TOML preserves the
+  canonical spelling (`"DIA-NN"`).
+- `quantification_level` in the filename must match the in-TOML `quantification_level` value.
+  `tests/test_packaged_rules.py` enforces this.
 
 ### Duplicate handling
 
@@ -295,15 +296,16 @@ materialization and the long-format pivot, so the rest of the pipeline is reused
 unchanged.
 
 - `[fragments]`
-  - `label_column` — packed column whose tokens identify each fragment
-    (e.g. `"Fragment.Info"`, tokens like `b4-unknown^1/327.16`).
   - `value_columns` — array of the parallel packed value columns to split
-    (e.g. `["Fragment.Quant.Raw", "Fragment.Quant.Corrected", "Fragment.Correlations"]`).
-    All must be the same length per row as `label_column`; a mismatch raises.
+    (e.g. `["Fragment.Quant.Raw", "Fragment.Correlations"]`). All same length per row; mismatch raises.
+  - `label_column` — *optional* packed column whose tokens identify each fragment
+    (e.g. `"Fragment.Info"`, tokens like `b4-unknown^1/327.16`). When **omitted** (older DIA-NN
+    with no `Fragment.Info`), labels are **positional**: `frag_0`, `frag_1`, … by index within the
+    precursor.
   - `delimiter` — token separator, default `";"`.
-  - `label_output` — name of the column the explode produces from `label_column`
-    (the token before `/`, e.g. `b4-unknown^1`), default `"fragment_label"`.
-    Use it as a source for a `how = "proforma_fragment"` compute.
+  - `label_output` — name of the column the explode produces (the token before `/` of
+    `label_column`, or `frag_<i>` when positional), default `"fragment_label"`. Use it as a source
+    for a `how = "proforma_fragment"` compute.
 
 Each packed value column appears **twice** on purpose: in `[fragments].value_columns`
 (so explode knows to split it) and in `[[layers]]` with a matching `source_column` (so
@@ -322,11 +324,43 @@ every DIA-NN file.
 
 ### Multiple levels per vendor
 
-A vendor's single export can back several levels (DIA-NN's `report.tsv` backs ion,
-peptidoform, peptide, protein, and fragment — see below). Ship one TOML per level
-(`parse_diann_<level>_1.toml`). Because every level reads the same columns, header-based
-`recognize()` cannot pick a *level* and returns `None` for such a file; callers select
-the level explicitly with `load_packaged_rule(software, level)`.
+A vendor's single export can back several levels (DIA-NN's `report.tsv` backs ion, peptidoform,
+peptide, protein, and fragment). Ship one TOML per level. Because every level reads the same
+columns, header-based `recognize()` cannot pick a *level* and returns `None` for such a file; the
+level is selected explicitly.
+
+### Version folders (DIA-NN columns change across versions)
+
+DIA-NN's `report.tsv` columns differ by version: `Fragment.Quant.Corrected` is 1.7–1.8 only;
+`Fragment.Quant.Raw` / `Fragment.Correlations` and `PG.Normalised` / `PG.Quantity` exist ≤1.9.2 and
+are gone in 2.x; `Fragment.Info` is absent from all pure DIA-NN exports. So a single rule per level
+cannot fit every version. Version-dependent levels live in **version subfolders** selected by the
+software version:
+
+```text
+parsing_rules/diann/
+  parse_diann_ion.toml          # version-agnostic levels live at the vendor root
+  parse_diann_peptidoform.toml
+  parse_diann_peptide.toml
+  v1/ parse_diann_protein.toml  # 1.x: PG.Normalised/PG.Quantity present
+      parse_diann_fragment.toml #      positional fragment (no Fragment.Info)
+  v2/ parse_diann_protein.toml  # 2.x: PG.MaxLFQ + Genes.MaxLFQ only
+```
+
+- **The folder name is the selector.** `vN` covers major version `N`; finer `vN_M` (e.g. `v1_9`)
+  covers `N.M`. `registry.resolve_rule_path(software, level, version)` picks the most-specific
+  folder whose version prefixes the file's version and contains `parse_<sw>_<level>.toml`, else the
+  vendor-root file (so version-agnostic levels and single-version vendors keep working). `None` when
+  a version doesn't provide a level (e.g. fragment on 2.x).
+- **The version comes from the param file**, which is **mandatory**: the GUI / `convert_one` parse
+  the co-located param (`params.registry.parse_params`) for `software_version`, resolve the rule by
+  version, then **validate** the data columns against it (`converters.recognize.matches`). A column
+  mismatch is an **error** (verify the version / param file) — no silent fallback.
+
+**Adding a variant** for a new DIA-NN format: drop `parse_diann_<level>.toml` into the right
+`vN`/`vN_M` folder (create it if needed) with that version's columns. No code change — the resolver
+finds it. `load_packaged_rule(software, level, version)` / `find_rule(...)` address a specific
+version; pass `None` for version-agnostic root rules.
 
 ## Long example (DIA-NN)
 
