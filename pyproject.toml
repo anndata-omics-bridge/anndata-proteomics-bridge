@@ -39,6 +39,10 @@ dev = [
     "ruff",
     "jsonschema>=4",
 ]
+gui = [
+    "marimo",
+    "plotly",
+]
 
 [tool.black]
 line-length = 100

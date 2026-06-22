@@ -17,8 +17,7 @@ from __future__ import annotations
 import mudata
 from mudata import MuData
 
-from anndata_proteomics.converters.assemble import convert
-from anndata_proteomics.rules.loader import load_packaged_rule
+from anndata_proteomics.scripts import _ui_support as ui
 
 # Per-level var_names prefix; the bare id stays available in the .var columns.
 _PREFIX = {
@@ -30,10 +29,14 @@ _PREFIX = {
 }
 
 
-def _build_levels(df) -> dict:
+def _convert(fixture, level):
+    return ui._convert_level(fixture["df"].copy(), fixture["slug"], level, fixture["version"])
+
+
+def _build_levels(fixture) -> dict:
     levels = {}
     for level, prefix in _PREFIX.items():
-        adata = convert(df.copy(), load_packaged_rule("diann", level))
+        adata = _convert(fixture, level)
         adata.var_names = [prefix + str(v) for v in adata.var_names]
         levels[level] = adata
     return levels
@@ -49,8 +52,8 @@ def _wire_foreign_keys(levels: dict) -> None:
 
 def test_unprefixed_peptide_and_peptidoform_var_names_collide(diann_full_subset) -> None:
     """Justifies why prefixing is mandatory, not stylistic."""
-    pep = convert(diann_full_subset.copy(), load_packaged_rule("diann", "peptide"))
-    pfm = convert(diann_full_subset.copy(), load_packaged_rule("diann", "peptidoform"))
+    pep = _convert(diann_full_subset, "peptide")
+    pfm = _convert(diann_full_subset, "peptidoform")
     assert set(pep.var_names) & set(pfm.var_names)  # unmodified peptides collide
 
 
