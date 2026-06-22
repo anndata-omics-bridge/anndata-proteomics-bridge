@@ -11,30 +11,54 @@ from __future__ import annotations
 
 import csv
 import re
+import shlex
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
 from anndata_proteomics.converters.recognize import matches
+from anndata_proteomics.params.anndata_io import (
+    get_search_parameters_path,
+    read_search_parameters,
+    write_search_parameters,
+)
 from anndata_proteomics.params.registry import parse_params
 from anndata_proteomics.rules.loader import resolve_rule_for_version
 from anndata_proteomics.test_data import DOWNLOADED_DB, TEST_DATA_DIR
 
 # Background-job conversions write their result + console.log into a per-run subdir here.
 CONVERTED_DIR = TEST_DATA_DIR.parent / "logs" / "ui_converted"
+CONVERTED_COLUMNS = [
+    "run_name",
+    "timestamp",
+    "software_name",
+    "software_version",
+    "slug",
+    "target",
+    "status",
+    "result_type",
+    "nr_prec",
+    "size_mb",
+    "input_file_path",
+    "param_path",
+    "output_dir",
+    "result_path",
+    "log_path",
+]
 
-# Quantification levels, coarse → fine.
+# Quantification levels, coarse to fine. Not every vendor exposes every level.
 LEVELS = ["ion", "peptidoform", "peptide", "protein", "fragment"]
 MUDATA = "mudata"
-# Per-level var_names prefix so the modalities don't collide on the global axis
-# (peptide/peptidoform share unmodified-sequence ids). Mirrors tests/test_mudata_levels.py.
+# Per-level var_names prefix so modalities don't collide on the global axis.
 _PREFIX = {"fragment": "frg:", "ion": "ion:", "peptidoform": "pfm:", "peptide": "pep:", "protein": "prt:"}
 # Converting these targets on a large input is memory-heavy (the fragment explode); warn first.
 _HEAVY_TARGETS = {"fragment", MUDATA}
 _HEAVY_SIZE_MB = 100.0
+_RUN_DIR_RE = re.compile(r"^(?P<timestamp>\d{8}T\d{6})_(?P<slug>[a-z0-9]+)_(?P<target>[a-z0-9_]+)$")
 
 
 def software_slug(software_name: str) -> str:
@@ -184,6 +208,189 @@ def is_heavy(target: str, size_mb: float) -> bool:
     return target in _HEAVY_TARGETS and size_mb >= _HEAVY_SIZE_MB
 
 
+def _empty_converted_runs() -> pd.DataFrame:
+    return pd.DataFrame(columns=CONVERTED_COLUMNS)
+
+
+def _parse_run_dir_name(name: str) -> dict[str, str]:
+    match = _RUN_DIR_RE.match(name)
+    if match is None:
+        return {"timestamp": "", "slug": "", "target": ""}
+    return match.groupdict()
+
+
+def _result_file(run_dir: Path) -> Path | None:
+    for name in ("result.h5mu", "result.h5ad"):
+        path = run_dir / name
+        if path.is_file():
+            return path
+    return None
+
+
+def _command_metadata(log_path: Path) -> dict[str, str]:
+    if not log_path.exists():
+        return {}
+    first_line = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[0:1]
+    if not first_line or not first_line[0].startswith("$ "):
+        return {}
+    try:
+        parts = shlex.split(first_line[0][2:])
+    except ValueError:
+        return {}
+    out: dict[str, str] = {}
+    for flag, key in {
+        "--input": "input_file_path",
+        "--slug": "slug",
+        "--target": "target",
+        "--params": "param_path",
+        "--outdir": "output_dir",
+    }.items():
+        if flag in parts:
+            index = parts.index(flag)
+            if index + 1 < len(parts):
+                out[key] = parts[index + 1]
+    return out
+
+
+def _catalog_lookup(catalog: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    if catalog.empty:
+        return {}
+    return {
+        str(row["input_file_path"]): {
+            "software_name": row.get("software_name", ""),
+            "software_version": row.get("software_version", ""),
+            "nr_prec": row.get("nr_prec", ""),
+            "size_mb": row.get("size_mb", ""),
+            "param_path": row.get("param_path", ""),
+        }
+        for _, row in catalog.iterrows()
+    }
+
+
+def _stored_search_parameters(obj) -> dict[str, Any] | None:
+    params = read_search_parameters(obj)
+    if params is None:
+        return None
+    out = params.model_dump(mode="json", exclude_none=True)
+    path = get_search_parameters_path(obj)
+    if path:
+        out["search_parameters_path"] = path
+    return out
+
+
+def _artifact_search_parameters(result_path: Path) -> dict[str, Any] | None:
+    try:
+        obj = load_converted_result(result_path)
+    except Exception:  # noqa: BLE001 - table metadata falls back to log/catalog.
+        return None
+    if hasattr(obj, "mod"):
+        params = _stored_search_parameters(obj)
+        if params is not None:
+            return params
+        for modality in obj.mod.values():
+            params = _stored_search_parameters(modality)
+            if params is not None:
+                return params
+        return None
+    return _stored_search_parameters(obj)
+
+
+def list_converted_runs(converted_dir: Path | str = CONVERTED_DIR) -> pd.DataFrame:
+    """Scan converted-output folders into a stable DataFrame for the GUI table."""
+    root = Path(converted_dir).expanduser()
+    if not root.exists():
+        return _empty_converted_runs()
+
+    catalog_by_input = _catalog_lookup(load_catalog())
+    rows: list[dict[str, str]] = []
+    for run_dir in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+        parsed = _parse_run_dir_name(run_dir.name)
+        result = _result_file(run_dir)
+        log_path = run_dir / "console.log"
+        command = _command_metadata(log_path)
+        input_file_path = command.get("input_file_path", "")
+        catalog_row = catalog_by_input.get(input_file_path, {})
+        artifact_params = _artifact_search_parameters(result) if result is not None else None
+        if result is not None:
+            status = "finished"
+            result_type = result.suffix.removeprefix(".")
+            result_path = str(result)
+        elif log_path.exists():
+            status = "incomplete"
+            result_type = ""
+            result_path = ""
+        else:
+            status = "empty"
+            result_type = ""
+            result_path = ""
+        rows.append(
+            {
+                "run_name": run_dir.name,
+                "timestamp": parsed["timestamp"],
+                "software_name": str(
+                    (artifact_params or {}).get(
+                        "software_name", catalog_row.get("software_name", "")
+                    )
+                ),
+                "software_version": str(
+                    (artifact_params or {}).get(
+                        "software_version", catalog_row.get("software_version", "")
+                    )
+                ),
+                "slug": command.get("slug", parsed["slug"]),
+                "target": command.get("target", parsed["target"]),
+                "status": status,
+                "result_type": result_type,
+                "nr_prec": str(catalog_row.get("nr_prec", "")),
+                "size_mb": str(catalog_row.get("size_mb", "")),
+                "input_file_path": input_file_path,
+                "param_path": str(
+                    (artifact_params or {}).get(
+                        "search_parameters_path",
+                        command.get("param_path", str(catalog_row.get("param_path", ""))),
+                    )
+                ),
+                "output_dir": str(run_dir),
+                "result_path": result_path,
+                "log_path": str(log_path) if log_path.exists() else "",
+            }
+        )
+    if not rows:
+        return _empty_converted_runs()
+    return pd.DataFrame(rows, columns=CONVERTED_COLUMNS)
+
+
+def converted_runs_table(runs: pd.DataFrame) -> pd.DataFrame:
+    """User-facing converted-runs table with no internal filesystem-path columns."""
+    columns = [
+        "run_name",
+        "software_name",
+        "software_version",
+        "target",
+        "status",
+        "result_type",
+        "nr_prec",
+        "size_mb",
+    ]
+    if runs.empty:
+        return pd.DataFrame(columns=columns)
+    return runs[columns].copy()
+
+
+def load_converted_result(result_path: Path | str) -> Any:
+    """Load a converted ``result.h5ad`` or ``result.h5mu`` file."""
+    path = Path(result_path).expanduser()
+    if path.suffix == ".h5ad":
+        import anndata as ad
+
+        return ad.read_h5ad(path)
+    if path.suffix == ".h5mu":
+        import mudata
+
+        return mudata.read_h5mu(path)
+    raise ValueError(f"unsupported converted result type: {path}")
+
+
 def _noop(_msg: str) -> None:
     pass
 
@@ -207,23 +414,34 @@ def convert_target(
     df = read_table(_dataset_path(input_file_path))
     log(f"  rows={len(df)} cols={len(df.columns)}")
     if target == MUDATA:
-        return _build_mudata(df, slug, version, log=log)
-    return _convert_level(df, slug, target, version, log=log)
+        return _build_mudata(df, slug, version, params_path=param_path, log=log)
+    return _convert_level(df, slug, target, version, params_path=param_path, log=log)
 
 
 def _convert_level(
-    df: pd.DataFrame, slug: str, level: str, version: str | None, *, log: Callable[[str], None] = _noop
+    df: pd.DataFrame,
+    slug: str,
+    level: str,
+    version: str | None,
+    *,
+    params_path: Path | str | None = None,
+    log: Callable[[str], None] = _noop,
 ):
     from anndata_proteomics.converters.assemble import convert
 
     rule = select_rule(slug, level, version, df.columns)
-    adata = convert(df, rule)
+    adata = convert(df, rule, params_path=params_path)
     log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
     return adata
 
 
 def _build_mudata(
-    df: pd.DataFrame, slug: str, version: str | None, *, log: Callable[[str], None] = _noop
+    df: pd.DataFrame,
+    slug: str,
+    version: str | None,
+    *,
+    params_path: Path | str | None = None,
+    log: Callable[[str], None] = _noop,
 ):
     """Build a MuData over the levels whose version-selected rule fits this file (shared run axis).
 
@@ -246,10 +464,15 @@ def _build_mudata(
         if level not in resolvable:
             continue
         log(f"converting level: {level}")
-        adata = _convert_level(df.copy(), slug, level, version, log=log)
+        adata = _convert_level(
+            df.copy(), slug, level, version, params_path=params_path, log=log
+        )
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
     md = MuData(mods, axis=0)
+    if params_path is not None:
+        params = parse_params(params_path, software=slug)
+        write_search_parameters(md, params, source_path=str(params_path))
     log(f"  MuData: {md.n_obs} obs × {sum(a.n_vars for a in mods.values())} var, {len(mods)} mods")
     return md
 
@@ -267,15 +490,48 @@ def _matrix_stats(matrix: np.ndarray) -> dict[str, float]:
     }
 
 
-def summarize(obj) -> dict:
-    """Summary dict for an AnnData, or per-modality for a MuData. GUI-renderable."""
-    if hasattr(obj, "mod"):  # MuData
-        return {
-            "kind": "MuData",
-            "n_obs": int(obj.n_obs),
-            "modalities": {name: summarize(ad) for name, ad in obj.mod.items()},
-        }
-    return {
+def _search_parameters_summary(obj) -> dict[str, Any] | None:
+    params = _stored_search_parameters(obj)
+    if params is None:
+        return None
+    headline = [
+        "software_name",
+        "software_version",
+        "search_engine_version",
+        "quantification_method",
+        "ident_fdr_psm",
+        "ident_fdr_peptide",
+        "ident_fdr_protein",
+        "enable_match_between_runs",
+    ]
+    ordered = {key: params[key] for key in headline if key in params}
+    ordered.update({key: value for key, value in params.items() if key not in ordered})
+    return ordered
+
+
+def _mudata_search_parameters_summary(obj) -> dict[str, Any] | None:
+    params = _search_parameters_summary(obj)
+    if params is not None:
+        return params
+    summaries = {
+        name: _search_parameters_summary(modality)
+        for name, modality in obj.mod.items()
+    }
+    present = {name: summary for name, summary in summaries.items() if summary is not None}
+    if not present:
+        return None
+    first = next(iter(present.values()))
+    mismatches = [name for name, summary in present.items() if summary != first]
+    out = dict(first)
+    out["source"] = "modalities"
+    out["modalities"] = list(present)
+    if mismatches:
+        out["mismatched_modalities"] = mismatches
+    return out
+
+
+def _summarize_anndata(obj, *, include_search_parameters: bool = True) -> dict:
+    summary = {
         "kind": "AnnData",
         "shape": (int(obj.n_obs), int(obj.n_vars)),
         "obs_columns": list(obj.obs.columns),
@@ -284,3 +540,25 @@ def summarize(obj) -> dict:
         "uns_keys": list(obj.uns.keys()),
         "x_stats": _matrix_stats(obj.X),
     }
+    if include_search_parameters:
+        summary["search_parameters"] = _search_parameters_summary(obj)
+    return summary
+
+
+def summarize(obj) -> dict:
+    """Summary dict for an AnnData, or per-modality for a MuData. GUI-renderable."""
+    if hasattr(obj, "mod"):  # MuData
+        search_parameters = _mudata_search_parameters_summary(obj)
+        return {
+            "kind": "MuData",
+            "n_obs": int(obj.n_obs),
+            "uns_keys": list(obj.uns.keys()),
+            "search_parameters": search_parameters,
+            "modalities": {
+                name: _summarize_anndata(
+                    ad, include_search_parameters=search_parameters is None
+                )
+                for name, ad in obj.mod.items()
+            },
+        }
+    return _summarize_anndata(obj)

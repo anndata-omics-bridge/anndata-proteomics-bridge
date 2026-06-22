@@ -32,31 +32,31 @@ def _loguru_to_pytest_capsys():
     logger.remove()
 
 
-# --- Shared DIA-NN multi-level test data -------------------------------------
+# --- Shared DIA-NN report-backed multi-level test data -----------------------
 # Conversion is param-driven: the param file gives the DIA-NN version, which selects the rule
-# variants. A DIA-NN 1.9.x export supports all five levels (positional fragment), so the fixture
-# finds a cached DIA-NN dataset whose version resolves all five and returns a small row subset
-# plus that version. Skips cleanly when no such dataset is cached.
+# variants. A DIA-NN 1.9.x export supports ion, protein, and positional fragment levels, so the
+# fixture finds a cached DIA-NN dataset whose version resolves those levels and returns a small row
+# subset plus that version. Skips cleanly when no such dataset is cached.
 
 _SUBSET_ROWS = 4000  # precursor rows; the fragment level explodes this ~12x
 
 
 @pytest.fixture(scope="session")
 def diann_full_subset() -> dict:
-    """`{df, version, slug}` for a DIA-NN dataset whose version supports all five levels."""
+    """`{df, version, slug}` for a DIA-NN dataset with report-backed levels."""
     from anndata_proteomics.readers.dispatch import read_table
     from anndata_proteomics.scripts import _ui_support as ui
 
     catalog = ui.load_catalog()
     if catalog.empty:
         pytest.skip("no cached test-data catalog")
-    all_levels = set(ui.LEVELS)
+    required_levels = {"ion", "protein", "fragment"}
     diann = catalog[
         (catalog["slug"] == "diann")
-        & catalog["targets"].apply(lambda targets: all_levels <= set(targets))
+        & catalog["targets"].apply(lambda targets: required_levels <= set(targets))
     ]
     if diann.empty:
-        pytest.skip("no cached DIA-NN dataset whose version supports all five levels")
+        pytest.skip("no cached DIA-NN dataset with ion, protein, and fragment levels")
     row = diann.iloc[0]
     version = ui._param_version(Path(row["param_path"]), "diann")
     df = read_table(ui._dataset_path(row["input_file_path"]))

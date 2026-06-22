@@ -209,12 +209,7 @@ class ParseRule(_Strict):
 
     @model_validator(mode="after")
     def _fragments_only_for_fragment_level(self) -> ParseRule:
-        is_fragment = self.quantification_level == "fragment"
-        if is_fragment and self.fragments is None:
-            raise ValueError(
-                "quantification_level='fragment' requires a [fragments] block."
-            )
-        if self.fragments is not None and not is_fragment:
+        if self.fragments is not None and self.quantification_level != "fragment":
             raise ValueError(
                 "[fragments] is only valid for quantification_level='fragment'."
             )

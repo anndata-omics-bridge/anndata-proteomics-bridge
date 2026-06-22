@@ -1,0 +1,85 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "Spectronaut"
+input_shape = "long"
+quantification_level = "fragment"
+
+# Native Spectronaut fragment reports are already one row per observed fragment/run and carry
+# F.* fragment columns. Do not use a [fragments] packed-list block here; that block is for
+# DIA-NN-style precursor rows that need to be exploded.
+[axis]
+obs_keys = ["R_FileName"]
+var_keys = [
+  "EG_PrecursorId",
+  "F_FrgIon",
+  "F_Charge",
+  "F_FrgLossType",
+  "F_FrgType",
+  "F_FrgNum",
+]
+x_layer = "F_PeakArea"
+
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
+R_FileName = "R.FileName"
+R_Condition = "R.Condition"
+
+[columns.var.select]
+PG_ProteinGroups = "PG.ProteinGroups"
+PG_ProteinAccessions = "PG.ProteinAccessions"
+PEP_StrippedSequence = "PEP.StrippedSequence"
+EG_ModifiedSequence = "EG.ModifiedSequence"
+EG_PrecursorId = "EG.PrecursorId"
+FG_Charge = "FG.Charge"
+F_FrgIon = "F.FrgIon"
+F_Charge = "F.Charge"
+F_FrgLossType = "F.FrgLossType"
+F_FrgType = "F.FrgType"
+F_FrgNum = "F.FrgNum"
+F_FrgMz = "F.FrgMz"
+F_TheoreticalMz = "F.TheoreticalMz"
+
+[[columns.var.compute]]
+name = "ProForma_peptidoform"
+from = ["EG_ModifiedSequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma_peptide"
+from = ["EG_ModifiedSequence"]
+how = "stripped_sequence"
+
+[[layers]]
+name = "F_PeakArea"
+source_column = "F.PeakArea"
+
+[[layers]]
+name = "F_FrgMz"
+source_column = "F.FrgMz"
+
+[[layers]]
+name = "F_TheoreticalMz"
+source_column = "F.TheoreticalMz"
+
+[modifications]
+source_column = "EG.ModifiedSequence"
+parser = "token_regex"
+token_pattern = "\\[([^\\[\\]]+)\\]"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "Acetyl (Protein N-term)"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "Oxidation (M)"
+accession = "UNIMOD:35"
+
+[[modifications.map]]
+token = "Carbamidomethyl (C)"
+accession = "UNIMOD:4"

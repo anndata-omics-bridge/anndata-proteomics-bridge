@@ -62,9 +62,11 @@ def test_fragment_v1_is_positional() -> None:
 
 
 def test_convertible_levels_by_version() -> None:
-    assert ui.convertible_levels("diann", _V19, _diann_headers(_V19)) == ui.LEVELS  # all 5
+    assert ui.convertible_levels("diann", _V19, _diann_headers(_V19)) == [
+        "ion", "protein", "fragment",
+    ]
     assert ui.convertible_levels("diann", _V23, _diann_headers(_V23)) == [
-        "ion", "peptidoform", "peptide", "protein",
+        "ion", "protein",
     ]
     assert "mudata" in ui.available_targets("diann", _V23, _diann_headers(_V23))
 

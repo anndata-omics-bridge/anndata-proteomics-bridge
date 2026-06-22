@@ -18,6 +18,7 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
+    import json
     import sys
     from datetime import datetime
 
@@ -27,7 +28,7 @@ def _():
     from anndata_proteomics.scripts import _ui_support as ui
     from anndata_proteomics.scripts import jobrunner as runner
 
-    return datetime, mo, panels, runner, sys, ui
+    return datetime, json, mo, panels, runner, sys, ui
 
 
 @app.cell
@@ -62,6 +63,12 @@ def _(catalog, mo, ui):
         start=0, stop=max_mb, value=max_mb, step=1, label="Max size (MB)", show_value=True
     )
     return size_slider, software_dd, target_dd
+
+
+@app.cell
+def _(mo):
+    converted_refresh = mo.ui.run_button(label="Refresh outputs")
+    return (converted_refresh,)
 
 
 @app.cell
@@ -112,7 +119,7 @@ def _(filtered, mo):
     left_table = mo.ui.table(
         filtered[_cols] if len(filtered) else filtered,
         selection="single",
-        page_size=15,
+        page_size=6,
         label=f"Datasets ({len(filtered)})",
     )
     return (left_table,)
@@ -188,8 +195,69 @@ def _(
 
 
 @app.cell
-def _(convert_button, left_table, mo, size_slider, software_dd, status_panel, target_dd):
-    mo.vstack(
+def _(converted_refresh, get_done, ui):
+    get_done()
+    _ = converted_refresh.value
+    converted_runs = ui.list_converted_runs()
+    return (converted_runs,)
+
+
+@app.cell
+def _(converted_runs, mo, ui):
+    converted_display = ui.converted_runs_table(converted_runs)
+    converted_table = mo.ui.table(
+        converted_display,
+        selection="single",
+        page_size=5,
+        label=f"Converted outputs ({len(converted_display)})",
+    )
+    return (converted_table,)
+
+
+@app.cell
+def _(converted_runs, converted_table, json, mo, ui):
+    _sel = converted_table.value
+    _selected = _sel.iloc[0] if (_sel is not None and len(_sel)) else None
+    _row = None
+    if _selected is not None and not converted_runs.empty:
+        _matches = converted_runs[converted_runs["run_name"] == _selected["run_name"]]
+        _row = _matches.iloc[0] if len(_matches) else None
+    if _row is None:
+        result_viewer = mo.md("*Select a converted output to inspect it.*")
+    elif not _row["result_path"]:
+        result_viewer = mo.md(f"**No result file for selected run.** Status: `{_row['status']}`")
+    else:
+        try:
+            _obj = ui.load_converted_result(_row["result_path"])
+            _summary = ui.summarize(_obj)
+            result_viewer = mo.vstack(
+                [
+                    mo.md(
+                        f"**{_row['result_type']} result**  \n"
+                        f"`{_row['result_path']}`"
+                    ),
+                    mo.md(f"```json\n{json.dumps(_summary, indent=2, default=str)}\n```"),
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001 - render load failures in the GUI.
+            result_viewer = mo.md(f"**Could not load result:** `{exc}`")
+    return (result_viewer,)
+
+
+@app.cell
+def _(
+    convert_button,
+    converted_refresh,
+    converted_table,
+    left_table,
+    mo,
+    result_viewer,
+    size_slider,
+    software_dd,
+    status_panel,
+    target_dd,
+):
+    input_panel = mo.vstack(
         [
             mo.hstack([target_dd, software_dd, size_slider], justify="start", gap=2),
             left_table,
@@ -197,6 +265,15 @@ def _(convert_button, left_table, mo, size_slider, software_dd, status_panel, ta
             status_panel,
         ]
     )
+    converted_panel = mo.vstack(
+        [
+            mo.hstack([mo.md("## Converted outputs"), converted_refresh], justify="space-between"),
+            converted_table,
+            mo.md("## Result viewer"),
+            result_viewer,
+        ]
+    )
+    mo.vstack([input_panel, converted_panel], gap=2)
     return
 
 

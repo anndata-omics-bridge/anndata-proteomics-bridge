@@ -1,162 +1,82 @@
-# TODO: test-data browser → convert → inspect GUI
+# TODO: test-data browser -> convert -> inspect GUI
 
 **Date:** 2026-06-22
-**Status:** Design / spec — no code yet.
-**Related:** [TODO_viewer.md](TODO_viewer.md) (the larger `APB_viewer` product + viz-scaling
-research), [TODO_to_mu_data.md](TODO_to_mu_data.md) (the multi-level/MuData conversion this drives).
+**Status:** Implemented prototype; this note tracks current behavior and remaining gaps.
+**Related:** [TODO_viewer.md](TODO_viewer.md), [TODO_to_mu_data.md](TODO_to_mu_data.md),
+[HOWTO/test_gui.md](HOWTO/test_gui.md).
 
-> **Note:** the existing single-file viewer was moved
-> `anndataview.py` → `src/anndata_proteomics/scripts/anndataview.py` (per the same request).
-> Its overview/stats/heatmap cells are the basis for the **summary panel** below.
+## Current Flow
 
-## Does this make sense? — yes
+The APB GUI is `src/anndata_proteomics/scripts/ui_test_tool.py` and is launched with `make ui`.
+It is a compact marimo app:
 
-It's a clean, useful internal tool: *browse the ProteoBench test corpus → pick a dataset and a
-target → convert → inspect the result*. It also doubles as a live exercise of the registry +
-converters on real, varied vendor files. Two refinements worth baking in from the start
-(both grounded in what we just learned):
+1. Browse/filter the downloaded ProteoBench catalog.
+2. Select a target and dataset.
+3. Start a background conversion subprocess through `jobrunner.py`.
+4. Write durable outputs under `logs/ui_converted/<run>/`.
+5. Scan converted outputs into a compact table.
+6. Select a converted run and inspect it with `_ui_support.summarize()`.
 
-1. **Convertibility must be registry-driven, not a hardcoded vendor list** — so the tool stays
-   correct as rules are added. The filter logic you described maps exactly onto
-   `rules.registry.find_rule(software, level)` + `converters.recognize.matches(...)`.
-2. **Convert is sometimes expensive** — a 740 MB / 175k-precursor DIA-NN file converted to
-   **fragment** or **MuData** is the multi-GB / many-second case from the perf work. The tool
-   needs a size guardrail + background conversion, not a naive synchronous call.
+The standalone `src/anndata_proteomics/scripts/anndataview.py` is **not** the active GUI result
+path. It remains useful future work for a richer `.h5ad` viewer, but urgent parameter visibility
+belongs in `_ui_support.summarize()`.
 
-## Concept
+## Conversion Contract
 
-Three-pane single-page app:
+The active conversion path is:
 
-```
-┌─────────────────────────────────────────────┬──────────────────────────────────┐
-│ TARGET:  ( ) MuData (all levels)             │  CONVERTED (this session)        │
-│          (•) AnnData level: [ion ▾]          │  ┌────────────────────────────┐  │
-│ FILTER:  software [All ▾]  size ≤ [====o] MB │  │ dataset │ target │ shape │…│  │
-│                                              │  │ DIANN…  │ ion    │ 6×73k │  │  │
-│  LEFT — dataset catalog (filtered)           │  │ MaxQ…   │ ion    │ 6×41k │  │  │
-│  ┌────────────────────────────────────────┐ │  └────────────────────────────┘  │
-│  │ software │ version │ nr_prec │ size │ ✓ │ │             ▲ select a row        │
-│  │ DIA-NN   │ 1.8.1   │ 175 476 │ 740M │ ✓ │ │   ┌──────────────────────────┐   │
-│  │ DIA-NN   │ 2.0     │  69 629 │  95M │ ✓ │ │   │ SUMMARY PANEL            │   │
-│  │ …        │         │         │      │   │ │   │ (anndataview.py views:   │   │
-│  └────────────────────────────────────────┘ │   │  overview, obs/var/X,    │   │
-│        ▲ select a row → [ Convert ]          │   │  layers, uns, heatmap;   │   │
-│                                              │   │  per-modality for MuData)│   │
-│                                              │   └──────────────────────────┘   │
-└─────────────────────────────────────────────┴──────────────────────────────────┘
-```
+`ui_test_tool.py -> convert_one.py -> _ui_support.convert_target() -> assemble.convert(..., params_path=...)`
 
-## Data source — the catalog (left table)
+Key behavior:
 
-`test_data_download/raw_file_db_downloaded.csv` (83 rows today, all `status="ok"`). Useful columns:
+- Rule selection is version-aware: the co-located param/log file is parsed for software version.
+- Rule selection is level-semantic: a standalone AnnData level is exposed only when the vendor
+  output has real quantitative layers for that level. Peptide and peptidoform identifiers are
+  mandatory `.var` metadata/link columns where available or computable, but DIA-NN precursor
+  layers are not aggregated into peptide/peptidoform matrices during parsing.
+- Finished single-level conversions write `result.h5ad`.
+- Finished MuData conversions write `result.h5mu`.
+- Parsed search parameters are stored under
+  `uns["anndata_proteomics"]["search_parameters"]` with `search_parameters_path`.
+- MuData stores shared search parameters at `mdata.uns["anndata_proteomics"]` and keeps
+  modality-level AnnData provenance.
 
-| Column | Use |
-|---|---|
-| `software_name` | display + filter + registry slug lookup |
-| `software_version` | display |
-| `nr_prec` | "size" proxy (precursor count, 2 844 – 175 476) |
-| `input_file_size_bytes` | "size" filter (2.3 MB – 740 MB) |
-| `input_file_path` | path under `test_data_download/json_dir/…` to feed the converter |
-| `status` | only show `ok` |
+## Converted-Output Table
 
-Software families present (count): DIA-NN 20, MaxQuant 11, i2MassChroQ 8, AlphaDIA 8,
-Spectronaut 8, FragPipe (DIA-NN quant) 7, PEAKS 7, FragPipe 5, Sage 2, WOMBAT 2, AlphaPept 2,
-quantms 1, ProlineStudio 1, MSAngel 1.
+The converted-output table is durable, not session-local. It scans `logs/ui_converted/`.
 
-## Target selector + filter logic (the core interaction)
+Visible columns:
 
-Choosing the **target** filters the left table to datasets whose software has the required
-rule(s). Driven by the registry, not hardcoded:
+- `run_name`
+- `software_name`
+- `software_version`
+- `target`
+- `status`
+- `result_type`
+- `nr_prec`
+- `size_mb`
 
-- **MuData (all levels)** → software must have **all five** level rules → **DIA-NN only** (20).
-- **AnnData level = ion** → DIA-NN, MaxQuant, Spectronaut, PEAKS, FragPipe (~51 rows).
-- **= peptidoform** → DIA-NN, WOMBAT.
-- **= peptide / protein / fragment** → DIA-NN only (today).
+Full filesystem paths stay internal for selection/loading. For finished artifacts, table metadata
+comes from the stored result artifact first; log/catalog reconstruction is fallback only.
 
-Current packaged coverage (the `✓` column / what's convertible):
+## Result Inspector
 
-| Software (catalog name) | slug | convertible targets |
-|---|---|---|
-| DIA-NN | `diann` | ion, peptidoform, peptide, protein, fragment, **MuData** |
-| MaxQuant | `maxquant` | ion |
-| Spectronaut | `spectronaut` | ion |
-| PEAKS | `peaks` | ion |
-| FragPipe | `fragpipe` | ion |
-| WOMBAT | `wombat` | peptidoform |
-| FragPipe (DIA-NN quant) | ? | **resolve via `recognize`** (column variant — TBD) |
-| i2MassChroQ, AlphaDIA, AlphaPept, Sage, quantms, ProlineStudio, MSAngel | — | none yet |
+The active result inspector renders `_ui_support.summarize(...)` as JSON:
 
-**Implementation:** for each catalog row, map `software_name` → registry slug (reuse the
-existing alias resolution, e.g. `params.registry` / `get_parser`; do **not** write a new map),
-then a target is convertible iff `find_rule(slug, level)` resolves for the level(s). Optionally
-confirm with `recognize.matches(headers, rule)` (a cheap header read) to catch DIA-NN column
-variants — recall some cached DIA-NN files lack `Fragment.*` or `PG.Normalised`, so "DIA-NN"
-does **not** guarantee fragment/MuData for *that* file.
+- AnnData: shape, obs/var columns, layers, uns keys, X stats, full non-empty search parameters.
+- MuData: n_obs, shared search parameters once at the MuData level, then per-modality summaries.
+- When MuData-level search parameters are available, modality summaries suppress duplicate
+  `search_parameters`.
 
-## Convert action
+The summary uses `params.anndata_io.read_search_parameters()` and
+`get_search_parameters_path()`, not an ad hoc JSON key whitelist.
 
-Selected left row + target → **Convert** →
-- read the file (`readers.dispatch.read_table`), `load_packaged_rule(slug, level)`,
-  `converters.assemble.convert(...)`; for MuData, convert each level and assemble (the
-  `tests/test_mudata_levels.py` assembly is the reference pattern to factor into a helper).
-- append a row to the **right table**.
+## Remaining Gaps
 
-**Guardrails (required, not optional):**
-- **Size/memory warning** before converting `fragment` or `MuData` above a threshold (the perf
-  note: full 6-run fragment ≈ 6.5 GB). Show the estimate; offer **per-run** or **row-capped**
-  conversion for big files.
-- **Run conversion in the background** with a spinner/progress; never block the UI on a
-  multi-second/GB convert.
-- Decide **artifact storage**: in-memory dict keyed by `(dataset, target)` (simplest, RAM-bound)
-  vs. write `.h5ad`/`.h5mu` to a gitignored cache (`test_data_download/_converted/`) so the
-  summary panel reloads lazily. Recommend **disk cache** given the sizes.
-
-## Right table — converted artifacts (this session)
-
-Columns: dataset (software+version), target, shape (`n_obs × n_var`; per-modality for MuData),
-layers, build time, peak memory (nice-to-have), artifact path. Select a row → drives the panel.
-
-## Summary panel — reuse `anndataview.py`
-
-Show the existing views for the selected artifact: overview table, obs/var/X/layers/uns tabs,
-optional heatmap. For MuData, a modality selector + per-modality summary. **Refactor first:**
-extract `anndataview.py`'s inline stats into importable helpers (`_matrix_stats`,
-`_layer_stats_rows`, `_format_uns` — already recommended in the June code review) so both the
-standalone viewer and this tool call the same code.
-
-## Reuse before duplicate (AGENTS.md)
-
-- catalog → `raw_file_db_downloaded.csv` (already the index; `test_data.py` already reads it).
-- software→slug and rule lookup → `rules.registry` / `params.registry` (don't reinvent aliases).
-- convertibility / column-variant check → `converters.recognize.matches`.
-- conversion → `converters.assemble.convert` + `rules.loader.load_packaged_rule`.
-- MuData assembly → factor the helper out of `tests/test_mudata_levels.py`.
-- summaries → shared helpers extracted from `anndataview.py`.
-
-## Framework
-
-Recommend **marimo** for the prototype: reactive (selecting target re-filters the left table,
-selecting a right row re-renders the panel — no manual callbacks), tables with selection
-(`mo.ui.table(selection="single")`), `mo.ui.dropdown` / `mo.ui.range_slider` / `mo.ui.run_button`,
-and it reuses the existing marimo viewer directly. This is also a low-risk testbed for the
-framework question in [TODO_viewer.md](TODO_viewer.md); if `APB_viewer` later goes Dash/Panel,
-the conversion + summary helpers carry over unchanged (they're framework-agnostic).
-
-## Phased build
-
-1. **Catalog + filters** — left table from the CSV, software + size filters (read-only).
-2. **Convertibility column** — registry-driven `✓`/targets per row; target selector re-filters.
-3. **Convert (single AnnData)** — ion-level convert for one row → right table; disk cache.
-4. **Summary panel** — wire right-row selection to the refactored `anndataview` helpers.
-5. **MuData + fragment** — add the heavy targets behind the size guardrail + background run.
-
-## Open questions
-
-- **Filename:** captured as `TODO_ui_test_tool.md` (spec). Want me to also scaffold the marimo
-  app as `src/anndata_proteomics/scripts/ui_test_tool.py`?
-- **Artifacts:** in-memory vs disk cache (recommend disk)?
-- **Convertibility check:** registry-only (fast) or also `recognize.matches` per row (one header
-  read each — catches column variants but costs I/O on first load)?
-- **Big-file policy:** hard cap, warn-only, or auto-offer per-run/subset for fragment/MuData?
-- **Same app as `APB_viewer` or separate internal tool?** (Recommend: prototype here, fold in later.)
-- How does `FragPipe (DIA-NN quant)` map — `fragpipe`, `diann`, or its own rule?
+- Add a visible error/status column for parameter-parse failures instead of silently making rows
+  non-convertible.
+- Add big-file guardrails for fragment/MuData: hard cap, per-run subset, or row-capped conversion.
+- Later, factor common matrix/layer/uns rendering helpers between `_ui_support.summarize()` and
+  `anndataview.py` if the standalone viewer becomes important again.
+- Decide whether `FragPipe (DIA-NN quant)` should be its own rule family or map through existing
+  FragPipe/DIA-NN rules.

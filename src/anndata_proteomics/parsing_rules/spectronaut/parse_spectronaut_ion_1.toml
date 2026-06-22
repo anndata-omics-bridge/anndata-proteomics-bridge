@@ -14,18 +14,30 @@ x_layer = "FG_Quantity"
 mode = "error"
 
 [columns.obs.select]
+E_Errors = "E.Errors"
+E_LFQMethod = "E.LFQMethod"
+E_Warnings = "E.Warnings"
 R_FileName = "R.FileName"
 R_Condition = "R.Condition"
+R_Fraction = "R.Fraction"
 R_Replicate = "R.Replicate"
 R_Label = "R.Label"
 
 [columns.var.select]
+PG_GroupLabel = "PG.GroupLabel"
+PG_ProteinAccessions = "PG.ProteinAccessions"
+PG_ProteinGroups = "PG.ProteinGroups"
+PEP_GroupingKey = "PEP.GroupingKey"
+PEP_GroupingKeyType = "PEP.GroupingKeyType"
 PEP_StrippedSequence = "PEP.StrippedSequence"
 EG_ModifiedSequence = "EG.ModifiedSequence"
 EG_ModifiedPeptide = "EG.ModifiedPeptide"
+EG_IntPIMID = "EG.IntPIMID"
+EG_UserGroup = "EG.UserGroup"
+EG_Workflow = "EG.Workflow"
 FG_Charge = "FG.Charge"
-PG_ProteinGroups = "PG.ProteinGroups"
-PG_ProteinAccessions = "PG.ProteinAccessions"
+FG_IntMID = "FG.IntMID"
+FG_LabeledSequence = "FG.LabeledSequence"
 
 [[columns.var.compute]]
 name = "ProForma_peptidoform"
@@ -47,8 +59,52 @@ name = "FG_Quantity"
 source_column = "FG.Quantity"
 
 [[layers]]
+name = "EG_iRTPredicted"
+source_column = "EG.iRTPredicted"
+
+[[layers]]
+name = "EG_IsDecoy"
+source_column = "EG.IsDecoy"
+
+[[layers]]
+name = "EG_MaxChannelQvalue"
+source_column = "EG.MaxChannelQvalue"
+
+[[layers]]
+name = "EG_MinChannelQvalue"
+source_column = "EG.MinChannelQvalue"
+
+[[layers]]
+name = "EG_PEP"
+source_column = "EG.PEP"
+
+[[layers]]
+name = "EG_Qvalue"
+source_column = "EG.Qvalue"
+
+[[layers]]
+name = "EG_IsUserPeak"
+source_column = "EG.IsUserPeak"
+
+[[layers]]
 name = "FG_Mass"
 source_column = "FG.Mass"
+
+[[layers]]
+name = "FG_PrecMz"
+source_column = "FG.PrecMz"
+
+[[layers]]
+name = "FG_PrecMzCalibrated"
+source_column = "FG.PrecMzCalibrated"
+
+[[layers]]
+name = "FG_XICDBID"
+source_column = "FG.XICDBID"
+
+[[layers]]
+name = "FG_CScore"
+source_column = "FG.CScore"
 
 [[layers]]
 name = "FG_Qvalue"
@@ -59,8 +115,60 @@ name = "EG_ApexRT"
 source_column = "EG.ApexRT"
 
 [[layers]]
-name = "EG_Qvalue"
-source_column = "EG.Qvalue"
+name = "EG_iRTEmpirical"
+source_column = "EG.iRTEmpirical"
+
+[[layers]]
+name = "EG_RTPredicted"
+source_column = "EG.RTPredicted"
+
+[[layers]]
+name = "EG_AvgProfileQvalue"
+source_column = "EG.AvgProfileQvalue"
+
+[[layers]]
+name = "EG_MaxProfileQvalue"
+source_column = "EG.MaxProfileQvalue"
+
+[[layers]]
+name = "EG_MinProfileQvalue"
+source_column = "EG.MinProfileQvalue"
+
+[[layers]]
+name = "EG_PercentileQvalue"
+source_column = "EG.PercentileQvalue"
+
+[[layers]]
+name = "EG_IsImputed"
+source_column = "EG.IsImputed"
+
+[[layers]]
+name = "EG_ReferenceQuantity_Settings"
+source_column = "EG.ReferenceQuantity (Settings)"
+
+[[layers]]
+name = "EG_TargetQuantity_Settings"
+source_column = "EG.TargetQuantity (Settings)"
+
+[[layers]]
+name = "EG_TotalQuantity_Settings"
+source_column = "EG.TotalQuantity (Settings)"
+
+[[layers]]
+name = "EG_UsedForPeptideQuantity"
+source_column = "EG.UsedForPeptideQuantity"
+
+[[layers]]
+name = "EG_UsedForProteinGroupQuantity"
+source_column = "EG.UsedForProteinGroupQuantity"
+
+[[layers]]
+name = "EG_Cscore"
+source_column = "EG.Cscore"
+
+[[layers]]
+name = "EG_NormalizedCscore"
+source_column = "EG.NormalizedCscore"
 
 [modifications]
 source_column = "EG.ModifiedSequence"

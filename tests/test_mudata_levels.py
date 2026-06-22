@@ -1,15 +1,12 @@
-"""MuData proof: wrap the five DIA-NN levels as one MuData on a shared sample axis.
+"""MuData proof: wrap DIA-NN report-backed levels on a shared sample axis.
 
 This is the concrete answer to TODO_to_mu_data.md: each quantification level is a normal
 AnnData, and MuData(axis=0) is a thin container over them sharing the run (obs) axis. It is
 test-only — no public API ships (per the TODO's step 7).
 
 Two design points it validates:
-- var_names must be prefixed per level. peptide and peptidoform var_names genuinely collide
-  (an unmodified peptide's stripped sequence == its ProForma), and axis=0 MuData silently
-  empties the merged .var on colliding names. Prefixing keeps the global axis unique.
-- foreign-key link columns carry the PREFIXED parent id, so child.var[fk] is a subset of the
-  parent's (prefixed) var_names and the join works directly.
+- var_names are prefixed per level so modalities stay globally unique.
+- vendor identifiers remain in .var metadata even when they do not create standalone modalities.
 """
 
 from __future__ import annotations
@@ -23,8 +20,6 @@ from anndata_proteomics.scripts import _ui_support as ui
 _PREFIX = {
     "fragment": "frg:",
     "ion": "ion:",
-    "peptidoform": "pfm:",
-    "peptide": "pep:",
     "protein": "prt:",
 }
 
@@ -44,34 +39,31 @@ def _build_levels(fixture) -> dict:
 
 def _wire_foreign_keys(levels: dict) -> None:
     """Add prefixed FK columns pointing from each child level into its parent's var_names."""
-    ion, pfm, frg = levels["ion"], levels["peptidoform"], levels["fragment"]
+    frg = levels["fragment"]
     frg.var["ion_fk"] = "ion:" + frg.var["ProForma_ion"].astype(str)
-    ion.var["peptidoform_fk"] = "pfm:" + ion.var["ProForma_peptidoform"].astype(str)
-    pfm.var["peptide_fk"] = "pep:" + pfm.var["ProForma_peptide"].astype(str)
 
 
-def test_unprefixed_peptide_and_peptidoform_var_names_collide(diann_full_subset) -> None:
-    """Justifies why prefixing is mandatory, not stylistic."""
-    pep = _convert(diann_full_subset, "peptide")
-    pfm = _convert(diann_full_subset, "peptidoform")
-    assert set(pep.var_names) & set(pfm.var_names)  # unmodified peptides collide
+def test_ion_carries_peptide_peptidoform_and_protein_metadata(diann_full_subset) -> None:
+    ion = _convert(diann_full_subset, "ion")
+    assert {
+        "ProForma_peptidoform",
+        "ProForma_peptide",
+        "Protein_Group",
+        "Protein_Ids",
+        "Protein_Names",
+        "Genes",
+    } <= set(ion.var.columns)
 
 
 def test_foreign_keys_resolve_into_parent_var_names(diann_full_subset) -> None:
     levels = _build_levels(diann_full_subset)
     _wire_foreign_keys(levels)
-    ion, pfm, pep, prt, frg = (
-        levels["ion"], levels["peptidoform"], levels["peptide"],
-        levels["protein"], levels["fragment"],
-    )
-    # the core chain uses computed keys (never null): fragment -> ion -> peptidoform -> peptide
+    ion, prt, frg = levels["ion"], levels["protein"], levels["fragment"]
+    # the core chain uses computed keys (never null): fragment -> ion.
     assert set(frg.var["ion_fk"]) <= set(ion.var_names)
-    assert set(ion.var["peptidoform_fk"]) <= set(pfm.var_names)
-    assert set(pfm.var["peptide_fk"]) <= set(pep.var_names)
 
-    # peptide -> protein is the doc's hard case (vendor column, may be blank); check the
-    # non-blank protein groups resolve into the protein level's var_names.
-    pg = pep.var["Protein_Group"].astype("string")
+    # Ion -> protein-group is carried as vendor metadata; non-blank groups resolve.
+    pg = ion.var["Protein_Group"].astype("string")
     real = pg[pg.str.len().fillna(0) > 0].dropna()
     assert set("prt:" + real) <= set(prt.var_names)
 

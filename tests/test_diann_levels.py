@@ -1,9 +1,9 @@
-"""Convert the five DIA-NN quantification levels from one (version-resolved) report.
+"""Convert the DIA-NN quantification levels backed by real report layers.
 
 The ``diann_full_subset`` fixture (conftest.py) supplies a small slice of a cached DIA-NN dataset
-whose param-parsed version supports all five levels (a 1.9.x export: positional fragment + PG.*),
-plus that version. Conversion goes through the param-driven ``_ui_support`` path. Skips when no
-such dataset is cached.
+whose param-parsed version supports ion, protein, and fragment layers (a 1.9.x export:
+positional fragment + PG.*), plus that version. Conversion goes through the param-driven
+``_ui_support`` path. Skips when no such dataset is cached.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import pytest
 
 from anndata_proteomics.scripts import _ui_support as ui
 
-_LEVELS = ["ion", "peptidoform", "peptide", "protein", "fragment"]
+_LEVELS = ["ion", "protein", "fragment"]
 
 
 def _convert(fixture, level):
@@ -26,10 +26,23 @@ def test_each_level_converts_to_nonempty_anndata(diann_full_subset) -> None:
         assert adata.shape[1] > 0, f"{level}: empty var axis"
 
 
-def test_var_counts_follow_the_quantification_hierarchy(diann_full_subset) -> None:
+def test_var_counts_follow_report_backed_levels(diann_full_subset) -> None:
     n = {level: _convert(diann_full_subset, level).shape[1] for level in _LEVELS}
-    # many fragments -> ions -> peptidoforms -> peptides -> protein groups
-    assert n["fragment"] > n["ion"] > n["peptidoform"] >= n["peptide"] > n["protein"]
+    # many fragments -> ions; protein groups are an independent report-backed level.
+    assert n["fragment"] > n["ion"]
+    assert n["protein"] > 0
+
+
+def test_ion_var_preserves_peptide_peptidoform_and_protein_metadata(diann_full_subset) -> None:
+    adata = _convert(diann_full_subset, "ion")
+    assert {
+        "ProForma_peptidoform",
+        "ProForma_peptide",
+        "Protein_Group",
+        "Protein_Ids",
+        "Protein_Names",
+        "Genes",
+    } <= set(adata.var.columns)
 
 
 def test_fragment_keys_are_positional(diann_full_subset) -> None:

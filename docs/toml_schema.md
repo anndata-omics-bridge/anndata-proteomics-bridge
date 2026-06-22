@@ -108,7 +108,16 @@ Schema invariants worth knowing:
 ### Column naming
 
 - Right-hand-side names must preserve the exact vendor column names.
-- Left-hand-side names may be cleaner internal names.
+- Left-hand-side names and layer names are APB internal names produced by sanitising the
+  vendor name: preserve token words, case, and vendor prefixes, but replace separators
+  such as `.`, spaces, parentheses, hyphens, and other special characters with `_`;
+  collapse repeated `_`; trim edge `_`. Do not rename vendor columns into cross-vendor
+  semantic aliases. For example, Spectronaut `FG.Charge` should be selected as
+  `FG_Charge = "FG.Charge"`, `EG.ModifiedSequence` as
+  `EG_ModifiedSequence = "EG.ModifiedSequence"`, and `PG.ProteinGroups` as
+  `PG_ProteinGroups = "PG.ProteinGroups"`.
+- The reserved `ProForma_*` compute names are the exception: they are APB-derived
+  identifiers and must use the schema-defined names below.
 - `[columns.*.select]` is strictly for values that exist in the input
   table, plus the wide-file placeholder `"<sample>"`. APB-derived
   values (the column whose name matches `modifications.output_column`,
@@ -514,7 +523,8 @@ This is why the rule schema supports both `source_column` and
 2. Update `software_name`, `software_version`, `input_shape`,
    `quantification_level`.
 3. Replace `[columns.var.select]` RHS values with the new vendor's
-   actual column names; keep the LHS clean.
+   actual column names; keep the LHS as the minimally sanitised vendor
+   name, not a semantic alias.
 4. Update layer `source_column` (long) or `column_pattern` (wide).
    Keep the sample-token in wide regexes as `.+`.
 5. Adjust `[modifications]`: pick the right `token_pattern` for the
