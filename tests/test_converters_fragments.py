@@ -33,9 +33,12 @@ def test_explodes_one_row_per_fragment_and_drops_trailing_empty() -> None:
     out = explode_fragments(_df(), _FRAGS)
     assert len(out) == 3  # 2 + 1, trailing empty terminator dropped
     assert list(out["fragment_label"]) == ["b4-unknown^1", "y5-unknown^1", "b2-unknown^1"]
-    # parallel lists stay aligned and the precursor scalars replicate
-    assert list(out["Fragment.Quant.Raw"]) == ["100", "200", "9"]
-    assert list(out["Fragment.Quant.Corrected"]) == ["110", "210", "8"]
+    # parallel lists stay aligned; value columns are coerced to numeric (float, not str)
+    assert list(out["Fragment.Quant.Raw"]) == [100.0, 200.0, 9.0]
+    assert list(out["Fragment.Quant.Corrected"]) == [110.0, 210.0, 8.0]
+    # the packed label column is dropped once fragment_label is derived
+    assert "Fragment.Info" not in out.columns
+    # the precursor scalars replicate
     assert list(out["Run"]) == ["r1", "r1", "r2"]
     assert list(out["Precursor.Id"]) == ["PEP2", "PEP2", "OTHER3"]
 

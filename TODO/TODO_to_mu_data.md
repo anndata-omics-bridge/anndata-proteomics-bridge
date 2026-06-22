@@ -37,10 +37,13 @@ Resolved design points (deviating from / refining this doc):
   `load_packaged_rule(software, level)`.
 
 Known limitation / follow-up:
-- **Fragment pivot is memory-heavy**: explode multiplies rows ~12x; a full 6-run DIA-NN
-  report peaks at >10 GB in `pivot_table`. Tests run on a row-capped subset. A
-  sparse/streamed fragment builder is a separate optimization if fragment-level at full
-  scale is needed.
+- **Fragment level is memory-heavy at full scale**: explode multiplies rows ~12x; a full
+  6-run DIA-NN report builds ~827k features. `convert_long` now scatters directly into the
+  dense matrix (no `pivot_table`) and the fragment path trims unused columns before
+  exploding, bringing the peak from ~13.5 GB down to ~6.5 GB. The matrix is ~90% dense, so
+  this is largely irreducible without chunking — a chunked-streaming explode+scatter (never
+  materialising the full ~5M-row exploded frame) is the next step if full-scale fragment is
+  needed. Tests run on a row-capped subset; in practice, convert fragment per run / filtered.
 - DIA-NN fragment columns vary by version (some exports lack `Fragment.Info` or carry a
   reduced `Fragment.Quant.*` set), so the fragment rule does not fit every DIA-NN file.
 

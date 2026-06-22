@@ -57,4 +57,10 @@ def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
     work[fragments.label_output] = (
         work[fragments.label_column].astype(str).str.split("/").str[0]
     )
+    # The packed label column has served its purpose; drop it so the (now ~12x longer)
+    # frame doesn't carry a redundant long string column. Coerce the value columns to
+    # numeric now so they ride the explode-expanded frame as float64, not object strings.
+    work = work.drop(columns=[fragments.label_column])
+    for column in fragments.value_columns:
+        work[column] = pd.to_numeric(work[column], errors="coerce")
     return work

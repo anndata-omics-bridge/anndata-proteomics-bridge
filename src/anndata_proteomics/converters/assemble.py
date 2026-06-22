@@ -76,8 +76,12 @@ def convert(
     if rule.fragments is not None:
         # Fan packed per-precursor fragment lists out to one row per fragment before
         # the computed columns (ProForma_ion → ProForma_fragment) are materialized.
+        # Drop columns the rule never reads first: explode multiplies the row count ~12x,
+        # so carrying all ~60 vendor columns (mostly unused strings) through it is what
+        # makes a full report cost many GB.
         from anndata_proteomics.converters._fragments import explode_fragments
 
+        df = df[_columns_needed_for_long(df, rule)]
         df = explode_fragments(df, rule.fragments)
 
     df = _materialize_columns(df, rule)
@@ -95,6 +99,27 @@ def convert(
     if params_path is not None:
         _attach_search_parameters(adata, params_path, rule.software_name)
     return adata
+
+
+def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:
+    """Vendor/derived columns a long rule reads downstream of modifications.
+
+    Used to trim the frame before the fragment explode. Keeps select sources, layer
+    sources, the fragment packed columns, and the modification-derived columns that
+    later computes (ProForma_*) consume — everything else is dead weight once exploded.
+    """
+    needed: set[str] = set(rule.columns.obs.select.values())
+    needed |= set(rule.columns.var.select.values())
+    needed |= {layer.source_column for layer in rule.layers if layer.source_column}
+    if rule.modifications is not None:
+        needed |= {rule.modifications.source_column, rule.modifications.output_column}
+        needed.add("stripped_sequence")
+    if rule.fragments is not None:
+        needed.add(rule.fragments.label_column)
+        needed |= set(rule.fragments.value_columns)
+    needed.discard("<sample>")
+    # preserve original column order; keep only columns actually present
+    return [column for column in df.columns if column in needed]
 
 
 def _materialize_columns(df: pd.DataFrame, rule: ParseRule) -> pd.DataFrame:

@@ -310,10 +310,15 @@ Each packed value column appears **twice** on purpose: in `[fragments].value_col
 the now-scalar column is pivoted into a layer like any other long column).
 
 **Caveats.** Explode multiplies the row count by the fragments-per-precursor (~12 for
-DIA-NN), so converting a full report into a dense fragment matrix is memory-heavy
-(a single 6-run report can peak at >10 GB in the pivot). DIA-NN fragment columns also
-vary by version/config — some exports drop `Fragment.Info` or carry a reduced set of
-`Fragment.Quant.*` columns, so a fragment rule may not fit every DIA-NN file.
+DIA-NN), so converting a full report into a dense fragment matrix is memory-heavy: a
+single 6-run AIF report builds ~827k features and peaks around ~6.5 GB (the matrix is
+~90% dense, so this is genuinely large data, not overhead — the converter scatters
+directly into the dense matrix rather than via `pivot_table`, and trims unused columns
+before exploding). For large reports, prefer converting per run / filtering precursors
+first; a chunked-streaming builder would be the next step for full-scale fragment work.
+DIA-NN fragment columns also vary by version/config — some exports drop `Fragment.Info`
+or carry a reduced set of `Fragment.Quant.*` columns, so a fragment rule may not fit
+every DIA-NN file.
 
 ### Multiple levels per vendor
 

@@ -13,10 +13,17 @@ def join_keys(row: pd.Series) -> str:
 
 
 def build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
-    """Build a string index from one or more key columns."""
+    """Build a string index from one or more key columns.
+
+    Vectorised string concatenation (not a row-wise apply) so it stays cheap on the
+    full, un-deduplicated frame the long converter scatters from.
+    """
     if len(keys) == 1:
         return df[keys[0]].astype(str)
-    return df[keys].apply(join_keys, axis=1)
+    joined = df[keys[0]].astype(str)
+    for key in keys[1:]:
+        joined = joined + KEY_SEPARATOR + df[key].astype(str)
+    return joined
 
 
 def build_axis_frame(
