@@ -1,44 +1,67 @@
 # Parsing architecture (UML)
 
-Diagrams of APB's parsing subsystem, covering two related but distinct flows:
+The parsing subsystem lives under `src/anndata_proteomics/` and is split into five
+subpackages. This doc gives a top-level dependency map, then **one diagram + a short
+description per module**, then the two end-to-end flows that tie them together.
 
-1. **Parameter parsing** — a vendor parameter file → a typed `Parameters` record.
-2. **Table conversion** — a parsing-rule TOML + a vendor quant table → an `AnnData`
-   (optionally attaching parsed search parameters into `uns`).
+Two distinct "parsing" concerns to keep separate:
 
-Diagrams are [Mermaid](https://mermaid.js.org/) and render in GitHub and most IDEs. Sources
-referenced are under `src/anndata_proteomics/`.
+- **`params/`** parses a vendor **search-parameter file** (whole-experiment settings) into a
+  typed `Parameters` record.
+- **`modifications/`** parses **peptide modification strings** (a single sequence's mods) and
+  models searched modifications for SDRF.
 
 ---
 
-## 1. Class diagram — data models
+## Module dependency overview
 
-Three model families: **params** (`params/model.py`), **modifications**
-(`modifications/model.py`, `apply_rules.py`, `unimod_registry.py`), and **rules**
-(`rules/schema.py`), plus the `ConversionPieces` container.
+Arrows mean **"imports / depends on"**. `rules` and `readers` are leaves; `converters` is the
+orchestrator that pulls everything together.
+
+```mermaid
+flowchart TD
+    converters --> params
+    converters --> modifications
+    converters --> rules
+    converters --> readers
+    params --> modifications
+    modifications --> rules
+    modifications --> unimod[(unimod_registry.toml)]
+
+    classDef leaf fill:#eef2ff,stroke:#9aa7d8;
+    class rules,readers leaf;
+```
+
+| Module | One-line role |
+|---|---|
+| `params/` | Vendor parameter-file → typed `Parameters`. |
+| `modifications/` | Vendor modified-sequence → ProForma + modification models. |
+| `rules/` | The TOML parsing-rule schema (`ParseRule`) + its loader/registry. |
+| `readers/` | Read a tabular quant file → `DataFrame`. |
+| `converters/` | `DataFrame` + `ParseRule` → `AnnData`. |
+
+---
+
+## `params/` — vendor parameter-file parsing
+
+**Parses a vendor search-parameter file into one typed `Parameters` record** — the model for
+parameter-file parsing.
+
+- **Inputs:** DIA-NN log/cfg, MaxQuant `mqpar.xml`, Sage JSON, AlphaPept / WOMBAT YAML,
+  FragPipe `.workflow`, PEAKS / Spectronaut text, MSAID, MetaMorpheus.
+- **Entry point:** each vendor module exposes `extract_params(source) -> Parameters`.
+- **Dispatch:** `registry.py` looks up the parser by software name.
+- **Reading:** `_common.py` centralizes file I/O (`read_text` / `read_lines`).
+- **AnnData I/O:** `anndata_io.py` reads/writes a `Parameters` into `adata.uns`.
+
+See [parameter_parsers.md](parameter_parsers.md) for the per-vendor breakdown (input formats,
+parse techniques, and the three modification-mapping families).
 
 ```mermaid
 classDiagram
     direction LR
-
-    %% ---- params/model.py ----
     class _Strict {
-        <<pydantic BaseModel, extra=forbid>>
-    }
-    class Probability {
-        +float value
-    }
-    class MassTolerance {
-        +float|None value
-        +str|None unit
-        +str mode
-        +str|None label
-        +parse(value) MassTolerance$
-    }
-    class UnparsedParameter {
-        +str name
-        +ScalarValue value
-        +str|None source
+        <<pydantic, extra=forbid>>
     }
     class Parameters {
         +str|None software_name
@@ -49,17 +72,52 @@ classDiagram
         +to_series() Series
         +from_series(series) Parameters$
     }
-    note for Parameters "plus ~20 more scalar fields: charges, m/z, peptide lengths, FDR, quant method"
+    class Probability {
+        +float value
+    }
+    class MassTolerance {
+        +float|None value
+        +str|None unit
+        +str mode
+        +parse(value) MassTolerance$
+    }
+    class UnparsedParameter {
+        +str name
+        +ScalarValue value
+        +str|None source
+    }
+    class SearchedModification {
+        <<from modifications/>>
+    }
+    _Strict <|-- Parameters
     _Strict <|-- Probability
     _Strict <|-- MassTolerance
     _Strict <|-- UnparsedParameter
-    _Strict <|-- Parameters
     Parameters *-- "0..3" Probability : ident_fdr
-    Parameters *-- "0..2" MassTolerance : precursor/fragment tol
-    Parameters *-- "*" SearchedModification : fixed_mods / variable_mods
+    Parameters *-- "0..2" MassTolerance : precursor / fragment
     Parameters *-- "*" UnparsedParameter : unparsed_parameters
+    Parameters ..> SearchedModification : fixed_mods / variable_mods
+    note for Parameters "~20 more scalar fields: charges, m/z, peptide lengths, FDR, quant method. Built by each vendor extract_params(); validators canonicalize enzyme, FDR, tolerance, mods."
+```
 
-    %% ---- modifications/model.py ----
+---
+
+## `modifications/` — modification-string parsing & models
+
+**Normalizes peptide modifications** — modification identities/strings, distinct from `params/`
+(whole-file settings). Two jobs:
+
+- **ProForma normalization:** `apply_rules.apply_rule(seq, rule)` turns a vendor
+  modified-sequence string (e.g. `PEPM(ox)TIDE`, `_[ac]PEP…`) into a canonical ProForma string
+  plus localized `ModificationOccurrence`s. `pipeline.py` builds the `ModificationRule` from a
+  rules `Modifications` section, resolving each `MapEntry` against the bundled `unimod_registry`.
+- **Searched modifications:** `SearchedModification` models fixed/variable mods from parameter
+  files, for SDRF export (`sdrf.py`).
+- **Rendering:** `proforma.py` renders the ProForma string.
+
+```mermaid
+classDiagram
+    direction LR
     class ModType {
         <<enum>>
         fixed
@@ -71,14 +129,11 @@ classDiagram
         +str|None accession
         +ModType mod_type
         +str|None target
-        +str|None position
         +float|None mass_delta
-        +str|None source
     }
     class ModificationOccurrence {
         +str name
         +str|None accession
-        +str|None target_residue
         +int|None sequence_index
         +str|None position
         +float|None mass_delta
@@ -87,28 +142,19 @@ classDiagram
     class ModifiedSequence {
         +str stripped_sequence
         +str proforma_sequence
-        +str|None source_sequence
         +list~str~ unknown_tokens
     }
-    SearchedModification --> ModType
-    ModifiedSequence *-- "*" ModificationOccurrence : occurrences
-
-    %% ---- modifications/apply_rules.py + unimod_registry.py ----
     class MapEntry {
         <<frozen>>
         +str token
         +str name
         +str|None accession
-        +str|None target
-        +str|None position
         +float|None mass_delta
     }
     class ModificationRule {
         <<frozen>>
-        +str source_column
         +str token_pattern
         +str token_position
-        +bool case_sensitive
         +str unknown_policy
         +str output_column
     }
@@ -116,22 +162,26 @@ classDiagram
         +str accession
         +str name
         +str target
-        +str position
         +float mass_delta
     }
+    SearchedModification --> ModType
+    ModifiedSequence *-- "*" ModificationOccurrence : occurrences
     ModificationRule *-- "*" MapEntry : entries
-
-    %% ---- converters/_pieces.py ----
-    class ConversionPieces {
-        +ndarray X
-        +DataFrame obs
-        +DataFrame var
-        +dict layers
-        +dict uns
-    }
+    note for ModificationRule "apply_rule(seq, rule) returns a ModifiedSequence. pipeline._to_runtime_rule builds the rule from a rules Modifications section, filling each MapEntry from the UnimodEntry registry."
 ```
 
-The rule-schema models (`rules/schema.py`) compose as follows:
+---
+
+## `rules/` — the TOML parsing-rule schema
+
+**Defines and loads the TOML parsing-rule schema** that tells the converters how to turn a
+vendor table into AnnData. A leaf subpackage (imports no other subpackage).
+
+- `schema.py` — the pydantic `ParseRule` (axis keys, column select/compute, layers, optional
+  modifications section) with cross-field validation.
+- `loader.py` — parse + validate a TOML file.
+- `registry.py` — find packaged rules by `(software, level, version)`.
+- `validate.py` — validate rule files.
 
 ```mermaid
 classDiagram
@@ -166,7 +216,6 @@ classDiagram
     class Modifications {
         +str source_column
         +str parser
-        +str|None token_pattern
         +str unknown_policy
         +str output_column
     }
@@ -175,7 +224,6 @@ classDiagram
         +str accession
     }
     class SampleNameCleanup
-
     ParseRule *-- Axis
     ParseRule *-- Columns
     ParseRule *-- "1..*" Layer
@@ -187,38 +235,87 @@ classDiagram
     Modifications *-- "*" ModificationMapEntry : map
 ```
 
-> `Parameters.fixed_mods/variable_mods` hold `SearchedModification` (defined in
-> `modifications/model.py` but re-exported through `params` for SDRF use). The runtime
-> `ModificationRule` (in `apply_rules.py`) is the resolved form of the TOML `Modifications`
-> section — `modifications/pipeline._to_runtime_rule` fills each `MapEntry` from the
-> `UnimodEntry` registry.
+---
+
+## `readers/` — tabular file reading
+
+**Reads a quant table into a pandas `DataFrame`.** A leaf subpackage.
+
+- `tabular.py` — per-format readers (csv / tsv / parquet).
+- `dispatch.read_table` — picks a reader by file extension.
+
+```mermaid
+flowchart LR
+    path[path] --> rt[dispatch.read_table]
+    rt -->|.csv| csv[tabular.read_csv]
+    rt -->|.tsv / .txt| tsv[tabular.read_tsv]
+    rt -->|.parquet| pq[tabular.read_parquet]
+    csv --> df[(DataFrame)]
+    tsv --> df
+    pq --> df
+```
 
 ---
 
-## 2. Flow — vendor parameter file → `Parameters`
+## `converters/` — DataFrame + ParseRule → AnnData
+
+**Turns a `DataFrame` + a `ParseRule` into an `AnnData`.**
+
+- `assemble.convert` — orchestrates: optional modification normalization → column
+  materialization → long/wide strategy → assemble.
+- `long.py` / `wide.py` — the two shape strategies, each returning `ConversionPieces`.
+- `assemble.to_anndata` — builds the `AnnData` (rule stored in `uns`).
+- `recognize.py` — auto-picks a rule from table headers.
+- When a `params_path` is given, parsed `Parameters` are attached to `uns`.
+
+```mermaid
+flowchart TD
+    df[(DataFrame)] --> conv[assemble.convert]
+    rule[ParseRule] --> conv
+    headers[table headers] -.-> recog[recognize.recognize]
+    recog -. selects .-> rule
+    conv --> mods{rule.modifications?}
+    mods -->|yes| apply[modifications.apply_modifications]
+    mods -->|no| mat[_materialize_columns: select + compute]
+    apply --> mat
+    mat --> shape{input_shape}
+    shape -->|long| long[long.convert_long]
+    shape -->|wide| wide[wide.convert_wide]
+    long --> pieces[ConversionPieces]
+    wide --> pieces
+    pieces --> asm[assemble.to_anndata]
+    asm --> ad[(AnnData)]
+    paramsp[params_path?] -. optional .-> attach[_attach_search_parameters]
+    attach -. writes uns .-> ad
+```
+
+---
+
+## End-to-end flows (cross-module)
+
+### A. Vendor parameter file → `Parameters`
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Caller
     participant Reg as params.registry
-    participant V as params.<vendor>
+    participant V as params vendor
     participant Common as params._common
     participant Model as params.model.Parameters
 
     Caller->>Reg: parse_params(path, software)
-    Reg->>Reg: get_parser(software) -> extract_params
-    Reg->>V: extract_params(source)
+    Reg->>V: get_parser(software) then extract_params(source)
     V->>Common: read_text / read_lines(source)
     Common-->>V: text / lines
-    V->>V: vendor parse (regex / yaml / json / toml / xml)
-    V->>Model: Parameters(**fields)
-    Model->>Model: field validators (enzyme map, FDR>=1,<br/>MassTolerance.parse, mod ProForma, ranges)
+    V->>V: vendor parse (regex, yaml, json, toml, xml)
+    V->>Model: build Parameters from fields
+    Model->>Model: run validators (enzyme map, FDR, tolerance, mods, ranges)
     Model-->>V: Parameters
     V-->>Caller: Parameters
 ```
 
-## 2b. Flow — rule TOML + table → `AnnData` (+ optional params)
+### B. Rule TOML + table → `AnnData` (+ optional params)
 
 ```mermaid
 sequenceDiagram
@@ -226,115 +323,40 @@ sequenceDiagram
     participant Caller
     participant Loader as rules.loader
     participant Reader as readers.dispatch
-    participant Conv as converters.assemble.convert
+    participant Conv as converters.assemble
     participant Mods as modifications.pipeline
     participant LW as converters.long/wide
-    participant Asm as converters.assemble.to_anndata
-    participant Params as params.registry + anndata_io
+    participant P as params
 
-    Caller->>Loader: load_rule(toml) -> ParseRule
-    Caller->>Reader: read_table(path) -> DataFrame
-    Caller->>Conv: convert(df, rule, params_path=?)
-    opt rule.modifications is not None
+    Caller->>Loader: load_rule(toml_path)
+    Loader-->>Caller: ParseRule
+    Caller->>Reader: read_table(path)
+    Reader-->>Caller: DataFrame
+    Caller->>Conv: convert(df, rule, params_path)
+    opt rule.modifications set
         Conv->>Mods: apply_modifications(df, rule.modifications)
-        Mods->>Mods: _to_runtime_rule (unimod resolve) + apply_rule per row
-        Mods-->>Conv: df + proforma_sequence / stripped_sequence
+        Mods-->>Conv: df plus proforma_sequence, stripped_sequence
     end
-    Conv->>Conv: _materialize_columns (select + compute)
-    alt input_shape == long
-        Conv->>LW: convert_long(df, rule) -> ConversionPieces
+    Conv->>Conv: _materialize_columns (select plus compute)
+    alt input_shape long
+        Conv->>LW: convert_long(df, rule)
     else wide
-        Conv->>LW: convert_wide(df, rule) -> ConversionPieces
+        Conv->>LW: convert_wide(df, rule)
     end
-    Conv->>Asm: to_anndata(pieces, rule)
-    Asm-->>Conv: AnnData (uns['anndata_proteomics']['rule_json'])
-    opt params_path provided
-        Conv->>Params: _attach_search_parameters(adata, params_path, software)
-        Params->>Params: parse_params -> Parameters; write_search_parameters
-        Note over Params: uns['anndata_proteomics']['search_parameters'(_path)]
+    LW-->>Conv: ConversionPieces
+    Conv->>Conv: to_anndata(pieces, rule)
+    opt params_path given
+        Conv->>P: _attach_search_parameters(adata, params_path, software)
+        P-->>Conv: writes uns search_parameters
     end
     Conv-->>Caller: AnnData
 ```
 
-> Rule auto-detection: `converters.recognize.recognize(headers) -> ParseRule | None`
-> picks the unique packaged rule whose `matches(headers, rule)` holds, when the caller
-> doesn't supply a rule explicitly.
+> Storage keys: the rule is saved in `uns['anndata_proteomics']['rule_json']`; parsed
+> parameters in `uns['anndata_proteomics']['search_parameters']` (with the source path in
+> `…['search_parameters_path']`).
 
 ---
 
-## 3. Package / component overview
-
-```mermaid
-flowchart TD
-    subgraph readers
-        dispatch[dispatch.read_table]
-        tabular[tabular.read_csv/tsv/parquet]
-        dispatch --> tabular
-    end
-
-    subgraph rules
-        schema[schema.ParseRule + Axis/Columns/Layer/Modifications]
-        loader[loader.load_rule]
-        rreg[registry.find_rule]
-        loader --> schema
-        loader --> rreg
-    end
-
-    subgraph params
-        preg[registry.get_parser / parse_params]
-        vendors[vendor extract_params x10]
-        pmodel[model.Parameters / MassTolerance / Probability]
-        pcommon[_common.read_text / read_lines]
-        pio[anndata_io.write/read_search_parameters]
-        preg --> vendors
-        vendors --> pmodel
-        vendors --> pcommon
-        pio --> pmodel
-    end
-
-    subgraph modifications
-        mpipe[pipeline.apply_modifications]
-        mapply[apply_rules.apply_rule]
-        mpro[proforma.render_proforma]
-        munic[unimod_registry.resolve]
-        mmodel[model.*]
-        msdrf[sdrf.to/from_sdrf_value]
-        mpipe --> mapply
-        mpipe --> munic
-        mapply --> mpro
-        mapply --> mmodel
-    end
-
-    subgraph converters
-        conv[assemble.convert]
-        recog[recognize.recognize]
-        lw[long.convert_long / wide.convert_wide]
-        asm[assemble.to_anndata]
-        pieces[_pieces.ConversionPieces]
-        conv --> lw
-        conv --> asm
-        lw --> pieces
-    end
-
-    conv --> rules
-    conv --> readers
-    conv --> mpipe
-    conv --> preg
-    conv --> pio
-    recog --> rules
-    msdrf -.-> mmodel
-```
-
----
-
-## Notes
-
-- `params/` is standalone (no `proteobench` imports); `extract_params(source) -> Parameters`
-  is the uniform vendor entry point, dispatched via `params/registry.py`.
-- Source acquisition is centralized in `params/_common.py` (`read_text` / `read_lines`);
-  vendor modules only own the format-specific parse step.
-- Parsed parameters live in `adata.uns['anndata_proteomics']['search_parameters']` (JSON), with
-  the originating path in `…['search_parameters_path']`; the parsing rule is stored in
-  `…['rule_json']`.
-- This document is hand-maintained; when adding a vendor, model field, or rule section, update
-  the relevant diagram above.
+This document is hand-maintained; when adding a vendor, model field, or rule section, update
+the relevant module diagram above. Sources are under `src/anndata_proteomics/`.
