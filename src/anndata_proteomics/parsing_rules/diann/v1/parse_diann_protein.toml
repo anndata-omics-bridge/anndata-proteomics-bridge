@@ -1,0 +1,42 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+input_shape = "long"
+quantification_level = "protein"
+
+# DIA-NN's report.tsv carries protein-group quantities (PG.*) pre-aggregated and
+# repeated identically on every precursor row of a (Run, Protein.Group). So this rule
+# reads the SAME report.tsv as the ion rule, projects onto the protein-group axis, and
+# keeps the first repeated value (NOT sum, which would overcount).
+[axis]
+obs_keys = ["Run"]
+var_keys = ["Protein_Group"]
+x_layer = "PG_MaxLFQ"
+
+[axis.duplicates]
+mode = "keep_first"
+
+[columns.obs.select]
+Run = "Run"
+
+[columns.var.select]
+Protein_Group = "Protein.Group"
+Protein_Ids = "Protein.Ids"
+Protein_Names = "Protein.Names"
+Genes = "Genes"
+
+[[layers]]
+name = "PG_MaxLFQ"
+source_column = "PG.MaxLFQ"
+
+[[layers]]
+name = "PG_Normalised"
+source_column = "PG.Normalised"
+
+[[layers]]
+name = "PG_Quantity"
+source_column = "PG.Quantity"
+
+[[layers]]
+name = "Genes_MaxLFQ"
+source_column = "Genes.MaxLFQ"

@@ -3,8 +3,8 @@
 AnnData Viewer - A marimo-based interactive viewer for h5ad files.
 
 Usage:
-    marimo run anndataview.py -- path/to/file.h5ad
-    marimo edit anndataview.py -- path/to/file.h5ad
+    marimo run src/anndata_proteomics/scripts/anndataview.py -- path/to/file.h5ad
+    marimo edit src/anndata_proteomics/scripts/anndataview.py -- path/to/file.h5ad
 """
 
 import marimo
@@ -240,7 +240,7 @@ def _(adata, mo, tab_selector):
 
             try:
                 uns_json = json.dumps(uns_formatted, indent=2, default=str)
-            except:
+            except (TypeError, ValueError):
                 uns_json = str(uns_formatted)
 
             content = mo.vstack([

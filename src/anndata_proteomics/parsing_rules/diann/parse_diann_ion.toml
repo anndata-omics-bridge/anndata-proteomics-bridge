@@ -1,0 +1,82 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "DIA-NN"
+input_shape = "long"
+quantification_level = "ion"
+
+[axis]
+obs_keys = ["Run"]
+var_keys = ["ProForma_ion"]
+x_layer = "Precursor_Normalised"
+
+[axis.duplicates]
+mode = "error"
+
+[columns.obs.select]
+Run = "Run"
+
+[columns.var.select]
+Modified_Sequence = "Modified.Sequence"
+Stripped_Sequence = "Stripped.Sequence"
+Precursor_Charge = "Precursor.Charge"
+Precursor_Id = "Precursor.Id"
+Protein_Group = "Protein.Group"
+Protein_Ids = "Protein.Ids"
+Protein_Names = "Protein.Names"
+Genes = "Genes"
+
+[[columns.var.compute]]
+name = "ProForma_peptidoform"
+from = ["Modified_Sequence"]
+how = "proforma_sequence"
+
+[[columns.var.compute]]
+name = "ProForma_peptide"
+from = ["Modified_Sequence"]
+how = "stripped_sequence"
+
+[[columns.var.compute]]
+name = "ProForma_ion"
+from = ["ProForma_peptidoform", "Precursor_Charge"]
+how = "proforma_ion"
+
+[[layers]]
+name = "Precursor_Normalised"
+source_column = "Precursor.Normalised"
+
+[[layers]]
+name = "Precursor_Quantity"
+source_column = "Precursor.Quantity"
+
+[[layers]]
+name = "Ms1_Area"
+source_column = "Ms1.Area"
+
+[[layers]]
+name = "Q_Value"
+source_column = "Q.Value"
+
+[[layers]]
+name = "RT"
+source_column = "RT"
+
+[modifications]
+source_column = "Modified.Sequence"
+parser = "token_regex"
+token_pattern = "\\(([^()]*)\\)"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "UniMod:1"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "UniMod:4"
+accession = "UNIMOD:4"
+
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"

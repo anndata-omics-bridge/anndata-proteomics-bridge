@@ -1,14 +1,19 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "2.3.0"
 input_shape = "long"
-quantification_level = "ion"
+quantification_level = "fragment"
 
+# DIA-NN 1.x (this folder = v1). These exports pack per-fragment values as parallel
+# ;-delimited lists (Fragment.Quant.Raw / Fragment.Correlations, present 1.7-1.9.2) but carry
+# NO Fragment.Info, so fragments have no ion-type/number labels. The [fragments] block omits
+# label_column -> labels are POSITIONAL (frag_0, frag_1, ...). explode() fans each precursor
+# row into one row per fragment before pivoting.
+# Feature key grammar: ProForma_fragment = "{ProForma_peptidoform}/{charge}/frag_{i}".
 [axis]
 obs_keys = ["Run"]
-var_keys = ["ProForma_ion"]
-x_layer = "Precursor_Normalised"
+var_keys = ["ProForma_fragment"]
+x_layer = "Fragment_Quant_Raw"
 
 [axis.duplicates]
 mode = "error"
@@ -18,13 +23,8 @@ Run = "Run"
 
 [columns.var.select]
 Modified_Sequence = "Modified.Sequence"
-Stripped_Sequence = "Stripped.Sequence"
 Precursor_Charge = "Precursor.Charge"
-Precursor_Id = "Precursor.Id"
 Protein_Group = "Protein.Group"
-Protein_Ids = "Protein.Ids"
-Protein_Names = "Protein.Names"
-Genes = "Genes"
 
 [[columns.var.compute]]
 name = "ProForma_peptidoform"
@@ -32,34 +32,27 @@ from = ["Modified_Sequence"]
 how = "proforma_sequence"
 
 [[columns.var.compute]]
-name = "ProForma_peptide"
-from = ["Modified_Sequence"]
-how = "stripped_sequence"
-
-[[columns.var.compute]]
 name = "ProForma_ion"
 from = ["ProForma_peptidoform", "Precursor_Charge"]
 how = "proforma_ion"
 
-[[layers]]
-name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+[[columns.var.compute]]
+name = "ProForma_fragment"
+from = ["ProForma_ion", "fragment_label"]
+how = "proforma_fragment"
 
 [[layers]]
-name = "Precursor_Quantity"
-source_column = "Precursor.Quantity"
+name = "Fragment_Quant_Raw"
+source_column = "Fragment.Quant.Raw"
 
 [[layers]]
-name = "Ms1_Area"
-source_column = "Ms1.Area"
+name = "Fragment_Correlations"
+source_column = "Fragment.Correlations"
 
-[[layers]]
-name = "Q_Value"
-source_column = "Q.Value"
-
-[[layers]]
-name = "RT"
-source_column = "RT"
+[fragments]
+value_columns = ["Fragment.Quant.Raw", "Fragment.Correlations"]
+delimiter = ";"
+label_output = "fragment_label"
 
 [modifications]
 source_column = "Modified.Sequence"

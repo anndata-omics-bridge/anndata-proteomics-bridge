@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>parsing_architecture</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: false, theme: "default" });
+    addEventListener("DOMContentLoaded", () => {
+      // pandoc emits ```mermaid as <pre class="mermaid"><code>…</code></pre>;
+      // flatten to plain text so mermaid can render it.
+      document.querySelectorAll("pre.mermaid").forEach((p) => { p.textContent = p.textContent; });
+      mermaid.run({ querySelector: "pre.mermaid" });
+    });
+  </script>
+  <style>
+    body { max-width: 62em; }
+    pre.mermaid { background: #fff; border: 1px solid #e3e6ea; border-radius: 8px;
+      padding: 1rem; text-align: center; overflow-x: auto; }
+    table { display: block; overflow-x: auto; }
+    @media (prefers-color-scheme: dark) {
+      pre.mermaid { background: #1d2026; border-color: #2a2e36; }
+    }
+  </style>
+</head>
+<body>
+<nav style="margin:0 0 1.6rem;padding-bottom:.6rem;border-bottom:1px solid #e3e6ea;font-size:.95rem;">
+  <strong>Parsing docs:</strong>
+  <a href="parsing_architecture.html">Architecture</a> ·
+  <a href="parameter_parsers.html">Vendor parsers</a>
+</nav>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#parsing-architecture-uml"
+id="toc-parsing-architecture-uml">Parsing architecture (UML)</a>
+<ul>
+<li><a href="#module-dependency-overview"
+id="toc-module-dependency-overview">Module dependency overview</a></li>
+<li><a href="#params--vendor-parameter-file-parsing"
+id="toc-params--vendor-parameter-file-parsing"><code>params/</code> —
+vendor parameter-file parsing</a></li>
+<li><a href="#modifications--modification-string-parsing--models"
+id="toc-modifications--modification-string-parsing--models"><code>modifications/</code>
+— modification-string parsing &amp; models</a></li>
+<li><a href="#rules--the-toml-parsing-rule-schema"
+id="toc-rules--the-toml-parsing-rule-schema"><code>rules/</code> — the
+TOML parsing-rule schema</a></li>
+<li><a href="#readers--tabular-file-reading"
+id="toc-readers--tabular-file-reading"><code>readers/</code> — tabular
+file reading</a></li>
+<li><a href="#converters--dataframe--parserule--anndata"
+id="toc-converters--dataframe--parserule--anndata"><code>converters/</code>
+— DataFrame + ParseRule → AnnData</a></li>
+<li><a href="#end-to-end-flows-cross-module"
+id="toc-end-to-end-flows-cross-module">End-to-end flows
+(cross-module)</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="parsing-architecture-uml">Parsing architecture (UML)</h1>
+<p>The parsing subsystem lives under
+<code>src/anndata_proteomics/</code> and is split into five subpackages.
+This doc gives a top-level dependency map, then <strong>one diagram + a
+short description per module</strong>, then the two end-to-end flows
+that tie them together.</p>
+<p>Two distinct "parsing" concerns to keep separate:</p>
+<ul>
+<li><strong><code>params/</code></strong> parses a vendor
+<strong>search-parameter file</strong> (whole-experiment settings) into
+a typed <code>Parameters</code> record.</li>
+<li><strong><code>modifications/</code></strong> parses <strong>peptide
+modification strings</strong> (a single sequence's mods) and models
+searched modifications for SDRF.</li>
+</ul>
+<hr />
+<h2 id="module-dependency-overview">Module dependency overview</h2>
+<p>Arrows mean <strong>"imports / depends on"</strong>.
+<code>rules</code> and <code>readers</code> are leaves;
+<code>converters</code> is the orchestrator that pulls everything
+together.</p>
+<pre class="mermaid"><code>flowchart TD
+    converters --&gt; params
+    converters --&gt; modifications
+    converters --&gt; rules
+    converters --&gt; readers
+    params --&gt; modifications
+    modifications --&gt; rules
+    modifications --&gt; unimod[(unimod_registry.toml)]
+
+    classDef leaf fill:#eef2ff,stroke:#9aa7d8;
+    class rules,readers leaf;</code></pre>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>One-line role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>params/</code></td>
+<td>Vendor parameter-file → typed <code>Parameters</code>.</td>
+</tr>
+<tr>
+<td><code>modifications/</code></td>
+<td>Vendor modified-sequence → ProForma + modification models.</td>
+</tr>
+<tr>
+<td><code>rules/</code></td>
+<td>The TOML parsing-rule schema (<code>ParseRule</code>) + its
+loader/registry.</td>
+</tr>
+<tr>
+<td><code>readers/</code></td>
+<td>Read a tabular quant file → <code>DataFrame</code>.</td>
+</tr>
+<tr>
+<td><code>converters/</code></td>
+<td><code>DataFrame</code> + <code>ParseRule</code> →
+<code>AnnData</code>.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="params--vendor-parameter-file-parsing"><code>params/</code> —
+vendor parameter-file parsing</h2>
+<p><strong>Parses a vendor search-parameter file into one typed
+<code>Parameters</code> record</strong> — the model for parameter-file
+parsing.</p>
+<ul>
+<li><strong>Inputs:</strong> DIA-NN log/cfg, MaxQuant
+<code>mqpar.xml</code>, Sage JSON, AlphaPept / WOMBAT YAML, FragPipe
+<code>.workflow</code>, PEAKS / Spectronaut text, MSAID,
+MetaMorpheus.</li>
+<li><strong>Entry point:</strong> each vendor module exposes
+<code>extract_params(source) -&gt; Parameters</code>.</li>
+<li><strong>Dispatch:</strong> <code>registry.py</code> looks up the
+parser by software name.</li>
+<li><strong>Reading:</strong> <code>_common.py</code> centralizes file
+I/O (<code>read_text</code> / <code>read_lines</code>).</li>
+<li><strong>AnnData I/O:</strong> <code>anndata_io.py</code>
+reads/writes a <code>Parameters</code> into <code>adata.uns</code>.</li>
+</ul>
+<p>See <a href="parameter_parsers.html">parameter_parsers.md</a> for the
+per-vendor breakdown (input formats, parse techniques, and the three
+modification-mapping families).</p>
+<pre class="mermaid"><code>classDiagram
+    direction LR
+    class _Strict {
+        &lt;&lt;pydantic, extra=forbid&gt;&gt;
+    }
+    class Parameters {
+        +str|None software_name
+        +str|None software_version
+        +str|None enzyme
+        +bool|None enable_match_between_runs
+        +int|None allowed_miscleavages
+        +to_series() Series
+        +from_series(series) Parameters$
+    }
+    class Probability {
+        +float value
+    }
+    class MassTolerance {
+        +float|None value
+        +str|None unit
+        +str mode
+        +parse(value) MassTolerance$
+    }
+    class UnparsedParameter {
+        +str name
+        +ScalarValue value
+        +str|None source
+    }
+    class SearchedModification {
+        &lt;&lt;from modifications/&gt;&gt;
+    }
+    _Strict &lt;|-- Parameters
+    _Strict &lt;|-- Probability
+    _Strict &lt;|-- MassTolerance
+    _Strict &lt;|-- UnparsedParameter
+    Parameters *-- &quot;0..3&quot; Probability : ident_fdr
+    Parameters *-- &quot;0..2&quot; MassTolerance : precursor / fragment
+    Parameters *-- &quot;*&quot; UnparsedParameter : unparsed_parameters
+    Parameters ..&gt; SearchedModification : fixed_mods / variable_mods
+    note for Parameters &quot;~20 more scalar fields: charges, m/z, peptide lengths, FDR, quant method. Built by each vendor extract_params(); validators canonicalize enzyme, FDR, tolerance, mods.&quot;</code></pre>
+<hr />
+<h2
+id="modifications--modification-string-parsing--models"><code>modifications/</code>
+— modification-string parsing &amp; models</h2>
+<p><strong>Normalizes peptide modifications</strong> — modification
+identities/strings, distinct from <code>params/</code> (whole-file
+settings). Two jobs:</p>
+<ul>
+<li><strong>ProForma normalization:</strong>
+<code>apply_rules.apply_rule(seq, rule)</code> turns a vendor
+modified-sequence string (e.g. <code>PEPM(ox)TIDE</code>,
+<code>_[ac]PEP…</code>) into a canonical ProForma string plus localized
+<code>ModificationOccurrence</code>s. <code>pipeline.py</code> builds
+the <code>ModificationRule</code> from a rules
+<code>Modifications</code> section, resolving each <code>MapEntry</code>
+against the bundled <code>unimod_registry</code>.</li>
+<li><strong>Searched modifications:</strong>
+<code>SearchedModification</code> models fixed/variable mods from
+parameter files, for SDRF export (<code>sdrf.py</code>).</li>
+<li><strong>Rendering:</strong> <code>proforma.py</code> renders the
+ProForma string.</li>
+</ul>
+<pre class="mermaid"><code>classDiagram
+    direction LR
+    class ModType {
+        &lt;&lt;enum&gt;&gt;
+        fixed
+        variable
+        unknown
+    }
+    class SearchedModification {
+        +str name
+        +str|None accession
+        +ModType mod_type
+        +str|None target
+        +float|None mass_delta
+    }
+    class ModificationOccurrence {
+        +str name
+        +str|None accession
+        +int|None sequence_index
+        +str|None position
+        +float|None mass_delta
+        +str|None source_token
+    }
+    class ModifiedSequence {
+        +str stripped_sequence
+        +str proforma_sequence
+        +list~str~ unknown_tokens
+    }
+    class MapEntry {
+        &lt;&lt;frozen&gt;&gt;
+        +str token
+        +str name
+        +str|None accession
+        +float|None mass_delta
+    }
+    class ModificationRule {
+        &lt;&lt;frozen&gt;&gt;
+        +str token_pattern
+        +str token_position
+        +str unknown_policy
+        +str output_column
+    }
+    class UnimodEntry {
+        +str accession
+        +str name
+        +str target
+        +float mass_delta
+    }
+    SearchedModification --&gt; ModType
+    ModifiedSequence *-- &quot;*&quot; ModificationOccurrence : occurrences
+    ModificationRule *-- &quot;*&quot; MapEntry : entries
+    note for ModificationRule &quot;apply_rule(seq, rule) returns a ModifiedSequence. pipeline._to_runtime_rule builds the rule from a rules Modifications section, filling each MapEntry from the UnimodEntry registry.&quot;</code></pre>
+<hr />
+<h2 id="rules--the-toml-parsing-rule-schema"><code>rules/</code> — the
+TOML parsing-rule schema</h2>
+<p><strong>Defines and loads the TOML parsing-rule schema</strong> that
+tells the converters how to turn a vendor table into AnnData. A leaf
+subpackage (imports no other subpackage).</p>
+<ul>
+<li><code>schema.py</code> — the pydantic <code>ParseRule</code> (axis
+keys, column select/compute, layers, optional modifications section)
+with cross-field validation.</li>
+<li><code>loader.py</code> — parse + validate a TOML file.</li>
+<li><code>registry.py</code> — find packaged rules by
+<code>(software, level, version)</code>.</li>
+<li><code>validate.py</code> — validate rule files.</li>
+</ul>
+<pre class="mermaid"><code>classDiagram
+    direction LR
+    class ParseRule {
+        +str schema_version
+        +str software_name
+        +str input_shape
+        +str quantification_level
+    }
+    class Axis {
+        +list~str~ obs_keys
+        +list~str~ var_keys
+        +str x_layer
+    }
+    class Duplicates
+    class Columns
+    class ColumnGroup {
+        +dict select
+    }
+    class ColumnCompute {
+        +str name
+        +list~str~ from_
+        +str how
+    }
+    class Layer {
+        +str name
+        +str encoding_mode
+        +str|None source_column
+        +str|None column_pattern
+    }
+    class Modifications {
+        +str source_column
+        +str parser
+        +str unknown_policy
+        +str output_column
+    }
+    class ModificationMapEntry {
+        +str token
+        +str accession
+    }
+    class SampleNameCleanup
+    ParseRule *-- Axis
+    ParseRule *-- Columns
+    ParseRule *-- &quot;1..*&quot; Layer
+    ParseRule *-- &quot;0..1&quot; Modifications
+    ParseRule *-- &quot;0..1&quot; SampleNameCleanup
+    Axis *-- Duplicates
+    Columns *-- &quot;2&quot; ColumnGroup : obs / var
+    ColumnGroup *-- &quot;*&quot; ColumnCompute : compute
+    Modifications *-- &quot;*&quot; ModificationMapEntry : map</code></pre>
+<hr />
+<h2 id="readers--tabular-file-reading"><code>readers/</code> — tabular
+file reading</h2>
+<p><strong>Reads a quant table into a pandas
+<code>DataFrame</code>.</strong> A leaf subpackage.</p>
+<ul>
+<li><code>tabular.py</code> — per-format readers (csv / tsv /
+parquet).</li>
+<li><code>dispatch.read_table</code> — picks a reader by file
+extension.</li>
+</ul>
+<pre class="mermaid"><code>flowchart LR
+    path[path] --&gt; rt[dispatch.read_table]
+    rt --&gt;|.csv| csv[tabular.read_csv]
+    rt --&gt;|.tsv / .txt| tsv[tabular.read_tsv]
+    rt --&gt;|.parquet| pq[tabular.read_parquet]
+    csv --&gt; df[(DataFrame)]
+    tsv --&gt; df
+    pq --&gt; df</code></pre>
+<hr />
+<h2
+id="converters--dataframe--parserule--anndata"><code>converters/</code>
+— DataFrame + ParseRule → AnnData</h2>
+<p><strong>Turns a <code>DataFrame</code> + a <code>ParseRule</code>
+into an <code>AnnData</code>.</strong></p>
+<ul>
+<li><code>assemble.convert</code> — orchestrates: optional modification
+normalization → column materialization → long/wide strategy →
+assemble.</li>
+<li><code>long.py</code> / <code>wide.py</code> — the two shape
+strategies, each returning <code>ConversionPieces</code>.</li>
+<li><code>assemble.to_anndata</code> — builds the <code>AnnData</code>
+(rule stored in <code>uns</code>).</li>
+<li><code>recognize.py</code> — auto-picks a rule from table
+headers.</li>
+<li>When a <code>params_path</code> is given, parsed
+<code>Parameters</code> are attached to <code>uns</code>.</li>
+</ul>
+<pre class="mermaid"><code>flowchart TD
+    df[(DataFrame)] --&gt; conv[assemble.convert]
+    rule[ParseRule] --&gt; conv
+    headers[table headers] -.-&gt; recog[recognize.recognize]
+    recog -. selects .-&gt; rule
+    conv --&gt; mods{rule.modifications?}
+    mods --&gt;|yes| apply[modifications.apply_modifications]
+    mods --&gt;|no| mat[_materialize_columns: select + compute]
+    apply --&gt; mat
+    mat --&gt; shape{input_shape}
+    shape --&gt;|long| long[long.convert_long]
+    shape --&gt;|wide| wide[wide.convert_wide]
+    long --&gt; pieces[ConversionPieces]
+    wide --&gt; pieces
+    pieces --&gt; asm[assemble.to_anndata]
+    asm --&gt; ad[(AnnData)]
+    paramsp[params_path?] -. optional .-&gt; attach[_attach_search_parameters]
+    attach -. writes uns .-&gt; ad</code></pre>
+<hr />
+<h2 id="end-to-end-flows-cross-module">End-to-end flows
+(cross-module)</h2>
+<h3 id="a-vendor-parameter-file--parameters">A. Vendor parameter file →
+<code>Parameters</code></h3>
+<pre class="mermaid"><code>sequenceDiagram
+    autonumber
+    participant Caller
+    participant Reg as params.registry
+    participant V as params vendor
+    participant Common as params._common
+    participant Model as params.model.Parameters
+
+    Caller-&gt;&gt;Reg: parse_params(path, software)
+    Reg-&gt;&gt;V: get_parser(software) then extract_params(source)
+    V-&gt;&gt;Common: read_text / read_lines(source)
+    Common--&gt;&gt;V: text / lines
+    V-&gt;&gt;V: vendor parse (regex, yaml, json, toml, xml)
+    V-&gt;&gt;Model: build Parameters from fields
+    Model-&gt;&gt;Model: run validators (enzyme map, FDR, tolerance, mods, ranges)
+    Model--&gt;&gt;V: Parameters
+    V--&gt;&gt;Caller: Parameters</code></pre>
+<h3 id="b-rule-toml--table--anndata--optional-params">B. Rule TOML +
+table → <code>AnnData</code> (+ optional params)</h3>
+<pre class="mermaid"><code>sequenceDiagram
+    autonumber
+    participant Caller
+    participant Loader as rules.loader
+    participant Reader as readers.dispatch
+    participant Conv as converters.assemble
+    participant Mods as modifications.pipeline
+    participant LW as converters.long/wide
+    participant P as params
+
+    Caller-&gt;&gt;Loader: load_rule(toml_path)
+    Loader--&gt;&gt;Caller: ParseRule
+    Caller-&gt;&gt;Reader: read_table(path)
+    Reader--&gt;&gt;Caller: DataFrame
+    Caller-&gt;&gt;Conv: convert(df, rule, params_path)
+    opt rule.modifications set
+        Conv-&gt;&gt;Mods: apply_modifications(df, rule.modifications)
+        Mods--&gt;&gt;Conv: df plus proforma_sequence, stripped_sequence
+    end
+    Conv-&gt;&gt;Conv: _materialize_columns (select plus compute)
+    alt input_shape long
+        Conv-&gt;&gt;LW: convert_long(df, rule)
+    else wide
+        Conv-&gt;&gt;LW: convert_wide(df, rule)
+    end
+    LW--&gt;&gt;Conv: ConversionPieces
+    Conv-&gt;&gt;Conv: to_anndata(pieces, rule)
+    opt params_path given
+        Conv-&gt;&gt;P: _attach_search_parameters(adata, params_path, software)
+        P--&gt;&gt;Conv: writes uns search_parameters
+    end
+    Conv--&gt;&gt;Caller: AnnData</code></pre>
+<blockquote>
+<p>Storage keys: the rule is saved in
+<code>uns['anndata_proteomics']['rule_json']</code>; parsed parameters
+in <code>uns['anndata_proteomics']['search_parameters']</code> (with the
+source path in <code>…['search_parameters_path']</code>).</p>
+</blockquote>
+<hr />
+<p>This document is hand-maintained; when adding a vendor, model field,
+or rule section, update the relevant module diagram above. Sources are
+under <code>src/anndata_proteomics/</code>.</p>
+</body>
+</html>

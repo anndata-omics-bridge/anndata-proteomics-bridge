@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>parameter_parsers</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: false, theme: "default" });
+    addEventListener("DOMContentLoaded", () => {
+      // pandoc emits ```mermaid as <pre class="mermaid"><code>…</code></pre>;
+      // flatten to plain text so mermaid can render it.
+      document.querySelectorAll("pre.mermaid").forEach((p) => { p.textContent = p.textContent; });
+      mermaid.run({ querySelector: "pre.mermaid" });
+    });
+  </script>
+  <style>
+    body { max-width: 62em; }
+    pre.mermaid { background: #fff; border: 1px solid #e3e6ea; border-radius: 8px;
+      padding: 1rem; text-align: center; overflow-x: auto; }
+    table { display: block; overflow-x: auto; }
+    @media (prefers-color-scheme: dark) {
+      pre.mermaid { background: #1d2026; border-color: #2a2e36; }
+    }
+  </style>
+</head>
+<body>
+<nav style="margin:0 0 1.6rem;padding-bottom:.6rem;border-bottom:1px solid #e3e6ea;font-size:.95rem;">
+  <strong>Parsing docs:</strong>
+  <a href="parsing_architecture.html">Architecture</a> ·
+  <a href="parameter_parsers.html">Vendor parsers</a>
+</nav>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#vendor-parameter-parsers"
+id="toc-vendor-parameter-parsers">Vendor parameter parsers</a>
+<ul>
+<li><a href="#the-shared-contract" id="toc-the-shared-contract">The
+shared contract</a></li>
+<li><a href="#per-vendor-overview"
+id="toc-per-vendor-overview">Per-vendor overview</a></li>
+<li><a href="#input-format-families"
+id="toc-input-format-families">Input-format families</a></li>
+<li><a href="#modification-handling--three-families"
+id="toc-modification-handling--three-families">Modification handling —
+three families</a></li>
+<li><a href="#shared-normalization-applies-to-every-vendor"
+id="toc-shared-normalization-applies-to-every-vendor">Shared
+normalization (applies to every vendor)</a></li>
+<li><a href="#per-vendor-specifics-the-non-obvious-bits"
+id="toc-per-vendor-specifics-the-non-obvious-bits">Per-vendor specifics
+(the non-obvious bits)</a></li>
+<li><a href="#tests--fixtures" id="toc-tests--fixtures">Tests &amp;
+fixtures</a></li>
+<li><a href="#adding-a-vendor" id="toc-adding-a-vendor">Adding a
+vendor</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="vendor-parameter-parsers">Vendor parameter parsers</h1>
+<p>How the ~10 vendor parameter-file parsers under
+<code>src/anndata_proteomics/params/</code> work and how they share the
+common machinery. For the package-level picture and diagrams see <a
+href="parsing_architecture.html">parsing_architecture.md</a> (the params
+class diagram and flow <strong>A</strong>).</p>
+<h2 id="the-shared-contract">The shared contract</h2>
+<p>Every vendor module exposes the <strong>same entry point</strong> and
+produces the <strong>same type</strong>:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>extract_params(source) <span class="op">-&gt;</span> Parameters     <span class="co"># source = path | text file-like | bytes file-like</span></span></code></pre></div>
+<p><code>registry.py</code> dispatches by software name
+(case-insensitive):</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>parse_params(path, software)   <span class="co"># = get_parser(software)(path)</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>get_parser(<span class="st">&quot;DIA-NN&quot;</span>)           <span class="co"># -&gt; diann.extract_params   (keys: &quot;dia-nn&quot;, &quot;diann&quot;)</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>available_software()           <span class="co"># -&gt; sorted list of keys</span></span></code></pre></div>
+<p>Registered keys → module:</p>
+<table>
+<thead>
+<tr>
+<th>key(s)</th>
+<th>module</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alphapept</code></td>
+<td><code>alphapept.py</code></td>
+</tr>
+<tr>
+<td><code>dia-nn</code>, <code>diann</code></td>
+<td><code>diann.py</code></td>
+</tr>
+<tr>
+<td><code>fragpipe</code></td>
+<td><code>fragpipe.py</code></td>
+</tr>
+<tr>
+<td><code>maxquant</code></td>
+<td><code>maxquant.py</code></td>
+</tr>
+<tr>
+<td><code>metamorpheus</code></td>
+<td><code>metamorpheus.py</code></td>
+</tr>
+<tr>
+<td><code>msaid</code></td>
+<td><code>msaid.py</code></td>
+</tr>
+<tr>
+<td><code>peaks</code></td>
+<td><code>peaks.py</code></td>
+</tr>
+<tr>
+<td><code>sage</code></td>
+<td><code>sage.py</code></td>
+</tr>
+<tr>
+<td><code>spectronaut</code></td>
+<td><code>spectronaut.py</code></td>
+</tr>
+<tr>
+<td><code>wombat</code></td>
+<td><code>wombat.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every parser follows the same three steps: <strong>read the source →
+vendor-specific parse → build
+<code>Parameters(**fields)</code></strong>. Source reading is
+centralized in <code>_common.read_text</code> / <code>read_lines</code>
+for text and structured-text formats (XML and CSV use
+<code>ElementTree</code> / pandas instead). The final
+<code>Parameters(...)</code> construction runs the model's validators,
+so vendors only need to produce <em>raw-ish</em> field values —
+normalization is shared (see "Shared normalization" below).</p>
+<h2 id="per-vendor-overview">Per-vendor overview</h2>
+<table>
+<thead>
+<tr>
+<th>Vendor</th>
+<th>Input file (example fixture)</th>
+<th>Format</th>
+<th>How it's read</th>
+<th>Parse technique</th>
+<th>Mod family</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AlphaPept</strong></td>
+<td><code>alphapept_0.4.9.yaml</code></td>
+<td>YAML</td>
+<td><code>yaml.safe_load(read_text)</code></td>
+<td>dict key access
+(<code>summary</code>/<code>fasta</code>/<code>search</code>/<code>features</code>)</td>
+<td>flat</td>
+</tr>
+<tr>
+<td><strong>DIA-NN</strong></td>
+<td><code>DIANN_…report.log.txt</code>,
+<code>DIANN_cfg_*.txt</code></td>
+<td>log / cfg text</td>
+<td><code>read_lines</code></td>
+<td>command-line settings + in-log regex + optional cfg block</td>
+<td>flat</td>
+</tr>
+<tr>
+<td><strong>FragPipe</strong></td>
+<td><code>fragpipe.workflow</code></td>
+<td>key=value workflow</td>
+<td><code>read_text</code> → <code>_read_workflow</code> → pandas
+<code>Series</code></td>
+<td>field derivations on the Series</td>
+<td>mass-lookup</td>
+</tr>
+<tr>
+<td><strong>MaxQuant</strong></td>
+<td><code>mqpar_MQ2.1.3.0_noMBR.xml</code></td>
+<td>XML</td>
+<td><code>_read_xml</code> (<code>ElementTree</code>, flattened to
+dict)</td>
+<td>version-gated MultiIndex paths</td>
+<td>text <code>Name (Residue)</code></td>
+</tr>
+<tr>
+<td><strong>MetaMorpheus</strong></td>
+<td><code>…_search_task_config.toml</code> <strong>+</strong>
+<code>…_version_result.txt</code></td>
+<td>TOML <strong>+</strong> version text (two files)</td>
+<td><code>read_text(errors="replace")</code> +
+<code>tomllib.loads</code> per file</td>
+<td>format-trial picks TOML vs version line</td>
+<td>text <code>Name on Residue</code></td>
+</tr>
+<tr>
+<td><strong>MSAID</strong></td>
+<td><code>MSAID_default_params.*</code></td>
+<td>tabular</td>
+<td><code>pd.read_csv</code></td>
+<td>row dict</td>
+<td>flat</td>
+</tr>
+<tr>
+<td><strong>PEAKS</strong></td>
+<td><code>PEAKS_parameters*.txt</code></td>
+<td>text report</td>
+<td><code>read_lines(strip=True)</code></td>
+<td>label / regex line scan</td>
+<td>flat</td>
+</tr>
+<tr>
+<td><strong>Sage</strong></td>
+<td><code>sage_parameterfile.json</code></td>
+<td>JSON</td>
+<td><code>json.loads(read_text)</code></td>
+<td>nested dict (<code>database.enzyme</code>, …)</td>
+<td>mass-lookup</td>
+</tr>
+<tr>
+<td><strong>Spectronaut</strong></td>
+<td><code>Spectronaut_*.txt</code></td>
+<td>settings-export text</td>
+<td><code>read_lines(strip=True)</code></td>
+<td>label / regex line scan</td>
+<td>text <code>Name (Residue)</code></td>
+</tr>
+<tr>
+<td><strong>WOMBAT</strong></td>
+<td><code>wombat_params.yaml</code></td>
+<td>YAML</td>
+<td><code>yaml.safe_load(read_text)</code></td>
+<td>dict key access (<code>params</code>)</td>
+<td>text <code>Name of Residue</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="input-format-families">Input-format families</h2>
+<ul>
+<li><strong>Structured documents</strong> — read whole, then indexed by
+key: YAML (AlphaPept, WOMBAT), JSON (Sage), XML (MaxQuant), TOML
+(MetaMorpheus), tabular/CSV (MSAID). Acquisition is a one-liner
+(<code>read_text</code> then a library <code>load</code>, or
+pandas/ElementTree); the work is field mapping.</li>
+<li><strong>Line/regex text logs</strong> — DIA-NN, PEAKS, Spectronaut.
+Read with <code>read_lines</code> and scanned by label lookups
+(<code>_value</code>) or regex. PEAKS/Spectronaut strip each line.</li>
+<li><strong>key=value workflow</strong> — FragPipe
+<code>.workflow</code> is flattened into a pandas <code>Series</code>
+indexed by property name, then individual settings are derived from
+it.</li>
+</ul>
+<h2 id="modification-handling--three-families">Modification handling —
+three families</h2>
+<p>All parsers ultimately emit <code>fixed_mods</code> /
+<code>variable_mods</code> as comma-joined
+<strong>ProForma-style</strong> tokens (e.g.
+<code>C[Carbamidomethyl]</code>, <code>M[Oxidation]</code>). They get
+there three different ways:</p>
+<ol type="1">
+<li><strong>Flat token map</strong> — <code>MAP.get(token, token)</code>
+over a per-vendor dict. <em>AlphaPept</em>
+(<code>cC</code>→<code>C[Carbamidomethyl]</code>), <em>DIA-NN</em>
+(UniMod + <code>Carbamidomethyl (C)</code> forms), <em>MSAID</em>,
+<em>PEAKS</em> (<code>Carbamidomethyl (+57.02)</code> forms).</li>
+<li><strong>Numeric mass lookup</strong> —
+<code>_lookup_mod_name(mass)</code> matches a mass shift within
+<code>1e-3</code> against a <code>*MASS_TO_MOD*</code> table.
+<em>FragPipe</em> (<code>57.02146</code>→<code>Carbamidomethyl</code>),
+<em>Sage</em>.</li>
+<li><strong>Text <code>Name &lt;sep&gt; Residue</code>
+homogenizer</strong> — <code>_homogenize_mod*</code> splits a
+descriptive spec into name + residue/terminus and renders
+<code>Residue[Name]</code>. <em>MaxQuant</em>
+(<code>Name (Residue)</code>), <em>MetaMorpheus</em>
+(<code>Name on Residue</code>), <em>Spectronaut</em>
+(<code>Name (Residue)</code>), <em>WOMBAT</em>
+(<code>Name of Residue</code>).</li>
+</ol>
+<blockquote>
+<p>These three mechanics are currently re-implemented per vendor (the
+mapping <em>data</em> is genuinely per-vendor, but the <em>parsing
+mechanics</em> are duplicated). Consolidating them into
+<code>_common</code> is tracked as <strong>Action 15</strong> in <a
+href="../TODO/TODO_code_review_june.html">TODO/TODO_code_review_june.md</a>.</p>
+</blockquote>
+<h2 id="shared-normalization-applies-to-every-vendor">Shared
+normalization (applies to every vendor)</h2>
+<p>Because all parsers return a <code>Parameters</code> object, the
+model's validators normalize uniformly, so individual parsers don't
+repeat this:</p>
+<ul>
+<li><strong>enzyme</strong> → canonical name via
+<code>_ENZYME_MAP</code> (e.g. <code>kr</code> →
+<code>Trypsin/P</code>).</li>
+<li><strong>FDR</strong> (<code>ident_fdr_*</code>) →
+<code>Probability</code> in <code>[0,1]</code>; a numeric
+<code>&gt;= 1</code> is treated as a percentage and divided by 100.</li>
+<li><strong>tolerances</strong> → <code>MassTolerance.parse</code>
+(handles <code>20 ppm</code>, <code>[-20 ppm, 20 ppm]</code>, and
+auto-calibration sentinels like <code>dynamic</code> /
+<code>0 ppm</code>).</li>
+<li><strong>missing values</strong> → sentinel strings (<code>""</code>,
+<code>none</code>, <code>n/a</code>, <code>placeholder</code>,
+<code>-</code>, …) become <code>None</code>.</li>
+<li><strong>fixed/variable mods</strong> → split into
+<code>list[SearchedModification]</code>.</li>
+<li><strong>ranges</strong> → <code>min_* &lt;= max_*</code> enforced
+for charge, peptide length, and m/z.</li>
+</ul>
+<p><code>Parameters.to_series()</code> / <code>from_series()</code>
+round-trip to the ProteoBench CSV layout used by the equivalence
+tests.</p>
+<h2 id="per-vendor-specifics-the-non-obvious-bits">Per-vendor specifics
+(the non-obvious bits)</h2>
+<ul>
+<li><strong>DIA-NN</strong> — layered precedence:
+<code>_DIANN_IMPLICIT_DEFAULTS</code> ← command-line <code>--</code>
+settings ← in-log regex fallbacks ← optional cfg block. Enzyme strings
+like <code>K*,R*</code> → <code>Trypsin/P</code>, <code>K*,R*,!P</code>
+→ <code>Trypsin</code>.</li>
+<li><strong>FragPipe</strong> — FDR/MBR depends on whether the run used
+DIA-NN (<code>diann.run-dia-nn</code>) or the Philosopher report;
+precursor/fragment tolerance units from
+<code>msfragger.*_mass_units</code>; m/z from digest mass + charge.</li>
+<li><strong>MaxQuant</strong> — <code>mqpar.xml</code> flattened to a
+MultiIndex; the fixed/variable-mods path is version-gated (different XML
+location for MaxQuant &gt; 1.6.0.0).</li>
+<li><strong>MetaMorpheus</strong> — the only parser taking
+<strong>two</strong> inputs (a search-task TOML and a version-text
+file); <code>_load_pair</code> tries to parse each as TOML and treats
+the non-TOML one as the version line.</li>
+<li><strong>Sage</strong> — enzyme from <code>database.enzyme</code>
+(<code>cleave_at</code> + <code>restrict</code>: with
+<code>restrict="P"</code> → <code>Trypsin</code>); static/variable mods
+are <code>residue → mass(es)</code> maps.</li>
+<li><strong>PEAKS / Spectronaut</strong> — plain text exports scanned by
+labels; PEAKS strips a trailing <code>%</code> from FDR values;
+Spectronaut "dynamic"/"0 ppm" tolerances become "Automatic
+calibration".</li>
+<li><strong>AlphaPept / WOMBAT</strong> — YAML configs read by key;
+tolerances assembled as bracketed <code>[-x unit, x unit]</code> strings
+from a value + <code>ppm</code>/<code>Da</code> flag.</li>
+<li><strong>MSAID</strong> — parameters supplied as a small table, read
+with pandas.</li>
+</ul>
+<h2 id="tests--fixtures">Tests &amp; fixtures</h2>
+<p><code>tests/params/</code> holds, per vendor, an <strong>input
+file</strong> plus an <strong>expected CSV</strong> (the ProteoBench
+golden output). The <code>tests/test_params_*.py</code> suites call
+<code>extract_params(input).to_series()</code> and compare it to
+<code>Parameters.from_series(expected_csv).to_series()</code> — so both
+sides pass through the same model normalization. (56 param tests; see
+also <code>test_params_model.py</code> for the model itself.)</p>
+<h2 id="adding-a-vendor">Adding a vendor</h2>
+<ol type="1">
+<li>Add <code>params/&lt;vendor&gt;.py</code> with
+<code>extract_params(source) -&gt; Parameters</code> — read via
+<code>_common.read_text</code>/<code>read_lines</code> (or
+pandas/ElementTree), then build <code>Parameters(...)</code>.</li>
+<li>Register it in <code>registry._REGISTRY</code>.</li>
+<li>Add an input + expected-CSV fixture under <code>tests/params/</code>
+and a <code>test_params_&lt;vendor&gt;.py</code>.</li>
+</ol>
+<p>(Keeping <code>registry</code>, packaged <code>parsing_rules/</code>,
+and fixtures in sync is tracked as <strong>Action 8</strong> in the code
+review.)</p>
+</body>
+</html>

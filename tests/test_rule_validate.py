@@ -30,6 +30,6 @@ def test_validate_file_bad_returns_result_with_error(tmp_path: Path) -> None:
 
 def test_validate_all_packaged_all_ok() -> None:
     results = validate_all_packaged()
-    assert len(results) == 6
+    assert len(results) == 11
     failed = [r for r in results if not r.ok]
     assert not failed, "\n".join(f"{r.path}: {r.error}" for r in failed)

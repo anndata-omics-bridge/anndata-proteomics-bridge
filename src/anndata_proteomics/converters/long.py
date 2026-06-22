@@ -1,11 +1,18 @@
-"""Convert a long-format DataFrame into AnnData pieces using a ParseRule."""
+"""Convert a long-format DataFrame into AnnData pieces using a ParseRule.
+
+Each layer is built by scattering the long values into a dense (obs × var) matrix via
+integer category codes, rather than ``DataFrame.pivot_table``. pivot_table materialises a
+huge transient for high-cardinality var axes (the fragment level fans one report out to
+millions of rows × hundreds of thousands of features and peaks at many GB); the scatter is
+O(nnz + obs·var) and matches pivot_table's semantics exactly.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from anndata_proteomics.converters._axis import build_axis_frame, join_keys
+from anndata_proteomics.converters._axis import build_axis_frame, build_index
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.rules.schema import ParseRule
@@ -22,29 +29,36 @@ def _aggfunc_for(rule: ParseRule) -> str:
     return "first"
 
 
-def _pivot_layer(
-    df: pd.DataFrame,
-    obs_keys: list[str],
-    var_keys: list[str],
-    values: pd.Series,
+def _build_matrix(
+    obs_codes: np.ndarray,
+    var_codes: np.ndarray,
+    values: np.ndarray,
+    key_ok: np.ndarray,
+    n_obs: int,
+    n_var: int,
     aggfunc: str,
-) -> pd.DataFrame:
-    work = df[obs_keys + var_keys].copy()
-    work["__value__"] = values.values
-    pivot = work.pivot_table(
-        index=obs_keys, columns=var_keys, values="__value__", aggfunc=aggfunc
-    )
-    pivot.index = (
-        pivot.index.astype(str)
-        if len(obs_keys) == 1
-        else pivot.index.to_frame().apply(join_keys, axis=1).values
-    )
-    pivot.columns = (
-        pivot.columns.astype(str)
-        if len(var_keys) == 1
-        else pivot.columns.to_frame().apply(join_keys, axis=1).values
-    )
-    return pivot
+) -> np.ndarray:
+    """Scatter ``values`` into a dense (n_obs × n_var) matrix.
+
+    Mirrors ``pivot_table`` semantics: rows with a null axis key are dropped (as the
+    pivot's groupby drops NaN keys); a cell with no contributing row stays NaN.
+    - ``"first"``: keep the first non-null value in row order.
+    - ``"sum"``: sum non-null values; a cell that has rows but only null values is 0.0
+      (matching ``GroupBy.sum``), while a cell with no rows stays NaN.
+    """
+    matrix = np.full((n_obs, n_var), np.nan, dtype="float64")
+    if aggfunc == "sum":
+        finite = key_ok & ~np.isnan(values)
+        totals = np.zeros((n_obs, n_var), dtype="float64")
+        np.add.at(totals, (obs_codes[finite], var_codes[finite]), values[finite])
+        present = np.zeros((n_obs, n_var), dtype=bool)
+        present[obs_codes[key_ok], var_codes[key_ok]] = True
+        matrix[present] = totals[present]
+    else:  # "first" non-null: assign in reverse so the lowest-index value wins
+        keep = key_ok & ~np.isnan(values)
+        oc, vc, vv = obs_codes[keep], var_codes[keep], values[keep]
+        matrix[oc[::-1], vc[::-1]] = vv[::-1]
+    return matrix
 
 
 def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
@@ -58,7 +72,14 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     obs_df = build_axis_frame(df, obs_keys, rule.columns.obs.names)
     var_df = build_axis_frame(df, var_keys, rule.columns.var.names)
 
+    # Map every input row to its position in the obs/var axes. build_axis_frame keeps the
+    # first occurrence per key, so the Categorical codes index directly into obs_df/var_df.
+    obs_codes = pd.Categorical(build_index(df, obs_keys), categories=obs_df.index).codes
+    var_codes = pd.Categorical(build_index(df, var_keys), categories=var_df.index).codes
+    key_ok = df[obs_keys + var_keys].notna().all(axis=1).to_numpy()
+
     aggfunc = _aggfunc_for(rule)
+    n_obs, n_var = len(obs_df), len(var_df)
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
@@ -67,12 +88,18 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
             values = encode_factor(values, layer.categories or {})
         else:
             # Vendors sometimes use sentinels like "-" for missing in otherwise-numeric
-            # columns; coerce so they become NaN rather than blowing up the pivot.
+            # columns; coerce so they become NaN rather than blowing up the scatter.
             values = pd.to_numeric(values, errors="coerce")
 
-        pivot = _pivot_layer(df, obs_keys, var_keys, values, aggfunc)
-        matrix = pivot.reindex(index=obs_df.index, columns=var_df.index)
-        layers[layer.name] = matrix.values
+        layers[layer.name] = _build_matrix(
+            obs_codes,
+            var_codes,
+            np.asarray(values, dtype="float64"),
+            key_ok,
+            n_obs,
+            n_var,
+            aggfunc,
+        )
 
     X = layers[rule.axis.x_layer]
     return ConversionPieces(X=X, obs=obs_df, var=var_df, layers=layers)

@@ -226,6 +226,7 @@ def test_json_schema_export_has_expected_top_level_properties():
         "layers",
         "sample_name_cleanup",
         "modifications",
+        "fragments",
     }
     assert set(schema["properties"]) == expected
 
@@ -236,6 +237,15 @@ def test_invalid_quantification_level():
     )
     with pytest.raises(ValidationError):
         _parse(bad)
+
+
+def test_fragment_level_can_be_native_row_level_without_fragments_block():
+    good = LONG_EXAMPLE.replace(
+        'quantification_level = "ion"', 'quantification_level = "fragment"'
+    )
+    rule = _parse(good)
+    assert rule.quantification_level == "fragment"
+    assert rule.fragments is None
 
 
 def test_missing_quantification_level():

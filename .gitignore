@@ -63,3 +63,6 @@ examples/*.h5ad
 examples/results/
 *.snakemake.log
 .snakemake/
+
+# UI test-tool conversion logs
+logs/

@@ -53,13 +53,14 @@ ProForma covers three quantification levels:
 - ion `M[UNIMOD:35]PEPTIDE/2` — peptidoform + charge (spec §7.1,
   optional extension).
 
-Three reserved compute names mirror those three levels:
+Four reserved compute names mirror the quantification levels:
 
 | Compute name | `how` | Meaning |
 |---|---|---|
 | `ProForma_peptide` | `stripped_sequence` | bare sequence, no mods |
 | `ProForma_peptidoform` | `proforma_sequence` | sequence + mods |
 | `ProForma_ion` | `proforma_ion` | peptidoform + `/charge` |
+| `ProForma_fragment` | `proforma_fragment` | ion + `/fragment_label` |
 
 How rules use them:
 - **Peptidoform-level rules** (`quantification_level = "peptidoform"`):
@@ -70,6 +71,16 @@ How rules use them:
   `var_keys = ["ProForma_ion"]` produced by `how = "proforma_ion"`,
   chained from a `ProForma_peptidoform` intermediate. Optionally also
   expose `ProForma_peptide`.
+- **Fragment-level rules** (`quantification_level = "fragment"`):
+  `var_keys = ["ProForma_fragment"]` produced by `how = "proforma_fragment"`,
+  chained from a `ProForma_ion` intermediate (so here `proforma_ion` is an
+  *intermediate*, not the var key). Requires a `[fragments]` block (see below).
+  Grammar: `ProForma_fragment = "{peptidoform}/{charge}/{fragment_label}"`, e.g.
+  `M[UNIMOD:35]PEPTIDE/2/b4-unknown^1` — note the `/` separator carries charge
+  after the peptidoform and the fragment label after the ion.
+
+**Protein-level rules** (`quantification_level = "protein"`) use a plain vendor
+column as `var_keys` (e.g. `Protein_Group`) with no ProForma compute.
 
 Why `ProForma_peptide` is computed from the modified-sequence column
 rather than the vendor's "peptide" column: stripping the modification
@@ -83,16 +94,30 @@ Schema invariants worth knowing:
   `ProForma_peptide`, `proforma_sequence` → `ProForma_peptidoform`,
   `proforma_ion` → `ProForma_ion`. The validator rejects any other
   name.
-- Any `how = "proforma_ion"` compute must appear in `axis.var_keys`.
+- At **ion** level a `how = "proforma_ion"` compute must appear in
+  `axis.var_keys`; at **fragment** level it is an intermediate and must
+  *not* be a var key (the var key is `ProForma_fragment`).
 - `how = "proforma_ion"` requires exactly two source columns
   (peptidoform intermediate + charge).
+- `how = "proforma_fragment"` is fragment-level only, requires exactly two
+  source columns (a `ProForma_ion` intermediate + the `[fragments].label_output`
+  column), and must appear in `axis.var_keys`.
 - `how = "proforma_sequence"` and `how = "stripped_sequence"` each
   require exactly one source column and a `[modifications]` block.
 
 ### Column naming
 
 - Right-hand-side names must preserve the exact vendor column names.
-- Left-hand-side names may be cleaner internal names.
+- Left-hand-side names and layer names are APB internal names produced by sanitising the
+  vendor name: preserve token words, case, and vendor prefixes, but replace separators
+  such as `.`, spaces, parentheses, hyphens, and other special characters with `_`;
+  collapse repeated `_`; trim edge `_`. Do not rename vendor columns into cross-vendor
+  semantic aliases. For example, Spectronaut `FG.Charge` should be selected as
+  `FG_Charge = "FG.Charge"`, `EG.ModifiedSequence` as
+  `EG_ModifiedSequence = "EG.ModifiedSequence"`, and `PG.ProteinGroups` as
+  `PG_ProteinGroups = "PG.ProteinGroups"`.
+- The reserved `ProForma_*` compute names are the exception: they are APB-derived
+  identifiers and must use the schema-defined names below.
 - `[columns.*.select]` is strictly for values that exist in the input
   table, plus the wide-file placeholder `"<sample>"`. APB-derived
   values (the column whose name matches `modifications.output_column`,
@@ -114,13 +139,14 @@ mapping is stored both in the TOML and in `uns` at conversion time.
 
 Filename convention:
 
-- `parse_<software>_<quantification_level>_<file_version>.toml`
-- The folder and filename use the lowercase vendor short-name
-  (`diann/parse_diann_ion_1.toml`); the `software_name` value inside
-  the TOML preserves the canonical spelling (`"DIA-NN"`).
-- `quantification_level` in the filename must match the in-TOML
-  `quantification_level` value. `tests/test_packaged_rules.py`
-  enforces this.
+- `parse_<software>_<quantification_level>.toml` inside a vendor (and, for version-specific
+  DIA-NN levels, a `vN`/`vN_M` subfolder — see "Version folders" below). Single-version vendors may
+  keep a legacy flat `parse_<software>_<quantification_level>_<n>.toml`.
+- The folder and filename use the lowercase vendor short-name (`diann/parse_diann_ion.toml`,
+  `diann/v1/parse_diann_protein.toml`); the `software_name` value inside the TOML preserves the
+  canonical spelling (`"DIA-NN"`).
+- `quantification_level` in the filename must match the in-TOML `quantification_level` value.
+  `tests/test_packaged_rules.py` enforces this.
 
 ### Duplicate handling
 
@@ -156,8 +182,9 @@ These entries are valid for both long and wide rules.
   Example: `"FragPipe"`.
 - `software_version` — string, optional.
 - `input_shape` — `"long"` or `"wide"`.
-- `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`, or
-  `"protein"`. Must match the filename token.
+- `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`,
+  `"protein"`, or `"fragment"`. Must match the filename token.
+  `"fragment"` requires a `[fragments]` block.
 
 - `[axis]`
   - `obs_keys` — array of strings. Must reference declared output
@@ -187,9 +214,13 @@ These entries are valid for both long and wide rules.
   - `from` — list of declared var column names (from `select` or
     earlier `compute` entries).
   - `how` — one of `"proforma_sequence"`, `"stripped_sequence"`,
-    `"proforma_ion"`. The first two require a `[modifications]` block
-    and exactly one source column. `proforma_ion` is ion-level only,
-    requires exactly two source columns, and its `name` must appear in
+    `"proforma_ion"`, `"proforma_fragment"`. The first two require a
+    `[modifications]` block and exactly one source column. `proforma_ion`
+    requires exactly two source columns and is valid at ion level (where
+    its `name` must appear in `axis.var_keys`) and fragment level (as an
+    intermediate). `proforma_fragment` is fragment-level only, requires
+    exactly two source columns (a `ProForma_ion` intermediate +
+    `[fragments].label_output`), and its `name` must appear in
     `axis.var_keys`.
 
 - `[[layers]]`
@@ -262,6 +293,83 @@ requires adding it to that registry first.
 Vendor tokens may be numeric mass deltas (`"15.9949"`, `"+57.02"`),
 named labels (`"Acetyl (Protein N-term)"`), or UniMod-style strings
 (`"UniMod:35"`) — see the worked examples below.
+
+### Fragments
+
+Only for `quantification_level = "fragment"`. Some vendors (DIA-NN) do not emit one
+row per fragment; instead they pack per-fragment values as parallel, delimiter-joined
+lists inside each precursor row (`Fragment.Info`, `Fragment.Quant.Raw`, …, aligned by
+index and often terminated by a trailing delimiter). The `[fragments]` block tells
+`convert()` to **explode** those lists into one row per fragment *before* column
+materialization and the long-format pivot, so the rest of the pipeline is reused
+unchanged.
+
+- `[fragments]`
+  - `value_columns` — array of the parallel packed value columns to split
+    (e.g. `["Fragment.Quant.Raw", "Fragment.Correlations"]`). All same length per row; mismatch raises.
+  - `label_column` — *optional* packed column whose tokens identify each fragment
+    (e.g. `"Fragment.Info"`, tokens like `b4-unknown^1/327.16`). When **omitted** (older DIA-NN
+    with no `Fragment.Info`), labels are **positional**: `frag_0`, `frag_1`, … by index within the
+    precursor.
+  - `delimiter` — token separator, default `";"`.
+  - `label_output` — name of the column the explode produces (the token before `/` of
+    `label_column`, or `frag_<i>` when positional), default `"fragment_label"`. Use it as a source
+    for a `how = "proforma_fragment"` compute.
+
+Each packed value column appears **twice** on purpose: in `[fragments].value_columns`
+(so explode knows to split it) and in `[[layers]]` with a matching `source_column` (so
+the now-scalar column is pivoted into a layer like any other long column).
+
+**Caveats.** Explode multiplies the row count by the fragments-per-precursor (~12 for
+DIA-NN), so converting a full report into a dense fragment matrix is memory-heavy: a
+single 6-run AIF report builds ~827k features and peaks around ~6.5 GB (the matrix is
+~90% dense, so this is genuinely large data, not overhead — the converter scatters
+directly into the dense matrix rather than via `pivot_table`, and trims unused columns
+before exploding). For large reports, prefer converting per run / filtering precursors
+first; a chunked-streaming builder would be the next step for full-scale fragment work.
+DIA-NN fragment columns also vary by version/config — some exports drop `Fragment.Info`
+or carry a reduced set of `Fragment.Quant.*` columns, so a fragment rule may not fit
+every DIA-NN file.
+
+### Multiple levels per vendor
+
+A vendor's single export can back several levels (DIA-NN's `report.tsv` backs ion, peptidoform,
+peptide, protein, and fragment). Ship one TOML per level. Because every level reads the same
+columns, header-based `recognize()` cannot pick a *level* and returns `None` for such a file; the
+level is selected explicitly.
+
+### Version folders (DIA-NN columns change across versions)
+
+DIA-NN's `report.tsv` columns differ by version: `Fragment.Quant.Corrected` is 1.7–1.8 only;
+`Fragment.Quant.Raw` / `Fragment.Correlations` and `PG.Normalised` / `PG.Quantity` exist ≤1.9.2 and
+are gone in 2.x; `Fragment.Info` is absent from all pure DIA-NN exports. So a single rule per level
+cannot fit every version. Version-dependent levels live in **version subfolders** selected by the
+software version:
+
+```text
+parsing_rules/diann/
+  parse_diann_ion.toml          # version-agnostic levels live at the vendor root
+  parse_diann_peptidoform.toml
+  parse_diann_peptide.toml
+  v1/ parse_diann_protein.toml  # 1.x: PG.Normalised/PG.Quantity present
+      parse_diann_fragment.toml #      positional fragment (no Fragment.Info)
+  v2/ parse_diann_protein.toml  # 2.x: PG.MaxLFQ + Genes.MaxLFQ only
+```
+
+- **The folder name is the selector.** `vN` covers major version `N`; finer `vN_M` (e.g. `v1_9`)
+  covers `N.M`. `registry.resolve_rule_path(software, level, version)` picks the most-specific
+  folder whose version prefixes the file's version and contains `parse_<sw>_<level>.toml`, else the
+  vendor-root file (so version-agnostic levels and single-version vendors keep working). `None` when
+  a version doesn't provide a level (e.g. fragment on 2.x).
+- **The version comes from the param file**, which is **mandatory**: the GUI / `convert_one` parse
+  the co-located param (`params.registry.parse_params`) for `software_version`, resolve the rule by
+  version, then **validate** the data columns against it (`converters.recognize.matches`). A column
+  mismatch is an **error** (verify the version / param file) — no silent fallback.
+
+**Adding a variant** for a new DIA-NN format: drop `parse_diann_<level>.toml` into the right
+`vN`/`vN_M` folder (create it if needed) with that version's columns. No code change — the resolver
+finds it. `load_packaged_rule(software, level, version)` / `find_rule(...)` address a specific
+version; pass `None` for version-agnostic root rules.
 
 ## Long example (DIA-NN)
 
@@ -401,6 +509,10 @@ accession = "UNIMOD:35"
 - Long: DIA-NN, Spectronaut, MaxQuant (evidence-like).
 - Wide: FragPipe, PEAKS, WOMBAT.
 
+DIA-NN ships all five levels from one `report.tsv` —
+`parse_diann_{ion,peptidoform,peptide,protein,fragment}_1.toml` — demonstrating the
+one-TOML-per-level pattern.
+
 This is why the rule schema supports both `source_column` and
 `column_pattern`.
 
@@ -411,7 +523,8 @@ This is why the rule schema supports both `source_column` and
 2. Update `software_name`, `software_version`, `input_shape`,
    `quantification_level`.
 3. Replace `[columns.var.select]` RHS values with the new vendor's
-   actual column names; keep the LHS clean.
+   actual column names; keep the LHS as the minimally sanitised vendor
+   name, not a semantic alias.
 4. Update layer `source_column` (long) or `column_pattern` (wide).
    Keep the sample-token in wide regexes as `.+`.
 5. Adjust `[modifications]`: pick the right `token_pattern` for the

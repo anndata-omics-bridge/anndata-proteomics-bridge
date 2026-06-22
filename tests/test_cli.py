@@ -68,12 +68,12 @@ def test_validate_multiple_paths(
     assert "2 rule(s) checked, 1 failed" in err
 
 
-def test_list_shows_six_rules(capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_shows_eleven_rules(capsys: pytest.CaptureFixture[str]) -> None:
     rc = list_rules()
     err = capsys.readouterr().err
     assert rc == 0
     lines = [line for line in err.splitlines() if line.strip()]
-    assert len(lines) == 6
+    assert len(lines) == 11
     assert "diann" in err
     assert "wombat" in err
     assert "peptidoform" in err

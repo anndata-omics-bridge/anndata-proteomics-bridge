@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from anndata_proteomics.rules.registry import find_rule
+from anndata_proteomics.rules.registry import find_rule, resolve_rule_path
 from anndata_proteomics.rules.schema import ParseRule
 
 
@@ -30,7 +30,20 @@ def load_rule(path: Path | str) -> ParseRule:
 
 
 def load_packaged_rule(
-    software: str, quantification_level: str, file_version: str = "1"
+    software: str, quantification_level: str, version: str | None = None
 ) -> ParseRule:
-    """Convenience: registry.find_rule(...) + load_rule(...)."""
-    return load_rule(find_rule(software, quantification_level, file_version))
+    """Load the packaged rule for (software, level) at ``version`` (None → version-agnostic root)."""
+    return load_rule(find_rule(software, quantification_level, version))
+
+
+def resolve_rule_for_version(
+    software: str, quantification_level: str, version: str | None
+) -> ParseRule | None:
+    """The rule whose version subfolder covers ``version``, or ``None`` if no variant applies.
+
+    DIA-NN report columns vary by version; this picks the right variant by the software version
+    (parsed from the param file), via ``registry.resolve_rule_path``. ``None`` means the level
+    is not available for that version (e.g. fragment on DIA-NN 2.x).
+    """
+    path = resolve_rule_path(software, quantification_level, version)
+    return load_rule(path) if path is not None else None

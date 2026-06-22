@@ -1,5 +1,55 @@
 # TODO: Multi-level quantification and MuData
 
+## Status (2026-06-22): report-backed levels only
+
+The basic question ("each level as its own AnnData, MuData as a thin container") is
+answered **yes**, but only for levels backed by real quantitative layers in the vendor output.
+Parsing captures all vendor output metadata and measurements; it does **not** create new
+quantitative data. For DIA-NN this means:
+
+- **Active DIA-NN level rules from one `report.tsv`**:
+  - ion/precursor uses native `Precursor.*` layers and carries mandatory `.var` metadata such as
+    `ProForma_peptidoform`, `ProForma_peptide`, `Protein_Group`, `Protein_Ids`,
+    `Protein_Names`, and `Genes`.
+  - protein uses native `PG.MaxLFQ`/`PG.Normalised`/`PG.Quantity`
+    (`duplicates="keep_first"` — they are pre-aggregated and repeated per
+    `(Run, Protein.Group)`).
+  - peptide and peptidoform identifiers remain metadata/link columns. They are not standalone
+    DIA-NN modalities because the report does not provide peptide- or peptidoform-level layers.
+- **Fragment level** added as a report-backed `QuantificationLevel` (decision: name is
+  **`fragment`**, not `fragment_ion`). DIA-NN packs fragments as parallel
+  `;`-delimited lists in each precursor row, so a new `[fragments]` TOML block +
+  `converters/_fragments.explode_fragments` fan them out (pandas multi-column
+  `explode`) before the normal pivot. New compute mode `proforma_fragment`
+  (`ProForma_fragment = "{peptidoform}/{charge}/{fragment_label}"`).
+- **MuData proof** (test-only, no public API per step 7): `tests/test_mudata_levels.py`
+  builds the report-backed AnnData levels, wraps them in `MuData(axis=0)`, and verifies the FK
+  links and `.h5mu` round-trip.
+
+Resolved design points (deviating from / refining this doc):
+- **var_names are prefixed per level** (`frg:/ion:/prt:` for current DIA-NN v1). Prefixing keeps
+  the global MuData axis unique.
+- **FK/link columns stay in `.var` metadata** using TOML-defined names. A metadata column can link
+  levels or describe biology; it does not imply that a standalone quantitative modality exists.
+- **`recognize()` can't pick a level** for a multi-level vendor (all DIA-NN levels match
+  the same headers) — it returns `None`; the level is selected explicitly via
+  `load_packaged_rule(software, level)`.
+
+Known limitation / follow-up:
+- **Fragment level is memory-heavy at full scale**: explode multiplies rows ~12x; a full
+  6-run DIA-NN report builds ~827k features. `convert_long` now scatters directly into the
+  dense matrix (no `pivot_table`) and the fragment path trims unused columns before
+  exploding, bringing the peak from ~13.5 GB down to ~6.5 GB. The matrix is ~90% dense, so
+  this is largely irreducible without chunking — a chunked-streaming explode+scatter (never
+  materialising the full ~5M-row exploded frame) is the next step if full-scale fragment is
+  needed. Tests run on a row-capped subset; in practice, convert fragment per run / filtered.
+- DIA-NN fragment columns vary by version (some exports lack `Fragment.Info` or carry a
+  reduced `Fragment.Quant.*` set), so the fragment rule does not fit every DIA-NN file.
+
+Still open (see sections below): protein↔peptide ambiguity / relation table and whether to add
+other vendors' report-backed levels. Derived peptide/peptidoform quantification would need a
+separate explicit derivation pipeline, not a parsing TOML.
+
 ## Question
 
 The current project has TOML parse rules for one quantification level at a time,
@@ -31,22 +81,17 @@ The existing design already points in this direction:
   resolves a level-specific rule
 
 So the pragmatic next step is not one large multi-level TOML. It is one TOML per
-level:
+report-backed level:
 
 ```text
 parsing_rules/diann/
   parse_diann_ion_1.toml
-  parse_diann_peptidoform_1.toml
-  parse_diann_peptide_1.toml
   parse_diann_protein_1.toml
+  v1/parse_diann_fragment.toml
 ```
 
-Add a fragment-level rule only after checking the actual DIA-NN fragment output
-columns and deciding whether the level should be called `fragment` or
-`fragment_ion`. Unlike the other levels, fragment is not a pure-TOML addition:
-it requires a schema change to extend the `QuantificationLevel` literal in
-`rules/schema.py`, and a fragment key would need a new compute mode
-(`proforma_ion` is hard-coded to ion-level rules only).
+Add peptide or peptidoform TOMLs only when the vendor file provides real layer columns for those
+levels. Do not use `Precursor.*` layers to manufacture peptide or peptidoform abundance matrices.
 
 ## AnnData level model
 
@@ -61,7 +106,8 @@ This matters because "multiple levels" are not AnnData layers. Layers are only
 valid when the feature axis is identical. For example, `Precursor_Normalised`,
 `Precursor_Quantity`, `Q_Value`, and `RT` can be layers for the same ion-level
 matrix. Protein, peptide, peptidoform, ion, and fragment matrices have
-different `.var` axes, so they should be separate AnnData objects.
+different `.var` axes, so they should be separate AnnData objects only when the
+vendor output provides real quantitative layers for that level.
 
 ## Linking levels
 
@@ -73,16 +119,17 @@ names are not a convention to maintain by hand — the rule schema enforces them
 `rules/schema.py`). Any other name is rejected at load time, so the same
 identifier means the same thing at every level for free.
 
-Example:
+Example when a parent modality exists:
 
 - ion-level `.var` primary key (its `var_names`): `ProForma_ion`
 - ion-level `.var` also carries the column `ProForma_peptidoform`
 - peptidoform-level `.var` primary key (its `var_names`): `ProForma_peptidoform`
 
-Then `ion.var["ProForma_peptidoform"]` points into `peptidoform.var_names`. Note
-the asymmetry: the same identifier is a **column** at the child level and the
-**index** (`var_names`) at the parent level. The link is a foreign key from a
-child column into the parent index, and it works only when the parent index is
+Then `ion.var["ProForma_peptidoform"]` points into `peptidoform.var_names`. If no
+report-backed peptidoform modality exists, the same column remains mandatory metadata but is not a
+foreign key into a MuData modality. Note the asymmetry: the same identifier is a **column** at the
+child level and, when present, the **index** (`var_names`) at the parent level. The link is a
+foreign key from a child column into the parent index, and it works only when the parent index is
 unique.
 
 This gives a natural many-to-one relationship:

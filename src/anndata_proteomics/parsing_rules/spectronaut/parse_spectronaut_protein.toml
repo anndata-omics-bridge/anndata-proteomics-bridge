@@ -1,0 +1,72 @@
+schema_version = "0.1"
+file_version = "1"
+software_name = "Spectronaut"
+software_version = "20.0.250602.92449"
+input_shape = "long"
+quantification_level = "protein"
+
+# Spectronaut reports PG.* protein-group quantities and scores on the same export rows as
+# FG.* ion/precursor quantities. They are pre-aggregated per (R_FileName, PG_ProteinGroups), so
+# keep the first repeated value instead of summing over precursor rows.
+[axis]
+obs_keys = ["R_FileName"]
+var_keys = ["PG_ProteinGroups"]
+x_layer = "PG_Quantity"
+
+[axis.duplicates]
+mode = "keep_first"
+
+[columns.obs.select]
+E_Errors = "E.Errors"
+E_LFQMethod = "E.LFQMethod"
+E_Warnings = "E.Warnings"
+R_FileName = "R.FileName"
+R_Condition = "R.Condition"
+R_Fraction = "R.Fraction"
+R_Replicate = "R.Replicate"
+R_Label = "R.Label"
+
+[columns.var.select]
+PG_GroupLabel = "PG.GroupLabel"
+PG_ProteinAccessions = "PG.ProteinAccessions"
+PG_ProteinGroups = "PG.ProteinGroups"
+
+[[layers]]
+name = "PG_Quantity"
+source_column = "PG.Quantity"
+
+[[layers]]
+name = "PG_Cscore"
+source_column = "PG.Cscore"
+
+[[layers]]
+name = "PG_Cscore_Run_Wise"
+source_column = "PG.Cscore (Run-Wise)"
+
+[[layers]]
+name = "PG_PEP"
+source_column = "PG.PEP"
+
+[[layers]]
+name = "PG_PEP_Run_Wise"
+source_column = "PG.PEP (Run-Wise)"
+
+[[layers]]
+name = "PG_Pvalue"
+source_column = "PG.Pvalue"
+
+[[layers]]
+name = "PG_PValue_Run_Wise"
+source_column = "PG.PValue (Run-Wise)"
+
+[[layers]]
+name = "PG_Qvalue"
+source_column = "PG.Qvalue"
+
+[[layers]]
+name = "PG_QValue_Run_Wise"
+source_column = "PG.QValue (Run-Wise)"
+
+[[layers]]
+name = "PG_RunEvidenceCount"
+source_column = "PG.RunEvidenceCount"

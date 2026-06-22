@@ -93,6 +93,21 @@ class Probability(_Strict):
             return float(text)
         return value
 
+    @classmethod
+    def parse(cls, value: object) -> "Probability | None":
+        if _is_missing(value):
+            return None
+        if isinstance(value, Probability):
+            return value
+        if isinstance(value, dict):
+            return cls.model_validate(value)
+        numeric = _coerce_float(value)
+        if numeric is None:
+            return None
+        if numeric >= 1:
+            numeric /= 100
+        return cls(value=numeric)
+
 class MassTolerance(_Strict):
     """Mass tolerance centered at the theoretical mass.
 
@@ -130,6 +145,8 @@ class MassTolerance(_Strict):
             return None
         if isinstance(value, MassTolerance):
             return value
+        if isinstance(value, dict):
+            return cls.model_validate(value)
         if isinstance(value, int | float):
             if value == 0:
                 return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
@@ -240,18 +257,7 @@ class Parameters(_Strict):
     )
     @classmethod
     def _coerce_probability(cls, value: object) -> object:
-        if _is_missing(value):
-            return None
-        if isinstance(value, Probability):
-            return value
-        numeric = _coerce_float(value)
-        if numeric is None:
-            return None
-        # FDR values >= 1 are percentages (e.g. a "1.0%" threshold) and divided
-        # by 100, matching ProteoBench's normalize() (FDR is always < 1).
-        if numeric >= 1:
-            numeric /= 100
-        return Probability(value=numeric)
+        return Probability.parse(value)
 
     @field_validator("precursor_mass_tolerance", "fragment_mass_tolerance", mode="before")
     @classmethod

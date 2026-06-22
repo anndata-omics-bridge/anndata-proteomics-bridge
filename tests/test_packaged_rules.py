@@ -34,8 +34,11 @@ def test_at_least_one_long_and_one_wide_rule() -> None:
     ids=lambda p: f"{p.parent.name}/{p.name}",
 )
 def test_filename_quant_level_matches_toml(toml_path: Path) -> None:
+    # parse_<software>_<level>.toml (version-foldered) or parse_<software>_<level>_<n>.toml (flat).
     parts = toml_path.stem.split("_")
-    filename_level = parts[-2]
+    if parts[-1].isdigit():  # drop a trailing flat-file version token
+        parts = parts[:-1]
+    filename_level = parts[-1]
     rule = ParseRule.model_validate(tomllib.loads(toml_path.read_text()))
     assert rule.quantification_level == filename_level, (
         f"{toml_path.name}: filename says level={filename_level!r} "
