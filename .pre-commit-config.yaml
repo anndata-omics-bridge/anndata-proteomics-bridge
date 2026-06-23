@@ -1,0 +1,21 @@
+# Mirrors the qg_dump setup (ruff lint+format, then pytest), adapted for this repo:
+#   * dev tooling is installed via the `dev` optional-dependency group → `uv run --extra dev`
+#   * no GUI test suite here, so pytest runs the whole suite
+#   * pyright is intentionally omitted (not configured/installed in this repo yet);
+#     add a local pyright hook here once it is set up, mirroring qg_dump.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run --extra dev pytest -x -q
+        language: system
+        types: [python]
+        pass_filenames: false
