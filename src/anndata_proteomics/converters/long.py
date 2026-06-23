@@ -23,9 +23,7 @@ def _aggfunc_for(rule: ParseRule) -> str:
     if mode == "aggregate":
         return "sum"
     if mode == "keep_all_as_raw_table":
-        raise NotImplementedError(
-            "duplicates.mode='keep_all_as_raw_table' is not yet supported"
-        )
+        raise NotImplementedError("duplicates.mode='keep_all_as_raw_table' is not yet supported")
     return "first"
 
 
@@ -83,9 +81,9 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
-        values = df[layer.source_column]
+        values = df[layer.source]
         if layer.encoding_mode == "factor":
-            values = encode_factor(values, layer.categories or {})
+            values = encode_factor(values, layer.categories)
         else:
             # Vendors sometimes use sentinels like "-" for missing in otherwise-numeric
             # columns; coerce so they become NaN rather than blowing up the scatter.

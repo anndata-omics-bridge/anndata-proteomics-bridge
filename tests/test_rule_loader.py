@@ -57,7 +57,7 @@ Foo = "Foo"
 
 [[layers]]
 name = "X"
-source_column = "Foo"
+source = "Foo"
 """
     )
     with pytest.raises(ValidationError) as exc_info:

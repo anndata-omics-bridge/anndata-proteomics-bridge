@@ -48,19 +48,19 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+source = "Precursor.Normalised"
 
 [[layers]]
 name = "Q_Value"
-source_column = "Q.Value"
+source = "Q.Value"
 
 [[layers]]
 name = "RT"
-source_column = "RT"
+source = "RT"
 
 [[layers]]
 name = "Ms1_Area"
-source_column = "Ms1.Area"
+source = "Ms1.Area"
 
 [modifications]
 source_column = "Modified.Sequence"
@@ -97,21 +97,21 @@ Gene = "Gene"
 
 [[layers]]
 name = "Intensity"
-column_pattern = "^(?P<sample>.+) Intensity$"
+source = "^(?P<sample>.+) Intensity$"
 
 [[layers]]
 name = "Spectral_Count"
-column_pattern = "^(?P<sample>.+) Spectral Count$"
+source = "^(?P<sample>.+) Spectral Count$"
 
 [[layers]]
 name = "Match_Type"
-column_pattern = "^(?P<sample>.+) Match Type$"
+source = "^(?P<sample>.+) Match Type$"
 encoding_mode = "factor"
 categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
 
 [[layers]]
 name = "Localization"
-column_pattern = "^(?P<sample>.+) Localization$"
+source = "^(?P<sample>.+) Localization$"
 encoding_mode = "factor"
 categories = { "Localized" = 1, "Ambiguous" = 0 }
 
@@ -141,49 +141,52 @@ def test_wide_example_validates():
     assert match_type.categories == {"unmatched": 0, "MS/MS": 1, "MBR": 2}
 
 
-def test_long_layer_missing_source_column():
-    bad = LONG_EXAMPLE.replace('source_column = "RT"', "")
-    with pytest.raises(ValidationError, match="source_column"):
+def test_long_layer_missing_source():
+    bad = LONG_EXAMPLE.replace('source = "RT"', "")
+    with pytest.raises(ValidationError, match="source"):
         _parse(bad)
 
 
-def test_long_layer_with_column_pattern_rejected():
+def test_layer_column_pattern_is_unknown_field():
+    # column_pattern was removed from the model; it is now just an extra (forbidden) key.
     bad = LONG_EXAMPLE.replace(
-        'name = "RT"\nsource_column = "RT"',
-        'name = "RT"\nsource_column = "RT"\ncolumn_pattern = "^.+ RT$"',
+        'name = "RT"\nsource = "RT"',
+        'name = "RT"\nsource = "RT"\ncolumn_pattern = "^.+ RT$"',
     )
     with pytest.raises(ValidationError, match="column_pattern"):
         _parse(bad)
 
 
-def test_wide_layer_missing_column_pattern():
-    bad = WIDE_EXAMPLE.replace('column_pattern = "^(?P<sample>.+) Intensity$"', "")
-    with pytest.raises(ValidationError, match="column_pattern"):
+def test_wide_layer_missing_source():
+    bad = WIDE_EXAMPLE.replace('source = "^(?P<sample>.+) Intensity$"', "")
+    with pytest.raises(ValidationError, match="source"):
         _parse(bad)
 
 
-def test_wide_layer_with_source_column_rejected():
+def test_layer_source_column_is_unknown_field():
+    # source_column was removed from the layer model; it is now just an extra (forbidden) key.
     bad = WIDE_EXAMPLE.replace(
-        'name = "Intensity"\ncolumn_pattern = "^(?P<sample>.+) Intensity$"',
-        'name = "Intensity"\ncolumn_pattern = "^(?P<sample>.+) Intensity$"\n'
-        'source_column = "Intensity"',
+        'name = "Intensity"\nsource = "^(?P<sample>.+) Intensity$"',
+        'name = "Intensity"\nsource = "^(?P<sample>.+) Intensity$"\nsource_column = "Intensity"',
     )
     with pytest.raises(ValidationError, match="source_column"):
+        _parse(bad)
+
+
+def test_wide_source_requires_sample_group():
+    bad = WIDE_EXAMPLE.replace('source = "^(?P<sample>.+) Intensity$"', 'source = "^.+ Intensity$"')
+    with pytest.raises(ValidationError, match="sample"):
         _parse(bad)
 
 
 def test_factor_requires_categories():
-    bad = WIDE_EXAMPLE.replace(
-        'categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }', ""
-    )
+    bad = WIDE_EXAMPLE.replace('categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }', "")
     with pytest.raises(ValidationError, match="categories"):
         _parse(bad)
 
 
 def test_x_layer_must_exist():
-    bad = LONG_EXAMPLE.replace(
-        'x_layer = "Precursor_Normalised"', 'x_layer = "DoesNotExist"'
-    )
+    bad = LONG_EXAMPLE.replace('x_layer = "Precursor_Normalised"', 'x_layer = "DoesNotExist"')
     with pytest.raises(ValidationError, match="x_layer"):
         _parse(bad)
 
@@ -232,17 +235,13 @@ def test_json_schema_export_has_expected_top_level_properties():
 
 
 def test_invalid_quantification_level():
-    bad = LONG_EXAMPLE.replace(
-        'quantification_level = "ion"', 'quantification_level = "wrong"'
-    )
+    bad = LONG_EXAMPLE.replace('quantification_level = "ion"', 'quantification_level = "wrong"')
     with pytest.raises(ValidationError):
         _parse(bad)
 
 
 def test_fragment_level_can_be_native_row_level_without_fragments_block():
-    good = LONG_EXAMPLE.replace(
-        'quantification_level = "ion"', 'quantification_level = "fragment"'
-    )
+    good = LONG_EXAMPLE.replace('quantification_level = "ion"', 'quantification_level = "fragment"')
     rule = _parse(good)
     assert rule.quantification_level == "fragment"
     assert rule.fragments is None
@@ -251,6 +250,12 @@ def test_fragment_level_can_be_native_row_level_without_fragments_block():
 def test_missing_quantification_level():
     bad = LONG_EXAMPLE.replace('quantification_level = "ion"\n', "")
     with pytest.raises(ValidationError, match="quantification_level"):
+        _parse(bad)
+
+
+def test_missing_software_version():
+    bad = LONG_EXAMPLE.replace('software_version = "1.9.1"\n', "")
+    with pytest.raises(ValidationError, match="software_version"):
         _parse(bad)
 
 
@@ -264,9 +269,7 @@ def test_proforma_ion_requires_two_sources():
 
 
 def test_proforma_ion_must_be_var_axis_key():
-    bad = LONG_EXAMPLE.replace(
-        'var_keys = ["ProForma_ion"]', 'var_keys = ["ProForma_peptidoform"]'
-    )
+    bad = LONG_EXAMPLE.replace('var_keys = ["ProForma_ion"]', 'var_keys = ["ProForma_peptidoform"]')
     with pytest.raises(ValidationError, match="axis.var_keys"):
         _parse(bad)
 

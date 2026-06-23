@@ -17,6 +17,7 @@ RULE_TOML = """
 schema_version = "0.1"
 file_version = "1"
 software_name = "Sage"
+software_version = "1.0"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -52,7 +53,7 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
-source_column = "Intensity"
+source = "Intensity"
 
 [modifications]
 source_column = "Modified.Sequence"

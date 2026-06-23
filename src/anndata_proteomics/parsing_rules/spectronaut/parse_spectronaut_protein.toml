@@ -1,7 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "Spectronaut"
-software_version = "20.0.250602.92449"
+software_version = "^(19|20)\\..*"
 input_shape = "long"
 quantification_level = "protein"
 
@@ -30,43 +30,34 @@ R_Label = "R.Label"
 PG_GroupLabel = "PG.GroupLabel"
 PG_ProteinAccessions = "PG.ProteinAccessions"
 PG_ProteinGroups = "PG.ProteinGroups"
+# Experiment-wide protein-group scores: Spectronaut computes these once per protein group and
+# repeats them on every run's row, so they are feature-invariant .var attributes — see
+# apb-toml-level-design. Their per-run counterparts are the "(Run-Wise)" layers below.
+PG_Cscore = "PG.Cscore"
+PG_PEP = "PG.PEP"
+PG_Pvalue = "PG.Pvalue"
+PG_Qvalue = "PG.Qvalue"
 
 [[layers]]
 name = "PG_Quantity"
-source_column = "PG.Quantity"
-
-[[layers]]
-name = "PG_Cscore"
-source_column = "PG.Cscore"
+source = "PG.Quantity"
 
 [[layers]]
 name = "PG_Cscore_Run_Wise"
-source_column = "PG.Cscore (Run-Wise)"
-
-[[layers]]
-name = "PG_PEP"
-source_column = "PG.PEP"
+source = "PG.Cscore (Run-Wise)"
 
 [[layers]]
 name = "PG_PEP_Run_Wise"
-source_column = "PG.PEP (Run-Wise)"
-
-[[layers]]
-name = "PG_Pvalue"
-source_column = "PG.Pvalue"
+source = "PG.PEP (Run-Wise)"
 
 [[layers]]
 name = "PG_PValue_Run_Wise"
-source_column = "PG.PValue (Run-Wise)"
-
-[[layers]]
-name = "PG_Qvalue"
-source_column = "PG.Qvalue"
+source = "PG.PValue (Run-Wise)"
 
 [[layers]]
 name = "PG_QValue_Run_Wise"
-source_column = "PG.QValue (Run-Wise)"
+source = "PG.QValue (Run-Wise)"
 
 [[layers]]
 name = "PG_RunEvidenceCount"
-source_column = "PG.RunEvidenceCount"
+source = "PG.RunEvidenceCount"

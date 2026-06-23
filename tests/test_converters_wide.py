@@ -24,6 +24,7 @@ def test_convert_wide_happy_path() -> None:
             "schema_version": "0.1",
             "file_version": "1",
             "software_name": "Synthetic",
+            "software_version": "1.0",
             "input_shape": "wide",
             "quantification_level": "ion",
             "axis": {
@@ -44,11 +45,11 @@ def test_convert_wide_happy_path() -> None:
             "layers": [
                 {
                     "name": "Intensity",
-                    "column_pattern": "^(?P<sample>S\\d+) Intensity$",
+                    "source": "^(?P<sample>S\\d+) Intensity$",
                 },
                 {
                     "name": "Spectral_Count",
-                    "column_pattern": "^(?P<sample>S\\d+) Spectral Count$",
+                    "source": "^(?P<sample>S\\d+) Spectral Count$",
                 },
             ],
         }
@@ -77,6 +78,7 @@ def test_convert_wide_factor_layer() -> None:
             "schema_version": "0.1",
             "file_version": "1",
             "software_name": "Synthetic",
+            "software_version": "1.0",
             "input_shape": "wide",
             "quantification_level": "ion",
             "axis": {
@@ -95,10 +97,10 @@ def test_convert_wide_factor_layer() -> None:
                 },
             },
             "layers": [
-                {"name": "Intensity", "column_pattern": "^(?P<sample>S\\d+) Intensity$"},
+                {"name": "Intensity", "source": "^(?P<sample>S\\d+) Intensity$"},
                 {
                     "name": "Type",
-                    "column_pattern": "^(?P<sample>S\\d+) Type$",
+                    "source": "^(?P<sample>S\\d+) Type$",
                     "encoding_mode": "factor",
                     "categories": {"unmatched": 0, "MS/MS": 1, "MBR": 2},
                 },

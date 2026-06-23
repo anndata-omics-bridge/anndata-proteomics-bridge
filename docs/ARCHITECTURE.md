@@ -208,7 +208,7 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 ### `converters/wide.py`
 
-**Purpose** — apply a wide-format `ParseRule` to a DataFrame: extract sample tokens from column headers via each layer's `column_pattern`, build per-layer matrices.
+**Purpose** — apply a wide-format `ParseRule` to a DataFrame: extract sample tokens from column headers via each layer's `source` regex, build per-layer matrices.
 
 **Public API**
 

@@ -1,5 +1,31 @@
 {
   "$defs": {
+    "AlreadyProformaModifications": {
+      "additionalProperties": false,
+      "description": "``source_column`` already holds a ProForma string; copy it through.",
+      "properties": {
+        "parser": {
+          "const": "already_proforma",
+          "title": "Parser",
+          "type": "string"
+        },
+        "source_column": {
+          "title": "Source Column",
+          "type": "string"
+        },
+        "output_column": {
+          "default": "proforma_sequence",
+          "title": "Output Column",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parser",
+        "source_column"
+      ],
+      "title": "AlreadyProformaModifications",
+      "type": "object"
+    },
     "Axis": {
       "additionalProperties": false,
       "properties": {
@@ -90,6 +116,46 @@
       "title": "ColumnGroup",
       "type": "object"
     },
+    "ColumnLabeledFragments": {
+      "additionalProperties": false,
+      "description": "DIA-NN exports carrying fragment identities in a packed ``label_column``.\n\n``label_column`` (e.g. ``Fragment.Info``, tokens like ``b4-unknown^1/327.16``)\nyields ``label_output`` = the token before ``/``.",
+      "properties": {
+        "label_strategy": {
+          "const": "column",
+          "title": "Label Strategy",
+          "type": "string"
+        },
+        "value_columns": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Value Columns",
+          "type": "array"
+        },
+        "label_column": {
+          "title": "Label Column",
+          "type": "string"
+        },
+        "delimiter": {
+          "default": ";",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "label_output": {
+          "default": "fragment_label",
+          "title": "Label Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label_strategy",
+        "value_columns",
+        "label_column"
+      ],
+      "title": "ColumnLabeledFragments",
+      "type": "object"
+    },
     "Columns": {
       "additionalProperties": false,
       "properties": {
@@ -125,52 +191,16 @@
       "title": "Duplicates",
       "type": "object"
     },
-    "Fragments": {
-      "additionalProperties": false,
-      "description": "Declares packed parallel-list fragment columns to explode before conversion.\n\nDIA-NN-style reports pack per-fragment values as ``delimiter``-joined lists inside each\nprecursor row (parallel ``Fragment.Quant.*`` lists, aligned by index).\n``converters._fragments.explode_fragments`` splits these into one row per fragment before\nthe normal long-conversion pivot, producing ``label_output`` as a source for a\n``proforma_fragment`` computed column. Only valid for ``quantification_level=\"fragment\"``.\n\n``label_column`` is the packed column carrying fragment identities (e.g. ``Fragment.Info``,\ntokens like ``b4-unknown^1/327.16``); ``label_output`` then = the token before ``/``. When\n``label_column`` is ``None`` (older DIA-NN with no ``Fragment.Info``), labels are\n**positional** \u2014 ``frag_0``, ``frag_1``, \u2026 by index within the precursor.",
-      "properties": {
-        "value_columns": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Value Columns",
-          "type": "array"
-        },
-        "label_column": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Label Column"
-        },
-        "delimiter": {
-          "default": ";",
-          "title": "Delimiter",
-          "type": "string"
-        },
-        "label_output": {
-          "default": "fragment_label",
-          "title": "Label Output",
-          "type": "string"
-        }
-      },
-      "required": [
-        "value_columns"
-      ],
-      "title": "Fragments",
-      "type": "object"
-    },
     "Layer": {
       "additionalProperties": false,
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).",
       "properties": {
         "name": {
           "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
           "type": "string"
         },
         "encoding_mode": {
@@ -183,47 +213,16 @@
           "type": "string"
         },
         "categories": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "integer"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Categories"
-        },
-        "source_column": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Source Column"
-        },
-        "column_pattern": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Column Pattern"
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Categories",
+          "type": "object"
         }
       },
       "required": [
-        "name"
+        "name",
+        "source"
       ],
       "title": "Layer",
       "type": "object"
@@ -248,34 +247,69 @@
       "title": "ModificationMapEntry",
       "type": "object"
     },
-    "Modifications": {
+    "PositionalFragments": {
+      "additionalProperties": false,
+      "description": "Older DIA-NN exports with no per-fragment label column.\n\nFragment labels are synthesised positionally (``frag_0``, ``frag_1``, \u2026) by\nindex within the precursor.",
+      "properties": {
+        "label_strategy": {
+          "const": "positional",
+          "title": "Label Strategy",
+          "type": "string"
+        },
+        "value_columns": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Value Columns",
+          "type": "array"
+        },
+        "delimiter": {
+          "default": ";",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "label_output": {
+          "default": "fragment_label",
+          "title": "Label Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label_strategy",
+        "value_columns"
+      ],
+      "title": "PositionalFragments",
+      "type": "object"
+    },
+    "SampleNameCleanup": {
       "additionalProperties": false,
       "properties": {
+        "pattern": {
+          "default": "",
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "title": "SampleNameCleanup",
+      "type": "object"
+    },
+    "SeparateModColumnModifications": {
+      "additionalProperties": false,
+      "description": "Modification tokens live in a column separate from the stripped sequence.",
+      "properties": {
+        "parser": {
+          "const": "separate_mod_column",
+          "title": "Parser",
+          "type": "string"
+        },
         "source_column": {
           "title": "Source Column",
           "type": "string"
         },
-        "parser": {
-          "default": "token_regex",
-          "enum": [
-            "token_regex",
-            "already_proforma",
-            "separate_mod_column"
-          ],
-          "title": "Parser",
+        "sequence_column": {
+          "title": "Sequence Column",
           "type": "string"
-        },
-        "token_pattern": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Token Pattern"
         },
         "token_position": {
           "default": "after_residue",
@@ -305,18 +339,6 @@
           "title": "Unknown Policy",
           "type": "string"
         },
-        "sequence_column": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sequence Column"
-        },
         "output_column": {
           "default": "proforma_sequence",
           "title": "Output Column",
@@ -331,21 +353,79 @@
         }
       },
       "required": [
-        "source_column"
+        "parser",
+        "source_column",
+        "sequence_column"
       ],
-      "title": "Modifications",
+      "title": "SeparateModColumnModifications",
       "type": "object"
     },
-    "SampleNameCleanup": {
+    "TokenRegexModifications": {
       "additionalProperties": false,
+      "description": "Extract vendor modification tokens with a regex and map them to Unimod.\n\nThe only parser with a runtime implementation today (see\n``modifications.pipeline``).",
       "properties": {
-        "pattern": {
-          "default": "",
-          "title": "Pattern",
+        "parser": {
+          "const": "token_regex",
+          "title": "Parser",
           "type": "string"
+        },
+        "source_column": {
+          "title": "Source Column",
+          "type": "string"
+        },
+        "token_pattern": {
+          "title": "Token Pattern",
+          "type": "string"
+        },
+        "token_position": {
+          "default": "after_residue",
+          "enum": [
+            "before_residue",
+            "after_residue",
+            "n_term",
+            "c_term",
+            "embedded",
+            "unknown"
+          ],
+          "title": "Token Position",
+          "type": "string"
+        },
+        "case_sensitive": {
+          "default": false,
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "unknown_policy": {
+          "default": "preserve",
+          "enum": [
+            "preserve",
+            "drop",
+            "error"
+          ],
+          "title": "Unknown Policy",
+          "type": "string"
+        },
+        "output_column": {
+          "default": "proforma_sequence",
+          "title": "Output Column",
+          "type": "string"
+        },
+        "map": {
+          "items": {
+            "$ref": "#/$defs/ModificationMapEntry"
+          },
+          "minItems": 1,
+          "title": "Map",
+          "type": "array"
         }
       },
-      "title": "SampleNameCleanup",
+      "required": [
+        "parser",
+        "source_column",
+        "token_pattern",
+        "map"
+      ],
+      "title": "TokenRegexModifications",
       "type": "object"
     }
   },
@@ -364,16 +444,8 @@
       "type": "string"
     },
     "software_version": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Software Version"
+      "title": "Software Version",
+      "type": "string"
     },
     "input_shape": {
       "enum": [
@@ -422,30 +494,65 @@
     "modifications": {
       "anyOf": [
         {
-          "$ref": "#/$defs/Modifications"
+          "discriminator": {
+            "mapping": {
+              "already_proforma": "#/$defs/AlreadyProformaModifications",
+              "separate_mod_column": "#/$defs/SeparateModColumnModifications",
+              "token_regex": "#/$defs/TokenRegexModifications"
+            },
+            "propertyName": "parser"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TokenRegexModifications"
+            },
+            {
+              "$ref": "#/$defs/AlreadyProformaModifications"
+            },
+            {
+              "$ref": "#/$defs/SeparateModColumnModifications"
+            }
+          ]
         },
         {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Modifications"
     },
     "fragments": {
       "anyOf": [
         {
-          "$ref": "#/$defs/Fragments"
+          "discriminator": {
+            "mapping": {
+              "column": "#/$defs/ColumnLabeledFragments",
+              "positional": "#/$defs/PositionalFragments"
+            },
+            "propertyName": "label_strategy"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PositionalFragments"
+            },
+            {
+              "$ref": "#/$defs/ColumnLabeledFragments"
+            }
+          ]
         },
         {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Fragments"
     }
   },
   "required": [
     "schema_version",
     "file_version",
     "software_name",
+    "software_version",
     "input_shape",
     "quantification_level",
     "axis",

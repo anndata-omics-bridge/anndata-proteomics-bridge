@@ -19,13 +19,16 @@ def test_all_packaged_rules_validate() -> None:
 
 
 def test_at_least_one_long_and_one_wide_rule() -> None:
-    rules = [
-        ParseRule.model_validate(tomllib.loads(p.read_text()))
-        for p in iter_packaged_rules()
-    ]
+    rules = [ParseRule.model_validate(tomllib.loads(p.read_text())) for p in iter_packaged_rules()]
     shapes = {r.input_shape for r in rules}
     assert "long" in shapes, f"no long rule found: {shapes}"
     assert "wide" in shapes, f"no wide rule found: {shapes}"
+
+
+def test_all_packaged_rules_declare_software_version() -> None:
+    for path in iter_packaged_rules():
+        rule = ParseRule.model_validate(tomllib.loads(path.read_text()))
+        assert rule.software_version, f"{path} missing software_version"
 
 
 @pytest.mark.parametrize(

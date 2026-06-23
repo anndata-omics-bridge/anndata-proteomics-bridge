@@ -1,7 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "PEAKS"
-software_version = "13"
+software_version = "^13$"
 input_shape = "wide"
 quantification_level = "ion"
 
@@ -43,19 +43,19 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Normalized_Area"
-column_pattern = "^(?P<sample>.+) Normalized Area$"
+source = "^(?P<sample>.+) Normalized Area$"
 
 [[layers]]
 name = "Sample_Mz"
-column_pattern = "^(?P<sample>.+) m/z$"
+source = "^(?P<sample>.+) m/z$"
 
 [[layers]]
 name = "Sample_RT_Mean"
-column_pattern = "^(?P<sample>.+) RT mean$"
+source = "^(?P<sample>.+) RT mean$"
 
 [[layers]]
 name = "AScore"
-column_pattern = "^(?P<sample>.+) AScore$"
+source = "^(?P<sample>.+) AScore$"
 
 [modifications]
 source_column = "Peptide"

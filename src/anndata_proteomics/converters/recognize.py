@@ -26,7 +26,7 @@ def _synthesized_columns(rule: ParseRule) -> set[str]:
 def _expected_long_columns(rule: ParseRule) -> set[str]:
     """Vendor columns a long rule expects to see in the input."""
     out = set(rule.columns.obs.select.values()) | set(rule.columns.var.select.values())
-    out.update(layer.source_column for layer in rule.layers if layer.source_column)
+    out.update(layer.source for layer in rule.layers)
     out.discard(_SAMPLE_PLACEHOLDER)
     out -= _synthesized_columns(rule)
     return out
@@ -35,7 +35,8 @@ def _expected_long_columns(rule: ParseRule) -> set[str]:
 def _required_var_columns(rule: ParseRule) -> set[str]:
     """Vendor columns a wide rule expects on the var axis (per-feature, not per-sample)."""
     return {
-        v for v in rule.columns.var.select.values()
+        v
+        for v in rule.columns.var.select.values()
         if v != _SAMPLE_PLACEHOLDER and v not in _synthesized_columns(rule)
     }
 
@@ -44,7 +45,7 @@ def matches(headers: Iterable[str], rule: ParseRule) -> bool:
     """Does the given header set plausibly match this rule?
 
     Long: every referenced vendor column must be present.
-    Wide: every layer's `column_pattern` must match at least one header, and
+    Wide: every layer's `source` regex must match at least one header, and
     the var-side vendor columns must be present.
     """
     headers_set = set(headers)
@@ -52,9 +53,7 @@ def matches(headers: Iterable[str], rule: ParseRule) -> bool:
         return _expected_long_columns(rule).issubset(headers_set)
     # wide
     for layer in rule.layers:
-        if layer.column_pattern is None:
-            return False
-        pattern = re.compile(layer.column_pattern)
+        pattern = re.compile(layer.source)
         if not any(pattern.match(h) for h in headers_set):
             return False
     return _required_var_columns(rule).issubset(headers_set)

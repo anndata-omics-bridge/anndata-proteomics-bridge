@@ -189,6 +189,7 @@ classDiagram
     class ParseRule {
         +str schema_version
         +str software_name
+        +str software_version
         +str input_shape
         +str quantification_level
     }
@@ -209,15 +210,39 @@ classDiagram
     }
     class Layer {
         +str name
+        +str source
         +str encoding_mode
-        +str|None source_column
-        +str|None column_pattern
+        +dict categories
     }
     class Modifications {
+        <<union by parser>>
         +str source_column
         +str parser
-        +str unknown_policy
         +str output_column
+    }
+    class TokenRegexModifications {
+        +str token_pattern
+        +str token_position
+        +bool case_sensitive
+        +str unknown_policy
+    }
+    class AlreadyProformaModifications
+    class SeparateModColumnModifications {
+        +str sequence_column
+        +str token_position
+        +bool case_sensitive
+        +str unknown_policy
+    }
+    class Fragments {
+        <<union by label_strategy>>
+        +str label_strategy
+        +list~str~ value_columns
+        +str delimiter
+        +str label_output
+    }
+    class PositionalFragments
+    class ColumnLabeledFragments {
+        +str label_column
     }
     class ModificationMapEntry {
         +str token
@@ -228,11 +253,18 @@ classDiagram
     ParseRule *-- Columns
     ParseRule *-- "1..*" Layer
     ParseRule *-- "0..1" Modifications
+    ParseRule *-- "0..1" Fragments
     ParseRule *-- "0..1" SampleNameCleanup
     Axis *-- Duplicates
     Columns *-- "2" ColumnGroup : obs / var
     ColumnGroup *-- "*" ColumnCompute : compute
-    Modifications *-- "*" ModificationMapEntry : map
+    Modifications <|-- TokenRegexModifications
+    Modifications <|-- AlreadyProformaModifications
+    Modifications <|-- SeparateModColumnModifications
+    Fragments <|-- PositionalFragments
+    Fragments <|-- ColumnLabeledFragments
+    TokenRegexModifications *-- "*" ModificationMapEntry : map
+    SeparateModColumnModifications *-- "*" ModificationMapEntry : map
 ```
 
 ---

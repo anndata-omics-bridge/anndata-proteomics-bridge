@@ -10,10 +10,10 @@ from anndata_proteomics.modifications.apply_rules import (
     apply_rule,
 )
 from anndata_proteomics.modifications.unimod_registry import resolve
-from anndata_proteomics.rules.schema import Modifications
+from anndata_proteomics.rules.schema import Modifications, TokenRegexModifications
 
 
-def _to_runtime_rule(mods: Modifications) -> ModificationRule:
+def _to_runtime_rule(mods: TokenRegexModifications) -> ModificationRule:
     """Convert the validated TOML model into the runtime dataclass.
 
     Fills ``name``, ``target``, ``position``, ``mass_delta`` from the bundled
@@ -35,11 +35,10 @@ def _to_runtime_rule(mods: Modifications) -> ModificationRule:
         )
     return ModificationRule(
         source_column=mods.source_column,
-        token_pattern=mods.token_pattern or "",
+        token_pattern=mods.token_pattern,
         token_position=mods.token_position,
         case_sensitive=mods.case_sensitive,
         unknown_policy=mods.unknown_policy,
-        sequence_column=mods.sequence_column,
         output_column=mods.output_column,
         entries=tuple(runtime_entries),
     )

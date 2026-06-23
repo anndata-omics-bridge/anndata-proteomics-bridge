@@ -35,7 +35,7 @@ Precursor_Charge = "Precursor.Charge"
 
 [[layers]]
 name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+source = "Precursor.Normalised"
 """
 
 

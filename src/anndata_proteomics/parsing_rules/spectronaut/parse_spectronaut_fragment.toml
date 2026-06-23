@@ -1,6 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "Spectronaut"
+software_version = "^(19|20)\\..*"
 input_shape = "long"
 quantification_level = "fragment"
 
@@ -53,15 +54,15 @@ how = "stripped_sequence"
 
 [[layers]]
 name = "F_PeakArea"
-source_column = "F.PeakArea"
+source = "F.PeakArea"
 
 [[layers]]
 name = "F_FrgMz"
-source_column = "F.FrgMz"
+source = "F.FrgMz"
 
 [[layers]]
 name = "F_TheoreticalMz"
-source_column = "F.TheoreticalMz"
+source = "F.TheoreticalMz"
 
 [modifications]
 source_column = "EG.ModifiedSequence"
