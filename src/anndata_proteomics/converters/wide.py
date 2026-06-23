@@ -35,7 +35,7 @@ def _gather_layer_matrix(
     df: pd.DataFrame, layer: Layer, sample_order: list[str], var_index: pd.Index
 ) -> np.ndarray:
     """Build (n_obs × n_var) matrix for a single wide layer."""
-    matches = _matching_columns(list(df.columns), layer.column_pattern or "")
+    matches = _matching_columns(list(df.columns), layer.source)
     sample_to_col = {sample: col for col, sample in matches}
 
     n_obs = len(sample_order)
@@ -48,11 +48,11 @@ def _gather_layer_matrix(
             continue
         series = df[col]
         if layer.encoding_mode == "factor":
-            series = encode_factor(series, layer.categories or {})
+            series = encode_factor(series, layer.categories)
         else:
             # Coerce sentinels like "-" / empty strings to NaN so they fit the float matrix.
             series = pd.to_numeric(series, errors="coerce")
-        matrix[i, :] = series.values[: n_var]
+        matrix[i, :] = series.values[:n_var]
     return matrix
 
 
@@ -79,7 +79,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     sample_order: list[str] = []
     seen: set[str] = set()
     for layer in rule.layers:
-        for _, sample in _matching_columns(headers, layer.column_pattern or ""):
+        for _, sample in _matching_columns(headers, layer.source):
             if sample not in seen:
                 sample_order.append(sample)
                 seen.add(sample)
@@ -87,7 +87,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     if not sample_order:
         raise ValueError(
             f"no columns matched any layer pattern for rule {rule.software_name!r}; "
-            f"layers: {[layer.column_pattern for layer in rule.layers]}"
+            f"layers: {[layer.source for layer in rule.layers]}"
         )
 
     var_df = build_axis_frame(df, list(rule.axis.var_keys), rule.columns.var.names)

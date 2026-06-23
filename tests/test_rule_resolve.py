@@ -9,7 +9,9 @@ rules) keep these tests data-free.
 from __future__ import annotations
 
 from anndata_proteomics.converters.recognize import _expected_long_columns
-from anndata_proteomics.rules.loader import resolve_rule_for_version
+import pytest
+
+from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_for_version
 from anndata_proteomics.rules.registry import resolve_rule_path
 from anndata_proteomics.scripts import _ui_support as ui
 
@@ -19,7 +21,7 @@ _V23 = "2.3.0 Academia "  # messy real catalog string
 
 def _headers_for(rule) -> set[str]:
     cols = set(_expected_long_columns(rule))
-    if rule.fragments is not None and rule.fragments.label_column:
+    if rule.fragments is not None and rule.fragments.label_strategy == "column":
         cols.add(rule.fragments.label_column)
     return cols
 
@@ -43,6 +45,18 @@ def test_resolve_path_picks_version_folder() -> None:
     assert resolve_rule_path("diann", "ion", _V23).parent.name == "diann"
 
 
+def test_rule_software_version_regex_must_match_params_version() -> None:
+    assert resolve_rule_for_version("diann", "ion", _V19).software_version == "^[12]\\..*"
+    assert resolve_rule_for_version("diann", "ion", "3.0.0") is None
+    assert resolve_rule_for_version("diann", "protein", "1.9.2").software_version == "^1\\..*"
+    assert (
+        resolve_rule_for_version("diann", "protein", "2.3.0 Academia ").software_version
+        == "^2\\..*"
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        load_packaged_rule("diann", "ion", "3.0.0")
+
+
 def test_resolve_flat_vendor_and_unknown() -> None:
     assert resolve_rule_path("maxquant", "ion", None).name == "parse_maxquant_ion_1.toml"
     assert resolve_rule_path("nope", "ion", "1.0") is None
@@ -58,15 +72,18 @@ def test_protein_variants_differ_by_version() -> None:
 def test_fragment_v1_is_positional() -> None:
     frag = resolve_rule_for_version("diann", "fragment", _V19)
     assert frag.fragments is not None
-    assert frag.fragments.label_column is None  # positional labels (no Fragment.Info)
+    assert frag.fragments.label_strategy == "positional"  # positional labels (no Fragment.Info)
 
 
 def test_convertible_levels_by_version() -> None:
     assert ui.convertible_levels("diann", _V19, _diann_headers(_V19)) == [
-        "ion", "protein", "fragment",
+        "ion",
+        "protein",
+        "fragment",
     ]
     assert ui.convertible_levels("diann", _V23, _diann_headers(_V23)) == [
-        "ion", "protein",
+        "ion",
+        "protein",
     ]
     assert "mudata" in ui.available_targets("diann", _V23, _diann_headers(_V23))
 

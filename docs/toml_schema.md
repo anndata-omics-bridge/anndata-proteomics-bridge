@@ -33,7 +33,7 @@ declared in the TOML.)
 
 - **Wide rules**: `obs_keys = ["sample"]` and `sample = "<sample>"`
   under `[columns.obs.select]`. The `sample` token is captured by the
-  `(?P<sample>...)` group of each layer's `column_pattern`.
+  `(?P<sample>...)` group of each layer's `source` regex.
 - **Long rules**: `obs_keys` is the single column that uniquely
   identifies a run within the vendor's export. Preserve the vendor's
   natural name on the LHS — DIA-NN uses `Run`, MaxQuant `Raw_File`,
@@ -135,7 +135,10 @@ mapping is stored both in the TOML and in `uns` at conversion time.
 
 - `schema_version` — version of the TOML schema itself.
 - `file_version` — version of this specific parsing-rule TOML.
-- `software_version` — vendor software version metadata, when known.
+- `software_version` — required regex matched against the parsed vendor parameter-file
+  software version before a rule is used. Use anchored patterns for one known version, or
+  a family pattern for compatible releases, e.g. DIA-NN `^1\\..*` for 1.x rules and
+  `^2\\..*` for 2.x rules.
 
 Filename convention:
 
@@ -160,8 +163,8 @@ when a software-specific aggregation rule is intentionally needed.
 Long and wide rules share the same top-level concepts. The only
 difference is how a layer finds its source data:
 
-- long: `layers.source_column`
-- wide: `layers.column_pattern`
+- long: `layers.source` is an exact vendor column name.
+- wide: `layers.source` is a regex over matrix headers with a `(?P<sample>...)` group.
 
 Wide rules still must define `obs`. In the minimal case, `obs` is
 created from the `<sample>` token extracted by the layer regex.
@@ -180,7 +183,8 @@ These entries are valid for both long and wide rules.
 - `file_version` — string. Example: `"1"`.
 - `software_name` — string, human-readable software identifier.
   Example: `"FragPipe"`.
-- `software_version` — string, optional.
+- `software_version` — string regex, required. It is matched against the software
+  version parsed from the parameter file.
 - `input_shape` — `"long"` or `"wide"`.
 - `quantification_level` — `"ion"`, `"peptidoform"`, `"peptide"`,
   `"protein"`, or `"fragment"`. Must match the filename token.
@@ -228,21 +232,20 @@ These entries are valid for both long and wide rules.
   - `encoding_mode` — `"numeric"` (default) or `"factor"`.
   - `categories` — `{ "value" = code, … }`. Required and non-empty
     when `encoding_mode = "factor"` (enforced by `schema.py`).
-  - `source_column` — required for long, forbidden for wide.
-  - `column_pattern` — required for wide, forbidden for long.
+  - `source` — required. Its interpretation is set by the rule-level `input_shape`
+    (see Long-only / Wide-only below).
 
 ### Long-only entries
 
-- `layers.source_column` — vendor column to pivot into this layer.
+- `layers.source` — exact vendor column to pivot into this layer.
 
 ### Wide-only entries
 
-- `layers.column_pattern` — regex that finds the source columns for
-  this layer. Must expose a named capture group `(?P<sample>...)`
-  when sample names are encoded in the column names. The `sample`
-  capture describes the *vendor column shape*, not the *user's sample
-  naming* — use `.+` for the sample token. If you need to strip or
-  rewrite the captured sample names, use `[sample_name_cleanup]`.
+- `layers.source` — regex that finds the source columns for this layer. Must expose a
+  named capture group `(?P<sample>...)` (enforced by `schema.py`). The `sample` capture
+  describes the *vendor column shape*, not the *user's sample naming* — use `.+` for the
+  sample token. If you need to strip or rewrite the captured sample names, use
+  `[sample_name_cleanup]`.
 
 - `[sample_name_cleanup]` — optional, wide-only (forbidden on long).
   - `pattern` — regex used to extract or normalize a basename /
@@ -254,29 +257,32 @@ Every TOML carries a `[modifications]` block. It turns embedded
 modification tokens in a vendor sequence column (e.g.
 `Modified.Sequence`) into a ProForma-normalised output column.
 
-- `[modifications]`
-  - `source_column` — vendor column containing modification tokens.
-  - `parser` — `"token_regex"` (default), `"already_proforma"`, or
-    `"separate_mod_column"`. Each parser has consistency constraints
-    enforced by the validator:
-    - `token_regex` requires `token_pattern` AND at least one
-      `[[modifications.map]]` entry.
-    - `already_proforma` forbids both `token_pattern` and `map`.
-    - `separate_mod_column` requires `source_column` and accepts an
-      optional `map`.
-  - `token_pattern` — regex whose first capture group is the vendor
-    token. Required for `token_regex`. Example: `"\\(([^()]*)\\)"`.
-  - `token_position` — where the token sits relative to its residue.
-    One of `"before_residue"`, `"after_residue"` (default), `"n_term"`,
-    `"c_term"`, `"embedded"`, `"unknown"`.
+- `[modifications]` — its shape is a discriminated union selected by `parser`, which is
+  **required** (no default). Each variant carries only the fields it needs; setting a
+  field that does not belong to the chosen parser is rejected (`extra` keys are forbidden).
+  - `parser` — `"token_regex"`, `"already_proforma"`, or `"separate_mod_column"`.
+  - `source_column` — vendor column containing the (modified) sequence. Common to all
+    parsers.
+  - `output_column` — name of the derived column that `how = "proforma_sequence"`
+    exposes. Default `"proforma_sequence"`. Common to all parsers.
+
+  `parser = "token_regex"` additionally has:
+  - `token_pattern` — regex whose first capture group is the vendor token (**required**).
+    Example: `"\\(([^()]*)\\)"`.
+  - `token_position` — where the token sits relative to its residue. One of
+    `"before_residue"`, `"after_residue"` (default), `"n_term"`, `"c_term"`,
+    `"embedded"`, `"unknown"`.
   - `case_sensitive` — bool, default `false`.
-  - `unknown_policy` — what to do with tokens not in `map`. One of
-    `"preserve"` (default), `"drop"`, `"error"`.
-  - `sequence_column` — used only by `separate_mod_column`; the
-    column carrying the stripped (unmodified) sequence.
-  - `output_column` — name of the derived column that
-    `how = "proforma_sequence"` exposes. Default
-    `"proforma_sequence"`.
+  - `unknown_policy` — what to do with tokens not in `map`. One of `"preserve"`
+    (default), `"drop"`, `"error"`.
+  - `map` — at least one `[[modifications.map]]` entry (**required**).
+
+  `parser = "already_proforma"` adds no further fields: `source_column` already holds a
+  ProForma string, copied through to `output_column`. It has no `token_pattern` or `map`.
+
+  `parser = "separate_mod_column"` additionally requires `sequence_column` (the column
+  carrying the stripped/unmodified sequence) and accepts the same `token_position`,
+  `case_sensitive`, `unknown_policy`, and an optional `map` as `token_regex`.
 - `[[modifications.map]]` — one entry per vendor token.
   - `token` — the vendor's token string as it appears between the
     `token_pattern` delimiters.
@@ -304,20 +310,26 @@ index and often terminated by a trailing delimiter). The `[fragments]` block tel
 materialization and the long-format pivot, so the rest of the pipeline is reused
 unchanged.
 
-- `[fragments]`
+- `[fragments]` — its shape is a discriminated union selected by `label_strategy`, which
+  is **required**.
+  - `label_strategy` — `"positional"` or `"column"`.
   - `value_columns` — array of the parallel packed value columns to split
-    (e.g. `["Fragment.Quant.Raw", "Fragment.Correlations"]`). All same length per row; mismatch raises.
-  - `label_column` — *optional* packed column whose tokens identify each fragment
-    (e.g. `"Fragment.Info"`, tokens like `b4-unknown^1/327.16`). When **omitted** (older DIA-NN
-    with no `Fragment.Info`), labels are **positional**: `frag_0`, `frag_1`, … by index within the
-    precursor.
-  - `delimiter` — token separator, default `";"`.
+    (e.g. `["Fragment.Quant.Raw", "Fragment.Correlations"]`). All same length per row; mismatch raises. Common to both.
+  - `delimiter` — token separator, default `";"`. Common to both.
   - `label_output` — name of the column the explode produces (the token before `/` of
     `label_column`, or `frag_<i>` when positional), default `"fragment_label"`. Use it as a source
-    for a `how = "proforma_fragment"` compute.
+    for a `how = "proforma_fragment"` compute. Common to both.
+
+  `label_strategy = "column"` additionally requires `label_column` — the packed column
+  whose tokens identify each fragment (e.g. `"Fragment.Info"`, tokens like
+  `b4-unknown^1/327.16`); `label_output` becomes the token before `/`.
+
+  `label_strategy = "positional"` adds no further fields: labels are positional
+  (`frag_0`, `frag_1`, … by index within the precursor), for older DIA-NN exports with no
+  `Fragment.Info`.
 
 Each packed value column appears **twice** on purpose: in `[fragments].value_columns`
-(so explode knows to split it) and in `[[layers]]` with a matching `source_column` (so
+(so explode knows to split it) and in `[[layers]]` with a matching `source` (so
 the now-scalar column is pivoted into a layer like any other long column).
 
 **Caveats.** Explode multiplies the row count by the fragments-per-precursor (~12 for
@@ -363,8 +375,9 @@ parsing_rules/diann/
   a version doesn't provide a level (e.g. fragment on 2.x).
 - **The version comes from the param file**, which is **mandatory**: the GUI / `convert_one` parse
   the co-located param (`params.registry.parse_params`) for `software_version`, resolve the rule by
-  version, then **validate** the data columns against it (`converters.recognize.matches`). A column
-  mismatch is an **error** (verify the version / param file) — no silent fallback.
+  version, require the TOML `software_version` regex to match that parsed value, then **validate**
+  the data columns against it (`converters.recognize.matches`). A version or column mismatch is an
+  **error** (verify the version / param file) — no silent fallback.
 
 **Adding a variant** for a new DIA-NN format: drop `parse_diann_<level>.toml` into the right
 `vN`/`vN_M` folder (create it if needed) with that version's columns. No code change — the resolver
@@ -377,7 +390,7 @@ version; pass `None` for version-agnostic root rules.
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
-software_version = "2.3.0"
+software_version = "^2\\..*"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -410,11 +423,11 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+source = "Precursor.Normalised"
 
 [[layers]]
 name = "Q_Value"
-source_column = "Q.Value"
+source = "Q.Value"
 
 [modifications]
 source_column = "Modified.Sequence"
@@ -440,7 +453,7 @@ accession = "UNIMOD:35"
 schema_version = "0.1"
 file_version = "1"
 software_name = "FragPipe"
-software_version = "23.0"
+software_version = "^23\\.0$"
 input_shape = "wide"
 quantification_level = "ion"
 
@@ -474,15 +487,15 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
-column_pattern = "^(?P<sample>.+) Intensity$"
+source = "^(?P<sample>.+) Intensity$"
 
 [[layers]]
 name = "Spectral_Count"
-column_pattern = "^(?P<sample>.+) Spectral Count$"
+source = "^(?P<sample>.+) Spectral Count$"
 
 [[layers]]
 name = "Match_Type"
-column_pattern = "^(?P<sample>.+) Match Type$"
+source = "^(?P<sample>.+) Match Type$"
 encoding_mode = "factor"
 categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
 
@@ -513,8 +526,8 @@ DIA-NN ships all five levels from one `report.tsv` —
 `parse_diann_{ion,peptidoform,peptide,protein,fragment}_1.toml` — demonstrating the
 one-TOML-per-level pattern.
 
-This is why the rule schema supports both `source_column` and
-`column_pattern`.
+This is why a layer's single `source` is interpreted per `input_shape`: an exact column
+name for long rules, a `(?P<sample>...)` regex for wide rules.
 
 ## Adding a new vendor
 
@@ -525,8 +538,8 @@ This is why the rule schema supports both `source_column` and
 3. Replace `[columns.var.select]` RHS values with the new vendor's
    actual column names; keep the LHS as the minimally sanitised vendor
    name, not a semantic alias.
-4. Update layer `source_column` (long) or `column_pattern` (wide).
-   Keep the sample-token in wide regexes as `.+`.
+4. Update each layer `source`: an exact vendor column (long) or a `(?P<sample>...)`
+   regex (wide). Keep the sample-token in wide regexes as `.+`.
 5. Adjust `[modifications]`: pick the right `token_pattern` for the
    vendor's token syntax, then enumerate the vendor's tokens under
    `[[modifications.map]]`. Add any new UNIMOD accessions to

@@ -1,7 +1,7 @@
 """Round-trip validate parsed TOMLs against the generated parse_rule.schema.json.
 
 This is **structural-parity only** — pydantic remains the source of truth for
-cross-field rules ("long → every layer has source_column", "factor encoding
+cross-field rules ("long → every layer has source", "factor encoding
 requires categories", etc.), which JSON Schema cannot express. JSON Schema
 covers only types, literals, required fields, and additionalProperties.
 See docs/ARCHITECTURE.md.
@@ -27,6 +27,7 @@ _VALID_LONG_TOML = """
 schema_version = "0.1"
 file_version = "1"
 software_name = "Fake"
+software_version = "^1$"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -46,7 +47,7 @@ Foo = "Foo"
 
 [[layers]]
 name = "X"
-source_column = "Foo"
+source = "Foo"
 """
 
 

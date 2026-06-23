@@ -7,9 +7,10 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.converters._fragments import explode_fragments
-from anndata_proteomics.rules.schema import Fragments
+from anndata_proteomics.rules.schema import ColumnLabeledFragments, PositionalFragments
 
-_FRAGS = Fragments(
+_FRAGS = ColumnLabeledFragments(
+    label_strategy="column",
     label_column="Fragment.Info",
     value_columns=["Fragment.Quant.Raw", "Fragment.Quant.Corrected"],
     delimiter=";",
@@ -30,8 +31,12 @@ def _df() -> pd.DataFrame:
 
 
 def test_positional_labels_when_no_label_column() -> None:
-    # Older DIA-NN (no Fragment.Info): label_column omitted -> positional frag_0, frag_1, ...
-    frags = Fragments(value_columns=["Fragment.Quant.Raw", "Fragment.Correlations"], delimiter=";")
+    # Older DIA-NN (no Fragment.Info): positional strategy -> frag_0, frag_1, ...
+    frags = PositionalFragments(
+        label_strategy="positional",
+        value_columns=["Fragment.Quant.Raw", "Fragment.Correlations"],
+        delimiter=";",
+    )
     df = pd.DataFrame(
         {
             "Run": ["r1", "r2"],

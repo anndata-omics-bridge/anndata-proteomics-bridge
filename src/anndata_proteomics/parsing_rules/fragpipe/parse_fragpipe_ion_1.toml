@@ -1,7 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "FragPipe"
-software_version = "22.1-build02"
+software_version = "^22\\.1-build02$"
 input_shape = "wide"
 quantification_level = "ion"
 
@@ -43,19 +43,19 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
-column_pattern = "^(?P<sample>.+) Intensity$"
+source = "^(?P<sample>.+) Intensity$"
 
 [[layers]]
 name = "Spectral_Count"
-column_pattern = "^(?P<sample>.+) Spectral Count$"
+source = "^(?P<sample>.+) Spectral Count$"
 
 [[layers]]
 name = "Apex_Retention_Time"
-column_pattern = "^(?P<sample>.+) Apex Retention Time$"
+source = "^(?P<sample>.+) Apex Retention Time$"
 
 [[layers]]
 name = "Match_Type"
-column_pattern = "^(?P<sample>.+) Match Type$"
+source = "^(?P<sample>.+) Match Type$"
 encoding_mode = "factor"
 categories = { "unmatched" = 0, "MS/MS" = 1, "MBR" = 2 }
 

@@ -1,6 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "DIA-NN"
+software_version = "^[12]\\..*"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -42,23 +43,23 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Precursor_Normalised"
-source_column = "Precursor.Normalised"
+source = "Precursor.Normalised"
 
 [[layers]]
 name = "Precursor_Quantity"
-source_column = "Precursor.Quantity"
+source = "Precursor.Quantity"
 
 [[layers]]
 name = "Ms1_Area"
-source_column = "Ms1.Area"
+source = "Ms1.Area"
 
 [[layers]]
 name = "Q_Value"
-source_column = "Q.Value"
+source = "Q.Value"
 
 [[layers]]
 name = "RT"
-source_column = "RT"
+source = "RT"
 
 [modifications]
 source_column = "Modified.Sequence"

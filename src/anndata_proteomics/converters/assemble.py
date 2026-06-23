@@ -110,12 +110,13 @@ def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:
     """
     needed: set[str] = set(rule.columns.obs.select.values())
     needed |= set(rule.columns.var.select.values())
-    needed |= {layer.source_column for layer in rule.layers if layer.source_column}
+    needed |= {layer.source for layer in rule.layers}
     if rule.modifications is not None:
         needed |= {rule.modifications.source_column, rule.modifications.output_column}
         needed.add("stripped_sequence")
     if rule.fragments is not None:
-        needed.add(rule.fragments.label_column)
+        if rule.fragments.label_strategy == "column":
+            needed.add(rule.fragments.label_column)
         needed |= set(rule.fragments.value_columns)
     needed.discard("<sample>")
     # preserve original column order; keep only columns actually present
@@ -146,8 +147,7 @@ def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
         source_key = column.how
         if source_key not in df.columns:
             raise ValueError(
-                f"cannot compute column {column.name!r}; APB column {source_key!r} "
-                "is missing"
+                f"cannot compute column {column.name!r}; APB column {source_key!r} is missing"
             )
         return df[source_key]
     if column.how == "proforma_ion":
@@ -172,10 +172,7 @@ def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
                 f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
             )
         return pd.Series(
-            [
-                f"{ion}/{label}"
-                for ion, label in zip(df[ion_key], df[label_key], strict=True)
-            ],
+            [f"{ion}/{label}" for ion, label in zip(df[ion_key], df[label_key], strict=True)],
             index=df.index,
         )
     raise ValueError(f"unsupported column compute mode: {column.how!r}")

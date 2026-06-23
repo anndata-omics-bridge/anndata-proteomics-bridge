@@ -58,25 +58,20 @@ def test_recognize_picks_correct_rule_for_each_vendor(toml_path: Path) -> None:
 
 def test_matches_long_rule_with_extra_headers_still_matches() -> None:
     # Long rules tolerate extra unrelated columns in the source file.
-    diann_rule = load_rule(
-        next(p for p in iter_packaged_rules() if p.parent.name == "diann")
-    )
+    diann_rule = load_rule(next(p for p in iter_packaged_rules() if p.parent.name == "diann"))
     headers = (
         list(diann_rule.columns.obs.select.values())
         + list(diann_rule.columns.var.select.values())
-        + [layer.source_column for layer in diann_rule.layers]
+        + [layer.source for layer in diann_rule.layers]
         + ["UnrelatedExtraColumn"]
     )
     assert matches(headers, diann_rule) is True
 
 
 def test_matches_long_rule_returns_false_when_required_column_missing() -> None:
-    diann_rule = load_rule(
-        next(p for p in iter_packaged_rules() if p.parent.name == "diann")
-    )
+    diann_rule = load_rule(next(p for p in iter_packaged_rules() if p.parent.name == "diann"))
     headers = (
-        list(diann_rule.columns.obs.select.values())
-        + list(diann_rule.columns.var.select.values())
+        list(diann_rule.columns.obs.select.values()) + list(diann_rule.columns.var.select.values())
         # deliberately drop the layers' source columns
     )
     assert matches(headers, diann_rule) is False

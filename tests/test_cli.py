@@ -42,9 +42,7 @@ def test_validate_single_path_happy(capsys: pytest.CaptureFixture[str]) -> None:
     assert "0 failed" in err
 
 
-def test_validate_single_path_bad(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_single_path_bad(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bad = tmp_path / "bad.toml"
     bad.write_text("not = valid [[[")
     rc = validate(bad)
@@ -54,9 +52,7 @@ def test_validate_single_path_bad(
     assert "1 failed" in err
 
 
-def test_validate_multiple_paths(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_validate_multiple_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     good = find_rule("wombat", "peptidoform")
     bad = tmp_path / "bad.toml"
     bad.write_text("[[")
@@ -109,6 +105,7 @@ def test_convert_with_explicit_rule_toml_writes_h5ad(
 schema_version = "0.1"
 file_version = "1"
 software_name = "Tiny"
+software_version = "1.0"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -129,7 +126,7 @@ Charge = "Charge"
 
 [[layers]]
 name = "Intensity"
-source_column = "Intensity"
+source = "Intensity"
 """
     )
 

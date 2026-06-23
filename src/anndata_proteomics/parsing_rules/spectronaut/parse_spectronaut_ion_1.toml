@@ -1,7 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "Spectronaut"
-software_version = "20.0.250602.92449"
+software_version = "^(19|20)\\..*"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -35,9 +35,21 @@ EG_ModifiedPeptide = "EG.ModifiedPeptide"
 EG_IntPIMID = "EG.IntPIMID"
 EG_UserGroup = "EG.UserGroup"
 EG_Workflow = "EG.Workflow"
+# feature-invariant attributes: constant per ion across runs (predicted/library, profile q-values,
+# decoy flag) — see apb-toml-level-design; these are .var, not per-sample layers
+EG_IsDecoy = "EG.IsDecoy"
+EG_iRTPredicted = "EG.iRTPredicted"
+EG_AvgProfileQvalue = "EG.AvgProfileQvalue"
+EG_MaxProfileQvalue = "EG.MaxProfileQvalue"
+EG_MinProfileQvalue = "EG.MinProfileQvalue"
+EG_PercentileQvalue = "EG.PercentileQvalue"
 FG_Charge = "FG.Charge"
 FG_IntMID = "FG.IntMID"
 FG_LabeledSequence = "FG.LabeledSequence"
+# feature-invariant: theoretical mass/m/z (from sequence + charge) and per-precursor XIC-DB id
+FG_Mass = "FG.Mass"
+FG_PrecMz = "FG.PrecMz"
+FG_XICDBID = "FG.XICDBID"
 
 [[columns.var.compute]]
 name = "ProForma_peptidoform"
@@ -56,119 +68,83 @@ how = "proforma_ion"
 
 [[layers]]
 name = "FG_Quantity"
-source_column = "FG.Quantity"
-
-[[layers]]
-name = "EG_iRTPredicted"
-source_column = "EG.iRTPredicted"
-
-[[layers]]
-name = "EG_IsDecoy"
-source_column = "EG.IsDecoy"
+source = "FG.Quantity"
 
 [[layers]]
 name = "EG_MaxChannelQvalue"
-source_column = "EG.MaxChannelQvalue"
+source = "EG.MaxChannelQvalue"
 
 [[layers]]
 name = "EG_MinChannelQvalue"
-source_column = "EG.MinChannelQvalue"
+source = "EG.MinChannelQvalue"
 
 [[layers]]
 name = "EG_PEP"
-source_column = "EG.PEP"
+source = "EG.PEP"
 
 [[layers]]
 name = "EG_Qvalue"
-source_column = "EG.Qvalue"
+source = "EG.Qvalue"
 
 [[layers]]
 name = "EG_IsUserPeak"
-source_column = "EG.IsUserPeak"
-
-[[layers]]
-name = "FG_Mass"
-source_column = "FG.Mass"
-
-[[layers]]
-name = "FG_PrecMz"
-source_column = "FG.PrecMz"
+source = "EG.IsUserPeak"
 
 [[layers]]
 name = "FG_PrecMzCalibrated"
-source_column = "FG.PrecMzCalibrated"
-
-[[layers]]
-name = "FG_XICDBID"
-source_column = "FG.XICDBID"
+source = "FG.PrecMzCalibrated"
 
 [[layers]]
 name = "FG_CScore"
-source_column = "FG.CScore"
+source = "FG.CScore"
 
 [[layers]]
 name = "FG_Qvalue"
-source_column = "FG.Qvalue"
+source = "FG.Qvalue"
 
 [[layers]]
 name = "EG_ApexRT"
-source_column = "EG.ApexRT"
+source = "EG.ApexRT"
 
 [[layers]]
 name = "EG_iRTEmpirical"
-source_column = "EG.iRTEmpirical"
+source = "EG.iRTEmpirical"
 
 [[layers]]
 name = "EG_RTPredicted"
-source_column = "EG.RTPredicted"
-
-[[layers]]
-name = "EG_AvgProfileQvalue"
-source_column = "EG.AvgProfileQvalue"
-
-[[layers]]
-name = "EG_MaxProfileQvalue"
-source_column = "EG.MaxProfileQvalue"
-
-[[layers]]
-name = "EG_MinProfileQvalue"
-source_column = "EG.MinProfileQvalue"
-
-[[layers]]
-name = "EG_PercentileQvalue"
-source_column = "EG.PercentileQvalue"
+source = "EG.RTPredicted"
 
 [[layers]]
 name = "EG_IsImputed"
-source_column = "EG.IsImputed"
+source = "EG.IsImputed"
 
 [[layers]]
 name = "EG_ReferenceQuantity_Settings"
-source_column = "EG.ReferenceQuantity (Settings)"
+source = "EG.ReferenceQuantity (Settings)"
 
 [[layers]]
 name = "EG_TargetQuantity_Settings"
-source_column = "EG.TargetQuantity (Settings)"
+source = "EG.TargetQuantity (Settings)"
 
 [[layers]]
 name = "EG_TotalQuantity_Settings"
-source_column = "EG.TotalQuantity (Settings)"
+source = "EG.TotalQuantity (Settings)"
 
 [[layers]]
 name = "EG_UsedForPeptideQuantity"
-source_column = "EG.UsedForPeptideQuantity"
+source = "EG.UsedForPeptideQuantity"
 
 [[layers]]
 name = "EG_UsedForProteinGroupQuantity"
-source_column = "EG.UsedForProteinGroupQuantity"
+source = "EG.UsedForProteinGroupQuantity"
 
 [[layers]]
 name = "EG_Cscore"
-source_column = "EG.Cscore"
+source = "EG.Cscore"
 
 [[layers]]
 name = "EG_NormalizedCscore"
-source_column = "EG.NormalizedCscore"
+source = "EG.NormalizedCscore"
 
 [modifications]
 source_column = "EG.ModifiedSequence"

@@ -54,7 +54,13 @@ CONVERTED_COLUMNS = [
 LEVELS = ["ion", "peptidoform", "peptide", "protein", "fragment"]
 MUDATA = "mudata"
 # Per-level var_names prefix so modalities don't collide on the global axis.
-_PREFIX = {"fragment": "frg:", "ion": "ion:", "peptidoform": "pfm:", "peptide": "pep:", "protein": "prt:"}
+_PREFIX = {
+    "fragment": "frg:",
+    "ion": "ion:",
+    "peptidoform": "pfm:",
+    "peptide": "pep:",
+    "protein": "prt:",
+}
 # Converting these targets on a large input is memory-heavy (the fragment explode); warn first.
 _HEAVY_TARGETS = {"fragment", MUDATA}
 _HEAVY_SIZE_MB = 100.0
@@ -104,7 +110,11 @@ def select_rule(slug: str, level: str, version: str | None, headers: Iterable[st
     if rule is None:
         raise ValueError(f"{slug} {level}: no rule covers software version {version!r}")
     header_set = set(headers)
-    label_col = rule.fragments.label_column if rule.fragments else None
+    label_col = (
+        rule.fragments.label_column
+        if rule.fragments is not None and rule.fragments.label_strategy == "column"
+        else None
+    )
     if not matches(header_set, rule) or (label_col is not None and label_col not in header_set):
         raise ValueError(
             f"{slug} {level}: file columns don't match the rule for software version "
@@ -145,8 +155,17 @@ def load_catalog() -> pd.DataFrame:
     """
     if not DOWNLOADED_DB.exists():
         return pd.DataFrame(
-            columns=["software_name", "software_version", "nr_prec", "size_mb", "slug",
-                     "param_path", "targets", "targets_str", "input_file_path"]
+            columns=[
+                "software_name",
+                "software_version",
+                "nr_prec",
+                "size_mb",
+                "slug",
+                "param_path",
+                "targets",
+                "targets_str",
+                "input_file_path",
+            ]
         )
     rows = []
     by_path: dict[str, tuple[tuple[str, ...], str]] = {}  # rel -> (targets, param_path)
@@ -169,19 +188,24 @@ def load_catalog() -> pd.DataFrame:
                     targets = ()
                 by_path[rel] = (targets, str(param) if param else "")
             targets, param_str = by_path[rel]
-            size_bytes = int(row["input_file_size_bytes"]) if row.get(
-                "input_file_size_bytes", "").isdigit() else 0
-            rows.append({
-                "software_name": row["software_name"],
-                "software_version": row.get("software_version", ""),
-                "nr_prec": int(row["nr_prec"]) if row.get("nr_prec", "").isdigit() else 0,
-                "size_mb": round(size_bytes / 1e6, 1),
-                "slug": slug,
-                "param_path": param_str,
-                "targets": targets,
-                "targets_str": ", ".join(targets) if targets else "—",
-                "input_file_path": rel,
-            })
+            size_bytes = (
+                int(row["input_file_size_bytes"])
+                if row.get("input_file_size_bytes", "").isdigit()
+                else 0
+            )
+            rows.append(
+                {
+                    "software_name": row["software_name"],
+                    "software_version": row.get("software_version", ""),
+                    "nr_prec": int(row["nr_prec"]) if row.get("nr_prec", "").isdigit() else 0,
+                    "size_mb": round(size_bytes / 1e6, 1),
+                    "slug": slug,
+                    "param_path": param_str,
+                    "targets": targets,
+                    "targets_str": ", ".join(targets) if targets else "—",
+                    "input_file_path": rel,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -464,9 +488,7 @@ def _build_mudata(
         if level not in resolvable:
             continue
         log(f"converting level: {level}")
-        adata = _convert_level(
-            df.copy(), slug, level, version, params_path=params_path, log=log
-        )
+        adata = _convert_level(df.copy(), slug, level, version, params_path=params_path, log=log)
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
     md = MuData(mods, axis=0)
@@ -513,10 +535,7 @@ def _mudata_search_parameters_summary(obj) -> dict[str, Any] | None:
     params = _search_parameters_summary(obj)
     if params is not None:
         return params
-    summaries = {
-        name: _search_parameters_summary(modality)
-        for name, modality in obj.mod.items()
-    }
+    summaries = {name: _search_parameters_summary(modality) for name, modality in obj.mod.items()}
     present = {name: summary for name, summary in summaries.items() if summary is not None}
     if not present:
         return None
@@ -555,9 +574,7 @@ def summarize(obj) -> dict:
             "uns_keys": list(obj.uns.keys()),
             "search_parameters": search_parameters,
             "modalities": {
-                name: _summarize_anndata(
-                    ad, include_search_parameters=search_parameters is None
-                )
+                name: _summarize_anndata(ad, include_search_parameters=search_parameters is None)
                 for name, ad in obj.mod.items()
             },
         }

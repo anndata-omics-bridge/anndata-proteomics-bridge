@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -33,7 +34,13 @@ def load_packaged_rule(
     software: str, quantification_level: str, version: str | None = None
 ) -> ParseRule:
     """Load the packaged rule for (software, level) at ``version`` (None → version-agnostic root)."""
-    return load_rule(find_rule(software, quantification_level, version))
+    rule = load_rule(find_rule(software, quantification_level, version))
+    if version is not None and not _software_version_matches(rule, version):
+        raise ValueError(
+            f"rule software_version={rule.software_version!r} does not match "
+            f"parsed version={version!r}"
+        )
+    return rule
 
 
 def resolve_rule_for_version(
@@ -46,4 +53,17 @@ def resolve_rule_for_version(
     is not available for that version (e.g. fragment on DIA-NN 2.x).
     """
     path = resolve_rule_path(software, quantification_level, version)
-    return load_rule(path) if path is not None else None
+    if path is None:
+        return None
+    rule = load_rule(path)
+    if version is not None and not _software_version_matches(rule, version):
+        return None
+    return rule
+
+
+def _software_version_matches(rule: ParseRule, version: str) -> bool:
+    """True when ``rule.software_version`` regex matches a parsed parameter version."""
+    try:
+        return re.search(rule.software_version, version) is not None
+    except re.error as exc:
+        raise ValueError(f"invalid software_version regex {rule.software_version!r}") from exc

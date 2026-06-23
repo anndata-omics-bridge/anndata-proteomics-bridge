@@ -14,6 +14,7 @@ def _build_long_rule() -> ParseRule:
             "schema_version": "0.1",
             "file_version": "1",
             "software_name": "Synthetic",
+            "software_version": "1.0",
             "input_shape": "long",
             "quantification_level": "ion",
             "axis": {
@@ -27,8 +28,8 @@ def _build_long_rule() -> ParseRule:
                 "var": {"select": {"Sequence": "Sequence", "Charge": "Charge"}},
             },
             "layers": [
-                {"name": "Intensity", "source_column": "Intensity"},
-                {"name": "Score", "source_column": "Score"},
+                {"name": "Intensity", "source": "Intensity"},
+                {"name": "Score", "source": "Score"},
             ],
         }
     )
@@ -50,6 +51,7 @@ def test_convert_long_happy_path() -> None:
             "schema_version": "0.1",
             "file_version": "1",
             "software_name": "Synthetic",
+            "software_version": "1.0",
             "input_shape": "long",
             "quantification_level": "ion",
             "axis": {
@@ -63,8 +65,8 @@ def test_convert_long_happy_path() -> None:
                 "var": {"select": {"Sequence": "Sequence", "Charge": "Charge"}},
             },
             "layers": [
-                {"name": "Intensity", "source_column": "Intensity"},
-                {"name": "Score", "source_column": "Score"},
+                {"name": "Intensity", "source": "Intensity"},
+                {"name": "Score", "source": "Score"},
             ],
         }
     )

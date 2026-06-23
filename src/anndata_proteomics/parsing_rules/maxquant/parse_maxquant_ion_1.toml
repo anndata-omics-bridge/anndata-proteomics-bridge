@@ -1,7 +1,7 @@
 schema_version = "0.1"
 file_version = "1"
 software_name = "MaxQuant"
-software_version = "2.6.7.0"
+software_version = "^2\\.6\\.7\\.0$"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -44,23 +44,23 @@ how = "proforma_ion"
 
 [[layers]]
 name = "Intensity"
-source_column = "Intensity"
+source = "Intensity"
 
 [[layers]]
 name = "MS_MS_Count"
-source_column = "MS/MS count"
+source = "MS/MS count"
 
 [[layers]]
 name = "Retention_Time"
-source_column = "Retention time"
+source = "Retention time"
 
 [[layers]]
 name = "Score"
-source_column = "Score"
+source = "Score"
 
 [[layers]]
 name = "PEP"
-source_column = "PEP"
+source = "PEP"
 
 # Handles both the new short-token format (e.g. _(ac)PEPTM(ox)_) and the
 # legacy nested format (e.g. _(Acetyl (Protein N-term))PEPTM(Oxidation (M))_)

@@ -170,78 +170,26 @@
     }
     .display.math{display: block; text-align: center; margin: 0.5rem auto;}
   </style>
-  <script type="module">
-    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({ startOnLoad: false, theme: "default" });
-    addEventListener("DOMContentLoaded", () => {
-      // pandoc emits ```mermaid as <pre class="mermaid"><code>…</code></pre>;
-      // flatten to plain text so mermaid can render it.
-      document.querySelectorAll("pre.mermaid").forEach((p) => { p.textContent = p.textContent; });
-      mermaid.run({ querySelector: "pre.mermaid" });
-    });
-  </script>
-  <style>
-    body { max-width: 62em; }
-    pre.mermaid { background: #fff; border: 1px solid #e3e6ea; border-radius: 8px;
-      padding: 1rem; text-align: center; overflow-x: auto; }
-    table { display: block; overflow-x: auto; }
-    @media (prefers-color-scheme: dark) {
-      pre.mermaid { background: #1d2026; border-color: #2a2e36; }
-    }
-  </style>
 </head>
 <body>
-<nav style="margin:0 0 1.6rem;padding-bottom:.6rem;border-bottom:1px solid #e3e6ea;font-size:.95rem;">
-  <strong>Parsing docs:</strong>
-  <a href="parsing_architecture.html">Architecture</a> ·
-  <a href="parameter_parsers.html">Vendor parsers</a>
-</nav>
-<nav id="TOC" role="doc-toc">
-<ul>
-<li><a href="#parsing-architecture-uml"
-id="toc-parsing-architecture-uml">Parsing architecture (UML)</a>
-<ul>
-<li><a href="#module-dependency-overview"
-id="toc-module-dependency-overview">Module dependency overview</a></li>
-<li><a href="#params--vendor-parameter-file-parsing"
-id="toc-params--vendor-parameter-file-parsing"><code>params/</code> —
-vendor parameter-file parsing</a></li>
-<li><a href="#modifications--modification-string-parsing--models"
-id="toc-modifications--modification-string-parsing--models"><code>modifications/</code>
-— modification-string parsing &amp; models</a></li>
-<li><a href="#rules--the-toml-parsing-rule-schema"
-id="toc-rules--the-toml-parsing-rule-schema"><code>rules/</code> — the
-TOML parsing-rule schema</a></li>
-<li><a href="#readers--tabular-file-reading"
-id="toc-readers--tabular-file-reading"><code>readers/</code> — tabular
-file reading</a></li>
-<li><a href="#converters--dataframe--parserule--anndata"
-id="toc-converters--dataframe--parserule--anndata"><code>converters/</code>
-— DataFrame + ParseRule → AnnData</a></li>
-<li><a href="#end-to-end-flows-cross-module"
-id="toc-end-to-end-flows-cross-module">End-to-end flows
-(cross-module)</a></li>
-</ul></li>
-</ul>
-</nav>
 <h1 id="parsing-architecture-uml">Parsing architecture (UML)</h1>
 <p>The parsing subsystem lives under
 <code>src/anndata_proteomics/</code> and is split into five subpackages.
 This doc gives a top-level dependency map, then <strong>one diagram + a
 short description per module</strong>, then the two end-to-end flows
 that tie them together.</p>
-<p>Two distinct "parsing" concerns to keep separate:</p>
+<p>Two distinct “parsing” concerns to keep separate:</p>
 <ul>
 <li><strong><code>params/</code></strong> parses a vendor
 <strong>search-parameter file</strong> (whole-experiment settings) into
 a typed <code>Parameters</code> record.</li>
 <li><strong><code>modifications/</code></strong> parses <strong>peptide
-modification strings</strong> (a single sequence's mods) and models
+modification strings</strong> (a single sequence’s mods) and models
 searched modifications for SDRF.</li>
 </ul>
 <hr />
 <h2 id="module-dependency-overview">Module dependency overview</h2>
-<p>Arrows mean <strong>"imports / depends on"</strong>.
+<p>Arrows mean <strong>“imports / depends on”</strong>.
 <code>rules</code> and <code>readers</code> are leaves;
 <code>converters</code> is the orchestrator that pulls everything
 together.</p>
@@ -257,6 +205,10 @@ together.</p>
     classDef leaf fill:#eef2ff,stroke:#9aa7d8;
     class rules,readers leaf;</code></pre>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr>
 <th>Module</th>
@@ -289,7 +241,7 @@ loader/registry.</td>
 </tbody>
 </table>
 <hr />
-<h2 id="params--vendor-parameter-file-parsing"><code>params/</code> —
+<h2 id="params-vendor-parameter-file-parsing"><code>params/</code> —
 vendor parameter-file parsing</h2>
 <p><strong>Parses a vendor search-parameter file into one typed
 <code>Parameters</code> record</strong> — the model for parameter-file
@@ -308,7 +260,7 @@ I/O (<code>read_text</code> / <code>read_lines</code>).</li>
 <li><strong>AnnData I/O:</strong> <code>anndata_io.py</code>
 reads/writes a <code>Parameters</code> into <code>adata.uns</code>.</li>
 </ul>
-<p>See <a href="parameter_parsers.html">parameter_parsers.md</a> for the
+<p>See <a href="parameter_parsers.md">parameter_parsers.md</a> for the
 per-vendor breakdown (input formats, parse techniques, and the three
 modification-mapping families).</p>
 <pre class="mermaid"><code>classDiagram
@@ -353,7 +305,7 @@ modification-mapping families).</p>
     note for Parameters &quot;~20 more scalar fields: charges, m/z, peptide lengths, FDR, quant method. Built by each vendor extract_params(); validators canonicalize enzyme, FDR, tolerance, mods.&quot;</code></pre>
 <hr />
 <h2
-id="modifications--modification-string-parsing--models"><code>modifications/</code>
+id="modifications-modification-string-parsing-models"><code>modifications/</code>
 — modification-string parsing &amp; models</h2>
 <p><strong>Normalizes peptide modifications</strong> — modification
 identities/strings, distinct from <code>params/</code> (whole-file
@@ -361,7 +313,7 @@ settings). Two jobs:</p>
 <ul>
 <li><strong>ProForma normalization:</strong>
 <code>apply_rules.apply_rule(seq, rule)</code> turns a vendor
-modified-sequence string (e.g. <code>PEPM(ox)TIDE</code>,
+modified-sequence string (e.g. <code>PEPM(ox)TIDE</code>,
 <code>_[ac]PEP…</code>) into a canonical ProForma string plus localized
 <code>ModificationOccurrence</code>s. <code>pipeline.py</code> builds
 the <code>ModificationRule</code> from a rules
@@ -426,7 +378,7 @@ ProForma string.</li>
     ModificationRule *-- &quot;*&quot; MapEntry : entries
     note for ModificationRule &quot;apply_rule(seq, rule) returns a ModifiedSequence. pipeline._to_runtime_rule builds the rule from a rules Modifications section, filling each MapEntry from the UnimodEntry registry.&quot;</code></pre>
 <hr />
-<h2 id="rules--the-toml-parsing-rule-schema"><code>rules/</code> — the
+<h2 id="rules-the-toml-parsing-rule-schema"><code>rules/</code> — the
 TOML parsing-rule schema</h2>
 <p><strong>Defines and loads the TOML parsing-rule schema</strong> that
 tells the converters how to turn a vendor table into AnnData. A leaf
@@ -445,6 +397,7 @@ with cross-field validation.</li>
     class ParseRule {
         +str schema_version
         +str software_name
+        +str software_version
         +str input_shape
         +str quantification_level
     }
@@ -465,15 +418,39 @@ with cross-field validation.</li>
     }
     class Layer {
         +str name
+        +str source
         +str encoding_mode
-        +str|None source_column
-        +str|None column_pattern
+        +dict categories
     }
     class Modifications {
+        &lt;&lt;union by parser&gt;&gt;
         +str source_column
         +str parser
-        +str unknown_policy
         +str output_column
+    }
+    class TokenRegexModifications {
+        +str token_pattern
+        +str token_position
+        +bool case_sensitive
+        +str unknown_policy
+    }
+    class AlreadyProformaModifications
+    class SeparateModColumnModifications {
+        +str sequence_column
+        +str token_position
+        +bool case_sensitive
+        +str unknown_policy
+    }
+    class Fragments {
+        &lt;&lt;union by label_strategy&gt;&gt;
+        +str label_strategy
+        +list~str~ value_columns
+        +str delimiter
+        +str label_output
+    }
+    class PositionalFragments
+    class ColumnLabeledFragments {
+        +str label_column
     }
     class ModificationMapEntry {
         +str token
@@ -484,13 +461,20 @@ with cross-field validation.</li>
     ParseRule *-- Columns
     ParseRule *-- &quot;1..*&quot; Layer
     ParseRule *-- &quot;0..1&quot; Modifications
+    ParseRule *-- &quot;0..1&quot; Fragments
     ParseRule *-- &quot;0..1&quot; SampleNameCleanup
     Axis *-- Duplicates
     Columns *-- &quot;2&quot; ColumnGroup : obs / var
     ColumnGroup *-- &quot;*&quot; ColumnCompute : compute
-    Modifications *-- &quot;*&quot; ModificationMapEntry : map</code></pre>
+    Modifications &lt;|-- TokenRegexModifications
+    Modifications &lt;|-- AlreadyProformaModifications
+    Modifications &lt;|-- SeparateModColumnModifications
+    Fragments &lt;|-- PositionalFragments
+    Fragments &lt;|-- ColumnLabeledFragments
+    TokenRegexModifications *-- &quot;*&quot; ModificationMapEntry : map
+    SeparateModColumnModifications *-- &quot;*&quot; ModificationMapEntry : map</code></pre>
 <hr />
-<h2 id="readers--tabular-file-reading"><code>readers/</code> — tabular
+<h2 id="readers-tabular-file-reading"><code>readers/</code> — tabular
 file reading</h2>
 <p><strong>Reads a quant table into a pandas
 <code>DataFrame</code>.</strong> A leaf subpackage.</p>
@@ -509,8 +493,7 @@ extension.</li>
     tsv --&gt; df
     pq --&gt; df</code></pre>
 <hr />
-<h2
-id="converters--dataframe--parserule--anndata"><code>converters/</code>
+<h2 id="converters-dataframe-parserule-anndata"><code>converters/</code>
 — DataFrame + ParseRule → AnnData</h2>
 <p><strong>Turns a <code>DataFrame</code> + a <code>ParseRule</code>
 into an <code>AnnData</code>.</strong></p>
@@ -548,7 +531,7 @@ headers.</li>
 <hr />
 <h2 id="end-to-end-flows-cross-module">End-to-end flows
 (cross-module)</h2>
-<h3 id="a-vendor-parameter-file--parameters">A. Vendor parameter file →
+<h3 id="a.-vendor-parameter-file-parameters">A. Vendor parameter file →
 <code>Parameters</code></h3>
 <pre class="mermaid"><code>sequenceDiagram
     autonumber
@@ -567,8 +550,8 @@ headers.</li>
     Model-&gt;&gt;Model: run validators (enzyme map, FDR, tolerance, mods, ranges)
     Model--&gt;&gt;V: Parameters
     V--&gt;&gt;Caller: Parameters</code></pre>
-<h3 id="b-rule-toml--table--anndata--optional-params">B. Rule TOML +
-table → <code>AnnData</code> (+ optional params)</h3>
+<h3 id="b.-rule-toml-table-anndata-optional-params">B. Rule TOML + table
+→ <code>AnnData</code> (+ optional params)</h3>
 <pre class="mermaid"><code>sequenceDiagram
     autonumber
     participant Caller

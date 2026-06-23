@@ -35,15 +35,18 @@ def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
     together (index-aligned; mismatched list lengths raise ``ValueError``). The per-fragment
     ``fragments.label_output`` is either:
 
-    - **labelled** (``fragments.label_column`` set, e.g. ``Fragment.Info``): the token before
-      ``/`` of the label column (``b4-unknown^1`` from ``b4-unknown^1/327.166``); or
-    - **positional** (``label_column`` is ``None``, e.g. older DIA-NN with no ``Fragment.Info``):
+    - **column-labelled** (``label_strategy="column"``, e.g. ``Fragment.Info``): the token before
+      ``/`` of ``fragments.label_column`` (``b4-unknown^1`` from ``b4-unknown^1/327.166``); or
+    - **positional** (``label_strategy="positional"``, e.g. older DIA-NN with no ``Fragment.Info``):
       ``frag_0``, ``frag_1``, … by index within the precursor.
 
     Value columns are coerced to numeric; all other columns replicate per fragment.
     """
     value_columns = list(fragments.value_columns)
-    packed_columns = ([fragments.label_column] if fragments.label_column else []) + value_columns
+    if fragments.label_strategy == "column":
+        packed_columns = [fragments.label_column, *value_columns]
+    else:
+        packed_columns = list(value_columns)
     missing = [c for c in packed_columns if c not in df.columns]
     if missing:
         raise KeyError(
@@ -55,7 +58,7 @@ def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
     for column in packed_columns:
         work[column] = work[column].map(lambda v: _split_packed(v, fragments.delimiter))
 
-    if fragments.label_column is None:
+    if fragments.label_strategy == "positional":
         # Positional: a parallel index list per precursor, exploded alongside the values.
         work["_frag_pos"] = work[value_columns[0]].map(lambda tokens: list(range(len(tokens))))
         work = work.explode([*value_columns, "_frag_pos"], ignore_index=True)

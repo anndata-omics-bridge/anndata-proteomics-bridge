@@ -20,6 +20,7 @@ BASE = """
 schema_version = "0.1"
 file_version = "1"
 software_name = "T"
+software_version = "1.0"
 input_shape = "long"
 quantification_level = "ion"
 
@@ -45,7 +46,7 @@ how = "proforma_sequence"
 
 [[layers]]
 name = "Intensity"
-source_column = "Intensity"
+source = "Intensity"
 """
 
 
@@ -71,8 +72,20 @@ def test_resolve_unknown_accession_raises():
 def test_registry_rejects_duplicate_accession(tmp_path, monkeypatch):
     fake = UnimodRegistry(
         entries=[
-            {"accession": "UNIMOD:35", "name": "A", "target": "M", "position": "Anywhere", "mass_delta": 1.0},
-            {"accession": "UNIMOD:35", "name": "B", "target": "M", "position": "Anywhere", "mass_delta": 2.0},
+            {
+                "accession": "UNIMOD:35",
+                "name": "A",
+                "target": "M",
+                "position": "Anywhere",
+                "mass_delta": 1.0,
+            },
+            {
+                "accession": "UNIMOD:35",
+                "name": "B",
+                "target": "M",
+                "position": "Anywhere",
+                "mass_delta": 2.0,
+            },
         ]
     )
     # Validation passes (list of entries is fine), but load_registry would reject duplicates
@@ -98,7 +111,9 @@ def test_registry_entry_extras_forbidden():
 
 
 def test_runtime_rule_resolves_canonical_fields_from_accession():
-    rule_toml = BASE + """
+    rule_toml = (
+        BASE
+        + """
 [modifications]
 source_column = "Modified Sequence"
 parser = "token_regex"
@@ -109,6 +124,7 @@ token_position = "after_residue"
 token = "15.9949"
 accession = "UNIMOD:35"
 """
+    )
     rule = ParseRule(**tomllib.loads(rule_toml))
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
@@ -118,7 +134,9 @@ accession = "UNIMOD:35"
 
 
 def test_runtime_rule_errors_on_unknown_accession():
-    rule_toml = BASE + """
+    rule_toml = (
+        BASE
+        + """
 [modifications]
 source_column = "Modified Sequence"
 parser = "token_regex"
@@ -128,6 +146,7 @@ token_pattern = "\\\\[([^\\\\]]+)\\\\]"
 token = "nope"
 accession = "UNIMOD:99999"
 """
+    )
     rule = ParseRule(**tomllib.loads(rule_toml))
     with pytest.raises(KeyError, match="UNIMOD:99999"):
         _to_runtime_rule(rule.modifications)

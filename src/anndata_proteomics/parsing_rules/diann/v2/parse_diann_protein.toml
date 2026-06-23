@@ -1,6 +1,7 @@
 schema_version = "0.1"
 file_version = "2"
 software_name = "DIA-NN"
+software_version = "^2\\..*"
 input_shape = "long"
 quantification_level = "protein"
 
@@ -26,8 +27,8 @@ Genes = "Genes"
 
 [[layers]]
 name = "PG_MaxLFQ"
-source_column = "PG.MaxLFQ"
+source = "PG.MaxLFQ"
 
 [[layers]]
 name = "Genes_MaxLFQ"
-source_column = "Genes.MaxLFQ"
+source = "Genes.MaxLFQ"
