@@ -80,10 +80,7 @@ def convert(
     if rule_toml is None:
         rule = recognize(list(df.columns))
         if rule is None:
-            logger.error(
-                f"could not auto-recognize a rule for {data}; "
-                f"pass --rule-toml PATH"
-            )
+            logger.error(f"could not auto-recognize a rule for {data}; pass --rule-toml PATH")
             return 1
     else:
         rule = load_rule(rule_toml)
@@ -91,6 +88,36 @@ def convert(
     out = output or data.with_suffix(".h5ad")
     adata.write_h5ad(out)
     logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
+    return 0
+
+
+@app.command
+def annotate(
+    data: Path,
+    annotation_toml: Path,
+    output: Path | None = None,
+) -> int:
+    """Join sample annotations from an annotation TOML onto obs and write the result.
+
+    Reads an .h5ad/.h5mu, joins the TOML's ``obs.samples`` table onto obs by run/file
+    name (matching obs_names by default; see the TOML's ``match_on``), and writes the
+    enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input
+    (non-destructive); point it back at the input to update in place.
+    """
+    from anndata_proteomics.annotation.apply import annotate_obs
+    from anndata_proteomics.annotation.loader import load_annotation
+    from anndata_proteomics.scripts._ui_support import load_converted_result
+
+    obj = load_converted_result(data)
+    spec = load_annotation(annotation_toml)
+    annotate_obs(obj, spec)
+
+    out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
+    if hasattr(obj, "mod"):
+        obj.write_h5mu(out)
+    else:
+        obj.write_h5ad(out)
+    logger.info(f"wrote {out}")
     return 0
 
 

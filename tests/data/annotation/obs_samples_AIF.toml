@@ -1,0 +1,37 @@
+# Sample annotations for the ProteoBench quant_lfq_ion_DIA_AIF module, translated from that
+# module's module_settings.toml [[samples]] table into the APB annotation schema.
+schema_version = "0.1"
+
+[obs]
+match_on = "index"      # join the raw_file field against obs_names (the run/file identifier)
+key_field = "raw_file"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01"
+sample_name = "Condition_A_Sample_Alpha_01"
+condition = "A"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_02"
+sample_name = "Condition_A_Sample_Alpha_02"
+condition = "A"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_03"
+sample_name = "Condition_A_Sample_Alpha_03"
+condition = "A"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01"
+sample_name = "Condition_B_Sample_Alpha_01"
+condition = "B"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_02"
+sample_name = "Condition_B_Sample_Alpha_02"
+condition = "B"
+
+[[obs.samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_03"
+sample_name = "Condition_B_Sample_Alpha_03"
+condition = "B"
