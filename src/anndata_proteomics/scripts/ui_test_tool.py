@@ -18,7 +18,6 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
-    import json
     import sys
     from datetime import datetime
 
@@ -28,7 +27,7 @@ def _():
     from anndata_proteomics.scripts import _ui_support as ui
     from anndata_proteomics.scripts import jobrunner as runner
 
-    return datetime, json, mo, panels, runner, sys, ui
+    return datetime, mo, panels, runner, sys, ui
 
 
 @app.cell
@@ -114,8 +113,16 @@ def _(catalog, size_slider, software_dd, target_dd, ui):
 @app.cell
 def _(filtered, mo):
     # Include targets_str + param_path so the selected row carries everything the Convert needs.
-    _cols = ["software_name", "software_version", "nr_prec", "size_mb", "slug",
-             "targets_str", "param_path", "input_file_path"]
+    _cols = [
+        "software_name",
+        "software_version",
+        "nr_prec",
+        "size_mb",
+        "slug",
+        "targets_str",
+        "param_path",
+        "input_file_path",
+    ]
     left_table = mo.ui.table(
         filtered[_cols] if len(filtered) else filtered,
         selection="single",
@@ -160,12 +167,19 @@ def _(
         _stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
         _outdir = ui.CONVERTED_DIR / f"{_stamp}_{_row['slug']}_{_target}"
         _cmd = [
-            sys.executable, "-m", "anndata_proteomics.scripts.convert_one",
-            "--input", _row["input_file_path"],
-            "--slug", _row["slug"],
-            "--target", _target,
-            "--params", _row["param_path"],
-            "--outdir", str(_outdir),
+            sys.executable,
+            "-m",
+            "anndata_proteomics.scripts.convert_one",
+            "--input",
+            _row["input_file_path"],
+            "--slug",
+            _row["slug"],
+            "--target",
+            _target,
+            "--params",
+            _row["param_path"],
+            "--outdir",
+            str(_outdir),
         ]
         job = runner.start_job(_cmd, _outdir, log_file=_outdir / "console.log", run_key=_run_key)
         set_job(job)
@@ -215,7 +229,7 @@ def _(converted_runs, mo, ui):
 
 
 @app.cell
-def _(converted_runs, converted_table, json, mo, ui):
+def _(converted_runs, converted_table, mo, panels, ui):
     _sel = converted_table.value
     _selected = _sel.iloc[0] if (_sel is not None and len(_sel)) else None
     _row = None
@@ -232,11 +246,8 @@ def _(converted_runs, converted_table, json, mo, ui):
             _summary = ui.summarize(_obj)
             result_viewer = mo.vstack(
                 [
-                    mo.md(
-                        f"**{_row['result_type']} result**  \n"
-                        f"`{_row['result_path']}`"
-                    ),
-                    mo.md(f"```json\n{json.dumps(_summary, indent=2, default=str)}\n```"),
+                    mo.md(f"**{_row['result_type']} result**  \n`{_row['result_path']}`"),
+                    panels.build_summary_panel(_summary),
                 ]
             )
         except Exception as exc:  # noqa: BLE001 - render load failures in the GUI.
