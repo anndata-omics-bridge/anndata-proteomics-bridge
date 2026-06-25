@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 import numpy as np
@@ -12,6 +13,7 @@ from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.rules.schema import Layer, ParseRule
 
+logger = logging.getLogger(__name__)
 _SAMPLE_PLACEHOLDER = "<sample>"
 
 
@@ -94,6 +96,11 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
+        if not rule.layer_required(layer) and not _matching_columns(headers, layer.source):
+            logger.info(
+                "skipping optional layer %r: no headers matched %r", layer.name, layer.source
+            )
+            continue
         layers[layer.name] = _gather_layer_matrix(df, layer, sample_order, var_df.index)
 
     obs_names = _apply_sample_cleanup(sample_order, rule)

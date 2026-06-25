@@ -85,6 +85,7 @@ source = "EG.PEP"
 [[layers]]
 name = "EG_Qvalue"
 source = "EG.Qvalue"
+required = true
 
 [[layers]]
 name = "EG_IsUserPeak"
@@ -101,6 +102,7 @@ source = "FG.CScore"
 [[layers]]
 name = "FG_Qvalue"
 source = "FG.Qvalue"
+required = true
 
 [[layers]]
 name = "EG_ApexRT"

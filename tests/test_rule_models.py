@@ -191,6 +191,13 @@ def test_x_layer_must_exist():
         _parse(bad)
 
 
+def test_layer_required_defaults_to_x_layer_only():
+    rule = _parse(LONG_EXAMPLE)
+    by_name = {layer.name: layer for layer in rule.layers}
+    assert rule.layer_required(by_name["Precursor_Normalised"]) is True  # x_layer always required
+    assert rule.layer_required(by_name["Q_Value"]) is False  # optional by default
+
+
 def test_invalid_duplicates_mode():
     bad = LONG_EXAMPLE.replace('mode = "error"', 'mode = "wrong"')
     with pytest.raises(ValidationError):

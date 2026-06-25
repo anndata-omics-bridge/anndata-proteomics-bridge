@@ -24,9 +24,9 @@ def _synthesized_columns(rule: ParseRule) -> set[str]:
 
 
 def _expected_long_columns(rule: ParseRule) -> set[str]:
-    """Vendor columns a long rule expects to see in the input."""
+    """Vendor columns a long rule requires in the input (optional layers excluded)."""
     out = set(rule.columns.obs.select.values()) | set(rule.columns.var.select.values())
-    out.update(layer.source for layer in rule.layers)
+    out.update(layer.source for layer in rule.layers if rule.layer_required(layer))
     out.discard(_SAMPLE_PLACEHOLDER)
     out -= _synthesized_columns(rule)
     return out
@@ -53,6 +53,8 @@ def matches(headers: Iterable[str], rule: ParseRule) -> bool:
         return _expected_long_columns(rule).issubset(headers_set)
     # wide
     for layer in rule.layers:
+        if not rule.layer_required(layer):
+            continue
         pattern = re.compile(layer.source)
         if not any(pattern.match(h) for h in headers_set):
             return False

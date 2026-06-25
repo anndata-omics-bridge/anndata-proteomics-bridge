@@ -72,12 +72,19 @@ class Layer(_Strict):
     - ``input_shape="long"``: ``source`` is an exact vendor column name.
     - ``input_shape="wide"``: ``source`` is a regex over matrix headers and must
       contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).
+
+    Layers are optional by default: captured when the ``source`` is present in the
+    input and silently skipped when absent, so a rule can declare the full superset
+    of a vendor's volatile columns without rejecting exports that omit some. Set
+    ``required = true`` to gate a layer (a file missing it is rejected). The
+    ``axis.x_layer`` is always required regardless of this flag.
     """
 
     name: str
     source: str
     encoding_mode: EncodingMode = "numeric"
     categories: dict[str, int] = Field(default_factory=dict)
+    required: bool = False
 
     @model_validator(mode="after")
     def _factor_requires_categories(self) -> Layer:
@@ -226,6 +233,10 @@ class ParseRule(_Strict):
                     f"'(?P<{_SAMPLE_GROUP}>...)' named group; got {layer.source!r}."
                 )
         return self
+
+    def layer_required(self, layer: Layer) -> bool:
+        """A layer must be present iff it is the ``x_layer`` or explicitly ``required``."""
+        return layer.required or layer.name == self.axis.x_layer
 
     @model_validator(mode="after")
     def _x_layer_exists(self) -> ParseRule:

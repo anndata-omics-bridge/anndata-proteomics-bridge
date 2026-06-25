@@ -193,7 +193,7 @@
     },
     "Layer": {
       "additionalProperties": false,
-      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).",
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.",
       "properties": {
         "name": {
           "title": "Name",
@@ -218,6 +218,11 @@
           },
           "title": "Categories",
           "type": "object"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
         }
       },
       "required": [

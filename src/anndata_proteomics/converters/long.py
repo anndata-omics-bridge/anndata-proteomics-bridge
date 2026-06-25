@@ -9,6 +9,8 @@ O(nnz + obs·var) and matches pivot_table's semantics exactly.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
@@ -16,6 +18,8 @@ from anndata_proteomics.converters._axis import build_axis_frame, build_index
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.rules.schema import ParseRule
+
+logger = logging.getLogger(__name__)
 
 
 def _aggfunc_for(rule: ParseRule) -> str:
@@ -81,6 +85,18 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
+        if layer.source not in df.columns:
+            if not rule.layer_required(layer):
+                logger.info(
+                    "skipping optional layer %r: source column %r absent from input",
+                    layer.name,
+                    layer.source,
+                )
+                continue
+            raise KeyError(
+                f"required layer {layer.name!r} source column {layer.source!r} "
+                f"is missing from the input"
+            )
         values = df[layer.source]
         if layer.encoding_mode == "factor":
             values = encode_factor(values, layer.categories)
