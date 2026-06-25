@@ -411,7 +411,10 @@ def load_converted_result(result_path: Path | str) -> Any:
     if path.suffix == ".h5mu":
         import mudata
 
-        return mudata.read_h5mu(path)
+        # Adopt the mudata 0.4 default now (no auto-pull of per-modality obs/var into the
+        # global frames); modalities keep their own obs/var. Silences the 0.3 FutureWarning.
+        with mudata.set_options(pull_on_update=False):
+            return mudata.read_h5mu(path)
     raise ValueError(f"unsupported converted result type: {path}")
 
 
@@ -471,6 +474,7 @@ def _build_mudata(
 
     Levels the version doesn't provide (e.g. fragment on DIA-NN 2.x) are skipped, not failed.
     """
+    import mudata
     from mudata import MuData
 
     resolvable = set(convertible_levels(slug, version, df.columns))
@@ -491,7 +495,10 @@ def _build_mudata(
         adata = _convert_level(df.copy(), slug, level, version, params_path=params_path, log=log)
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
-    md = MuData(mods, axis=0)
+    # Adopt the mudata 0.4 default now (no auto-pull of per-modality obs/var into the global
+    # frames); each modality keeps its own obs/var. Silences the 0.3 FutureWarning.
+    with mudata.set_options(pull_on_update=False):
+        md = MuData(mods, axis=0)
     if params_path is not None:
         params = parse_params(params_path, software=slug)
         write_search_parameters(md, params, source_path=str(params_path))
