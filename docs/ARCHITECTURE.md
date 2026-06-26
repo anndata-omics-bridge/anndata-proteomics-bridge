@@ -160,7 +160,7 @@ Each is a thin wrapper around `pd.read_csv` / `pd.read_parquet` so the test suit
 
 **Tests** — [tests/test_readers_dispatch.py](../tests/test_readers_dispatch.py); end-to-end coverage in [tests/test_readers_integration.py](../tests/test_readers_integration.py), which parametrizes over every packaged TOML and reads the matching test_data_download file (skips if the gitignored cache is absent).
 
-## `scripts/cli.py` — `anndata-proteomics` umbrella CLI
+## `scripts/cli.py` — `apb` umbrella CLI
 
 **Purpose** — single user-facing CLI with subcommands. Built on `cyclopts`.
 
@@ -172,6 +172,8 @@ Each is a thin wrapper around `pd.read_csv` / `pd.read_parquet` so the test suit
 | `list` | List packaged rules: software, level, file_version, path. | 0 |
 | `export-schema` | Regenerate `parse_rule.schema.json`. | 0 |
 | `convert <data> [--rule-toml] [--output]` | Convert a vendor file to AnnData (.h5ad). Auto-recognizes the rule from headers if `--rule-toml` is omitted; defaults output to `<data>.h5ad`. | 0 on success, 1 on recognition / conversion failure |
+| `annotate <data> <annotation-toml> [--output]` | Join the TOML's `obs.samples` table onto `obs` of an `.h5ad`/`.h5mu`; defaults output to `<stem>.annotated<suffix>`. | 0 on success |
+| `fasta <data> <fasta ...> [--match-on] [--no-is-uniprot] [--decoy-pattern] [--cleavage] [--min-length] [--max-length] [--output]` | Attach FASTA-derived annotation (`fasta.id`, `fasta.header`, `protein_length`, `nr_peptides`, `gene_name`) to the **protein layer's** `varm['fasta']`. Joins on the leading accession of each protein group; defaults output to `<stem>.annotated<suffix>`. | 0 on success, 1 if no FASTA given |
 
 **Implementation principle** — `validate` shares the PASS/FAIL formatter (`rules.validate._print_and_exit_code`) with the older `validate-rules` console script, so output is identical.
 
@@ -183,7 +185,7 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 
 | Command | Module | Purpose |
 |---|---|---|
-| `anndata-proteomics` | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert` subcommands |
+| `apb` | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert / annotate / fasta` subcommands |
 
 ### `converters/recognize.py`
 
@@ -236,6 +238,29 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 - `convert(df, rule) -> ad.AnnData` — dispatches to `convert_long` or `convert_wide` based on `rule.input_shape`, then assembles.
 
 **Tests** — [tests/test_converters_assemble.py](../tests/test_converters_assemble.py); end-to-end coverage for all 6 packaged vendors in [tests/test_converters_e2e.py](../tests/test_converters_e2e.py).
+
+### `fasta/`
+
+**Purpose** — read FASTA file(s) into a prolfquapp-style protein-annotation DataFrame.
+
+**Public API**
+
+- `fasta.parser.iter_fasta(source) -> Iterator[FastaRecord]` — minimal reader over a path, stream, or raw FASTA text. No biology semantics.
+- `fasta.annotation.fasta_to_dataframe(sources, *, decoy_pattern, is_uniprot, cleavage, min_length, max_length, include_sequence) -> DataFrame` — faithful port of prolfquapp's `get_annot_from_fasta()`: emits `fasta.id`, `fasta.header`, `proteinname`, `gene_name` (only when >1 record carries `GN=`), `protein_length`, `nr_peptides` (prolfquapp calls this `nr_tryptic_peptides`; renamed here since the count is enzyme-aware), optional `sequence`. Decoys matching `decoy_pattern` are dropped first.
+- `count_peptides(seq, *, cleavage, min_length, max_length)` and `resolve_cleavage(spec) -> (CleavageRule, name)` — the peptide count is **enzyme-aware**, not hardcoded trypsin. `_CLEAVAGE_RULES` is keyed by the canonical enzyme names emitted by `params.model.Parameters.enzyme` (`Trypsin`, `Trypsin/P`, `Lys-C`, `Arg-C`, `Glu-C`, `Chymotrypsin`, `Asp-N`) so the two cannot drift; unknown / `None` falls back to trypsin. The column is named `nr_peptides` (enzyme-agnostic — the theoretical in-silico digest count, not trypsin-specific and not observed).
+
+**Tests** — [tests/test_fasta_annotation.py](../tests/test_fasta_annotation.py)
+
+### `annotation/`
+
+**Purpose** — join an external table onto an AnnData/MuData axis.
+
+**Public API**
+
+- `annotation.apply.annotate_obs(obj, spec)` + `annotation.loader.load_annotation(path)` — **obs** axis: join an annotation TOML's `obs.samples` records onto the run/file axis (shared across MuData modalities). Provenance under `uns['anndata_proteomics']['obs_annotations_json']`.
+- `annotation.var_fasta.annotate_var_from_fasta(obj, fasta_sources, *, match_on, is_uniprot, decoy_pattern, cleavage, min_length, max_length, include_sequence, columns)` — **var** axis, **protein layer only** (a protein-level AnnData, or the `protein` modality of a MuData; anything else raises). Builds the FASTA frame and attaches it as a var-aligned DataFrame at `varm['fasta']` (the namespace makes the FASTA origin — hence theoretical, not observed — self-evident, so columns keep bare prolfquapp names). The join is keyed on the leading accession of each protein group (prolfquapp's cleanID: first `;`-token, UniProt-middle-extracted) matched against `proteinname`. The cleavage rule / peptide-length bounds default to the enzyme stored under `uns['anndata_proteomics']['search_parameters']` (`params.anndata_io.read_search_parameters`), so the count reflects the actual digestion; `cleavage`/`min_length`/`max_length` override it. Mirrors `annotate_obs` semantics (raise on zero match or if `varm['fasta']` exists, warn on partial match). Provenance — including the enzyme used — under `uns['anndata_proteomics']['var_annotations_json']`.
+
+**Tests** — [tests/test_annotation.py](../tests/test_annotation.py), [tests/test_annotation_var_fasta.py](../tests/test_annotation_var_fasta.py)
 
 ## R-side report package: `~/projects/anndata_bridge/annProtSum/`
 

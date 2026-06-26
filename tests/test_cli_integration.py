@@ -1,6 +1,6 @@
 """End-to-end CLI tests via subprocess.
 
-These run the installed `anndata-proteomics` binary, exercising the cyclopts
+These run the installed `apb` binary, exercising the cyclopts
 dispatch layer. Complements tests/test_cli.py which calls subcommand functions
 directly (unit-level).
 
@@ -19,7 +19,7 @@ from anndata_proteomics.test_data import find_test_data
 # The console script lives next to the python that's running pytest.
 # Resolving via sys.executable means tests work regardless of whether the venv
 # is activated in the parent shell.
-_CLI = str(Path(sys.executable).parent / "anndata-proteomics")
+_CLI = str(Path(sys.executable).parent / "apb")
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:

@@ -25,24 +25,27 @@ uv pip install -e '.[dev]'
 
 ## Quick start
 
-The umbrella CLI is `anndata-proteomics`:
+The umbrella CLI is `apb` (the package is still `anndata-proteomics`):
 
 ```bash
 # Validate one or more TOML parsing rules. With no path: walks all packaged rules.
-anndata-proteomics validate                                  # all packaged
-anndata-proteomics validate path/to/your_rule.toml           # one (or several)
+apb validate                                  # all packaged
+apb validate path/to/your_rule.toml           # one (or several)
 
 # List packaged rules.
-anndata-proteomics list
+apb list
 
 # Convert a vendor file to AnnData (.h5ad). The rule is auto-recognized from the
 # data's column headers; pass --rule-toml to override.
-anndata-proteomics convert path/to/report.tsv                # writes report.h5ad next to it
-anndata-proteomics convert report.tsv --output out.h5ad
-anndata-proteomics convert report.tsv --rule-toml my_rule.toml --output out.h5ad
+apb convert path/to/report.tsv                # writes report.h5ad next to it
+apb convert report.tsv --output out.h5ad
+apb convert report.tsv --rule-toml my_rule.toml --output out.h5ad
+
+# Join sample annotations onto obs.
+apb annotate out.h5ad annotation.toml
 
 # Regenerate the JSON Schema after editing the pydantic models.
-anndata-proteomics export-schema
+apb export-schema
 ```
 
 Exit codes: `0` all pass, `1` validation / conversion failed.

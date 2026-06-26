@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-anndata-proteomics = "anndata_proteomics.scripts.cli:main"
+apb = "anndata_proteomics.scripts.cli:main"
 
 [project.optional-dependencies]
 dev = [

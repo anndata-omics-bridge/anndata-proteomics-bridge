@@ -7,7 +7,7 @@ from io import StringIO
 import pytest
 
 from anndata_proteomics.fasta.annotation import (
-    count_tryptic_peptides,
+    count_peptides,
     extract_gene_name,
     fasta_to_dataframe,
 )
@@ -51,10 +51,7 @@ def test_parser_reads_wrapped_sequences():
 
 
 def test_extract_gene_name_uniprot():
-    header = (
-        "Protein YgdT OS=Escherichia coli (strain K12) "
-        "OX=83333 GN=ygdT PE=4 SV=1"
-    )
+    header = "Protein YgdT OS=Escherichia coli (strain K12) OX=83333 GN=ygdT PE=4 SV=1"
     assert extract_gene_name(header) == "ygdT"
 
 
@@ -62,19 +59,19 @@ def test_extract_gene_name_non_uniprot_returns_empty():
     assert extract_gene_name("zz_FGCZCont0000_P61626_LYSC_HUMAN blastp") == ""
 
 
-def test_count_tryptic_peptides_matches_prolfquapp_docstring():
+def test_count_peptides_matches_prolfquapp_docstring():
     # prolfquapp docstring example. Cleavage rule: K|R not followed by P
     # and not at end-of-string. Sequence "MKGLPRAKSHGSTGWGKRKRNKPK":
     #   cleavage ends (1-based): [2, 6, 8, 17, 18, 19, 20]
     #   segments → lengths: 2, 4, 2, 9, 1, 1, 1, 4
     # With min_length=5 only the length-9 peptide qualifies → 1.
-    assert count_tryptic_peptides("MKGLPRAKSHGSTGWGKRKRNKPK", min_length=5) == 1
+    assert count_peptides("MKGLPRAKSHGSTGWGKRKRNKPK", min_length=5) == 1
 
 
-def test_count_tryptic_peptides_excludes_kr_before_proline():
+def test_count_peptides_excludes_kr_before_proline():
     # KP and RP must not cleave. KR followed by anything else does cleave.
     # "AAAKPAAR" → K not cleaved (followed by P), R at the end (not cleaved).
-    assert count_tryptic_peptides("AAAKPAAR", min_length=1, max_length=100) == 1
+    assert count_peptides("AAAKPAAR", min_length=1, max_length=100) == 1
 
 
 def test_fasta_to_dataframe_columns_and_decoy_filter():
@@ -87,7 +84,7 @@ def test_fasta_to_dataframe_columns_and_decoy_filter():
         "proteinname",
         "gene_name",
         "protein_length",
-        "nr_tryptic_peptides",
+        "nr_peptides",
     }
     assert set(df.columns) == expected_cols
 
@@ -112,10 +109,7 @@ def test_fasta_to_dataframe_non_uniprot_proteinname_equals_id():
 def test_fasta_to_dataframe_gene_name_gated_on_match_count():
     # A 1-record UniProt-style fasta produces only one GN match → column omitted
     # to match prolfquapp's "added only if >1 matches" gating.
-    text = (
-        ">sp|P0A6F5|GROEL_ECOLI Chaperone OS=Ecoli GN=groEL PE=1 SV=1\n"
-        "AAAA\n"
-    )
+    text = ">sp|P0A6F5|GROEL_ECOLI Chaperone OS=Ecoli GN=groEL PE=1 SV=1\nAAAA\n"
     df = fasta_to_dataframe(text)
     assert "gene_name" not in df.columns
 
@@ -143,7 +137,7 @@ def test_fasta_to_dataframe_min_length_excludes_short_peptides():
     text = ">sp|P|X test GN=x PE=1 SV=1\nMKGLPRAKSHGSTGWGKRKRNKPK\n"
     df_lo = fasta_to_dataframe(text, min_length=2)
     df_hi = fasta_to_dataframe(text, min_length=5)
-    assert df_lo["nr_tryptic_peptides"].iat[0] > df_hi["nr_tryptic_peptides"].iat[0]
+    assert df_lo["nr_peptides"].iat[0] > df_hi["nr_peptides"].iat[0]
 
 
 @pytest.mark.parametrize(

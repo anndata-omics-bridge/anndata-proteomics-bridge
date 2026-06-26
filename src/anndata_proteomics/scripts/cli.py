@@ -1,10 +1,12 @@
-"""anndata-proteomics CLI dispatcher.
+"""apb CLI dispatcher.
 
 Subcommands:
-- validate [path ...]     validate one or more TOML rules; defaults to all packaged
-- list                    list packaged rules
-- export-schema           regenerate parse_rule.schema.json
-- convert <data> <toml>   STUB until readers/ + converters/ land
+- validate [path ...]        validate one or more TOML rules; defaults to all packaged
+- list                       list packaged rules
+- export-schema              regenerate parse_rule.schema.json
+- convert <data> [toml]      convert a vendor file to AnnData (.h5ad)
+- annotate <data> <toml>     join sample annotations onto obs
+- fasta <data> <fasta...>    annotate the protein layer's var from FASTA file(s)
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from anndata_proteomics.rules.validate import (
     validate_file,
 )
 
-app = App(name="anndata-proteomics", help="anndata_proteomics CLI")
+app = App(name="apb", help="anndata_proteomics (APB) CLI")
 
 
 @app.command
@@ -111,6 +113,59 @@ def annotate(
     obj = load_converted_result(data)
     spec = load_annotation(annotation_toml)
     annotate_obs(obj, spec)
+
+    out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
+    if hasattr(obj, "mod"):
+        obj.write_h5mu(out)
+    else:
+        obj.write_h5ad(out)
+    logger.info(f"wrote {out}")
+    return 0
+
+
+@app.command
+def fasta(
+    data: Path,
+    *fasta_files: Path,
+    output: Path | None = None,
+    match_on: str = "Protein_Group",
+    is_uniprot: bool = True,
+    decoy_pattern: str = "^REV_|^rev_",
+    cleavage: str | None = None,
+    min_length: int | None = None,
+    max_length: int | None = None,
+) -> int:
+    """Annotate the protein layer from FASTA file(s) and write the result.
+
+    Reads an .h5ad/.h5mu, builds the prolfquapp-style protein annotation
+    (fasta.id, fasta.header, protein_length, nr_peptides, gene_name) from
+    one or more FASTA files, and attaches it as a var-aligned DataFrame at
+    ``varm['fasta']`` of the protein layer only (a protein-level AnnData, or the
+    ``protein`` modality of a MuData). The join matches the leading accession of
+    each protein group against the FASTA proteinname. ``nr_peptides`` uses
+    the digestion enzyme stored in the object's search parameters;
+    --cleavage / --min-length / --max-length override it (needed for objects
+    converted without a parameters file). --output defaults to
+    ``<stem>.annotated<suffix>`` (non-destructive).
+    """
+    from anndata_proteomics.annotation.var_fasta import annotate_var_from_fasta
+    from anndata_proteomics.scripts._ui_support import load_converted_result
+
+    if not fasta_files:
+        logger.error("no FASTA file given; usage: apb fasta DATA FASTA [FASTA ...]")
+        return 1
+
+    obj = load_converted_result(data)
+    annotate_var_from_fasta(
+        obj,
+        list(fasta_files),
+        match_on=match_on,
+        is_uniprot=is_uniprot,
+        decoy_pattern=decoy_pattern,
+        cleavage=cleavage,
+        min_length=min_length,
+        max_length=max_length,
+    )
 
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
     if hasattr(obj, "mod"):

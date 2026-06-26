@@ -52,6 +52,6 @@ ProteoBench test data:
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install -e .
+uv pip install -e ".[dev]"   # the [dev] extra brings in pytest + ruff
 pytest tests/
 ```

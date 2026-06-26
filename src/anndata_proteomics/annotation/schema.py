@@ -1,8 +1,10 @@
 """Pydantic models for the annotation TOML schema.
 
-An annotation TOML attaches an external table to an AnnData/MuData axis. This first
-iteration covers the ``obs`` (sample) axis only; the top-level shape leaves room for a
-sibling ``[var]`` block (feature annotations) without changing the obs format.
+An annotation TOML attaches an external table to an AnnData/MuData axis. This schema
+covers the ``obs`` (sample) axis. Feature annotation for the protein layer is not
+TOML-driven: it is built from FASTA file(s) and stored under ``varm['fasta']`` by
+:func:`anndata_proteomics.annotation.var_fasta.annotate_var_from_fasta` (the ``apb fasta``
+CLI), so there is no ``[var]`` block here.
 
 Example::
 
