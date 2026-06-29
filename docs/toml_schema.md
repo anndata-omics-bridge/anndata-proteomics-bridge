@@ -253,20 +253,17 @@ These entries are valid for both long and wide rules.
 
 ### Modifications
 
-Every TOML carries a `[modifications]` block. It turns embedded
+Most rules carry a `[modifications]` block. It turns embedded
 modification tokens in a vendor sequence column (e.g.
 `Modified.Sequence`) into a ProForma-normalised output column.
+Protein-level rules, which have no peptide sequence, omit it.
 
-- `[modifications]` — its shape is a discriminated union selected by `parser`, which is
-  **required** (no default). Each variant carries only the fields it needs; setting a
-  field that does not belong to the chosen parser is rejected (`extra` keys are forbidden).
-  - `parser` — `"token_regex"`, `"already_proforma"`, or `"separate_mod_column"`.
-  - `source_column` — vendor column containing the (modified) sequence. Common to all
-    parsers.
+- `[modifications]` — `parser` is **required** and must be `"token_regex"` (the only
+  parser with a runtime implementation). Setting a field that does not belong to the
+  parser is rejected (`extra` keys are forbidden).
+  - `source_column` — vendor column containing the (modified) sequence.
   - `output_column` — name of the derived column that `how = "proforma_sequence"`
-    exposes. Default `"proforma_sequence"`. Common to all parsers.
-
-  `parser = "token_regex"` additionally has:
+    exposes. Default `"proforma_sequence"`.
   - `token_pattern` — regex whose first capture group is the vendor token (**required**).
     Example: `"\\(([^()]*)\\)"`.
   - `token_position` — where the token sits relative to its residue. One of
@@ -275,14 +272,7 @@ modification tokens in a vendor sequence column (e.g.
   - `case_sensitive` — bool, default `false`.
   - `unknown_policy` — what to do with tokens not in `map`. One of `"preserve"`
     (default), `"drop"`, `"error"`.
-  - `map` — at least one `[[modifications.map]]` entry (**required**).
-
-  `parser = "already_proforma"` adds no further fields: `source_column` already holds a
-  ProForma string, copied through to `output_column`. It has no `token_pattern` or `map`.
-
-  `parser = "separate_mod_column"` additionally requires `sequence_column` (the column
-  carrying the stripped/unmodified sequence) and accepts the same `token_position`,
-  `case_sensitive`, `unknown_policy`, and an optional `map` as `token_regex`.
+  - `map` — at j least one `[[modifications.map]]` entry (**required**).
 - `[[modifications.map]]` — one entry per vendor token.
   - `token` — the vendor's token string as it appears between the
     `token_pattern` delimiters.
@@ -373,16 +363,47 @@ parsing_rules/diann/
   folder whose version prefixes the file's version and contains `parse_<sw>_<level>.toml`, else the
   vendor-root file (so version-agnostic levels and single-version vendors keep working). `None` when
   a version doesn't provide a level (e.g. fragment on 2.x).
-- **The version comes from the param file**, which is **mandatory**: the GUI / `convert_one` parse
-  the co-located param (`params.registry.parse_params`) for `software_version`, resolve the rule by
-  version, require the TOML `software_version` regex to match that parsed value, then **validate**
-  the data columns against it (`converters.recognize.matches`). A version or column mismatch is an
-  **error** (verify the version / param file) — no silent fallback.
+- **The version comes from the param file**, which is **mandatory**: `apb convert` (via
+  `converters.pipeline`) parses the co-located param (`params.registry.parse_params`) for
+  `software_version`, resolves the rule by version, requires the TOML `software_version` regex to
+  match that parsed value, then **validates** the data columns against it
+  (`converters.recognize.matches`). A version or column mismatch is an **error** (verify the
+  version / param file) — no silent fallback.
 
 **Adding a variant** for a new DIA-NN format: drop `parse_diann_<level>.toml` into the right
 `vN`/`vN_M` folder (create it if needed) with that version's columns. No code change — the resolver
 finds it. `load_packaged_rule(software, level, version)` / `find_rule(...)` address a specific
 version; pass `None` for version-agnostic root rules.
+
+### Vendor base files (shared blocks)
+
+When a vendor has several level rules, the blocks they share (`[modifications]`, `[axis].obs_keys`,
+`[axis.duplicates]`, common scalars like `software_name` / `input_shape`) would otherwise be copied
+into every leaf. To avoid that, a vendor may ship a **base file** named `<vendor>/<vendor>.toml`
+(e.g. `diann/diann.toml`, `spectronaut/spectronaut.toml`). `rules.loader.load_rule` merges the base
+into each leaf at load time, so every downstream consumer (`recognize`, `validate`, `convert`) sees
+the merged rule. This is **convention only — there is no `extends`/include key**; TOML has none, and
+the relationship is inferred from the directory layout:
+
+```text
+parsing_rules/diann/
+  diann.toml                    # BASE: blocks common to every diann level (merged into each leaf)
+  parse_diann_ion.toml          # leaf: only ion-specific content
+  v1/ parse_diann_fragment.toml # leaf in a version folder: still merges ../../diann.toml
+```
+
+- The base file is **not a rule**: it does not match the `parse_*.toml` glob, so it is never listed
+  by `apb list`, validated, or converted on its own (it is an incomplete `ParseRule`).
+- A leaf is merged onto `<vendor>/<vendor>.toml` found by walking up from the leaf (skipping a
+  `v*` version folder). If no base file exists, the leaf loads standalone — single-format vendors
+  (MaxQuant, FragPipe, PEAKS, WOMBAT) keep one self-contained file.
+- **Merge semantics** (leaf overrides base): scalars — leaf wins; tables (`[columns.*.select]`,
+  `[axis]`) — deep-merged, leaf keys win; arrays of tables (`[[layers]]`, `[[columns.var.compute]]`,
+  `[[modifications.map]]`) — base entries first, then the leaf's appended (preserving compute
+  dependency order); sub-objects (`[modifications]`, `[fragments]`) — inherited whole unless the leaf
+  redefines them. There is no remove directive, so only hoist a block into the base when it is shared
+  by *every* leaf of the vendor (or harmless to inherit) — e.g. `columns.obs.select` is left per-leaf
+  for Spectronaut because the levels select different obs columns.
 
 ## Long example (DIA-NN)
 

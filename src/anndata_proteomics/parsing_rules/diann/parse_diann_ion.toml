@@ -1,20 +1,12 @@
-schema_version = "0.1"
+# DIA-NN ion level. Inherits shared blocks (software_name, input_shape, axis.obs_keys,
+# axis.duplicates, columns.obs.select, [modifications]) from ../diann.toml.
 file_version = "1"
-software_name = "DIA-NN"
 software_version = "^[12]\\..*"
-input_shape = "long"
 quantification_level = "ion"
 
 [axis]
-obs_keys = ["Run"]
 var_keys = ["ProForma_ion"]
 x_layer = "Precursor_Normalised"
-
-[axis.duplicates]
-mode = "error"
-
-[columns.obs.select]
-Run = "Run"
 
 [columns.var.select]
 Modified_Sequence = "Modified.Sequence"
@@ -60,24 +52,3 @@ source = "Q.Value"
 [[layers]]
 name = "RT"
 source = "RT"
-
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\(([^()]*)\\)"
-token_position = "after_residue"
-case_sensitive = false
-unknown_policy = "preserve"
-output_column = "proforma_sequence"
-
-[[modifications.map]]
-token = "UniMod:1"
-accession = "UNIMOD:1"
-
-[[modifications.map]]
-token = "UniMod:4"
-accession = "UNIMOD:4"
-
-[[modifications.map]]
-token = "UniMod:35"
-accession = "UNIMOD:35"

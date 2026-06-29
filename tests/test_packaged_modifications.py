@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from anndata_proteomics.modifications.pipeline import apply_modifications
+from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.schema import ParseRule
 
-PARSING_RULES = (
-    Path(__file__).parent.parent / "src" / "anndata_proteomics" / "parsing_rules"
-)
+PARSING_RULES = Path(__file__).parent.parent / "src" / "anndata_proteomics" / "parsing_rules"
 
 
 def _load(rel: str) -> ParseRule:
-    return ParseRule(**tomllib.loads((PARSING_RULES / rel).read_text()))
+    # load_rule merges the vendor base, so the [modifications] block (now in diann.toml /
+    # spectronaut.toml) is present on the merged ion/fragment rule.
+    return load_rule(PARSING_RULES / rel)
 
 
 @pytest.mark.parametrize(
@@ -62,6 +62,17 @@ def _load(rel: str) -> ParseRule:
             "spectronaut/parse_spectronaut_ion_1.toml",
             "_[Acetyl (Protein N-term)]PEPTM[Oxidation (M)]IDE_",
             "[UNIMOD:1]-PEPTM[UNIMOD:35]IDE",
+        ),
+        # Fragment leaves inherit [modifications] from their vendor base (Finding 1).
+        (
+            "diann/v1/parse_diann_fragment.toml",
+            "PEPM(UniMod:35)TIDE",
+            "PEPM[UNIMOD:35]TIDE",
+        ),
+        (
+            "spectronaut/parse_spectronaut_fragment.toml",
+            "PEPM[Oxidation (M)]TIDE",
+            "PEPM[UNIMOD:35]TIDE",
         ),
         (
             "wombat/parse_wombat_peptidoform_1.toml",

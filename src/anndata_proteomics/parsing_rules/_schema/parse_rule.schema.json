@@ -1,31 +1,5 @@
 {
   "$defs": {
-    "AlreadyProformaModifications": {
-      "additionalProperties": false,
-      "description": "``source_column`` already holds a ProForma string; copy it through.",
-      "properties": {
-        "parser": {
-          "const": "already_proforma",
-          "title": "Parser",
-          "type": "string"
-        },
-        "source_column": {
-          "title": "Source Column",
-          "type": "string"
-        },
-        "output_column": {
-          "default": "proforma_sequence",
-          "title": "Output Column",
-          "type": "string"
-        }
-      },
-      "required": [
-        "parser",
-        "source_column"
-      ],
-      "title": "AlreadyProformaModifications",
-      "type": "object"
-    },
     "Axis": {
       "additionalProperties": false,
       "properties": {
@@ -299,75 +273,9 @@
       "title": "SampleNameCleanup",
       "type": "object"
     },
-    "SeparateModColumnModifications": {
-      "additionalProperties": false,
-      "description": "Modification tokens live in a column separate from the stripped sequence.",
-      "properties": {
-        "parser": {
-          "const": "separate_mod_column",
-          "title": "Parser",
-          "type": "string"
-        },
-        "source_column": {
-          "title": "Source Column",
-          "type": "string"
-        },
-        "sequence_column": {
-          "title": "Sequence Column",
-          "type": "string"
-        },
-        "token_position": {
-          "default": "after_residue",
-          "enum": [
-            "before_residue",
-            "after_residue",
-            "n_term",
-            "c_term",
-            "embedded",
-            "unknown"
-          ],
-          "title": "Token Position",
-          "type": "string"
-        },
-        "case_sensitive": {
-          "default": false,
-          "title": "Case Sensitive",
-          "type": "boolean"
-        },
-        "unknown_policy": {
-          "default": "preserve",
-          "enum": [
-            "preserve",
-            "drop",
-            "error"
-          ],
-          "title": "Unknown Policy",
-          "type": "string"
-        },
-        "output_column": {
-          "default": "proforma_sequence",
-          "title": "Output Column",
-          "type": "string"
-        },
-        "map": {
-          "items": {
-            "$ref": "#/$defs/ModificationMapEntry"
-          },
-          "title": "Map",
-          "type": "array"
-        }
-      },
-      "required": [
-        "parser",
-        "source_column",
-        "sequence_column"
-      ],
-      "title": "SeparateModColumnModifications",
-      "type": "object"
-    },
     "TokenRegexModifications": {
       "additionalProperties": false,
-      "description": "Extract vendor modification tokens with a regex and map them to Unimod.\n\nThe only parser with a runtime implementation today (see\n``modifications.pipeline``).",
+      "description": "Extract vendor modification tokens with a regex and map them to Unimod.\n\n``token_regex`` is the only modification parser with a runtime\nimplementation (see ``modifications.pipeline``), so it is the only\naccepted ``parser`` value.",
       "properties": {
         "parser": {
           "const": "token_regex",
@@ -499,32 +407,13 @@
     "modifications": {
       "anyOf": [
         {
-          "discriminator": {
-            "mapping": {
-              "already_proforma": "#/$defs/AlreadyProformaModifications",
-              "separate_mod_column": "#/$defs/SeparateModColumnModifications",
-              "token_regex": "#/$defs/TokenRegexModifications"
-            },
-            "propertyName": "parser"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/TokenRegexModifications"
-            },
-            {
-              "$ref": "#/$defs/AlreadyProformaModifications"
-            },
-            {
-              "$ref": "#/$defs/SeparateModColumnModifications"
-            }
-          ]
+          "$ref": "#/$defs/TokenRegexModifications"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "title": "Modifications"
+      "default": null
     },
     "fragments": {
       "anyOf": [

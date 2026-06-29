@@ -1,24 +1,21 @@
-schema_version = "0.1"
+# DIA-NN protein level (v1 = DIA-NN 1.x). Inherits shared blocks (software_name, input_shape,
+# axis.obs_keys, columns.obs.select, [modifications]) from ../../diann.toml; overrides
+# axis.duplicates to keep_first.
+#
+# DIA-NN's report.tsv carries protein-group quantities (PG.*) pre-aggregated and repeated
+# identically on every precursor row of a (Run, Protein.Group). So this rule reads the SAME
+# report.tsv as the ion rule, projects onto the protein-group axis, and keeps the first repeated
+# value (NOT sum, which would overcount).
 file_version = "1"
-software_name = "DIA-NN"
 software_version = "^1\\..*"
-input_shape = "long"
 quantification_level = "protein"
 
-# DIA-NN's report.tsv carries protein-group quantities (PG.*) pre-aggregated and
-# repeated identically on every precursor row of a (Run, Protein.Group). So this rule
-# reads the SAME report.tsv as the ion rule, projects onto the protein-group axis, and
-# keeps the first repeated value (NOT sum, which would overcount).
 [axis]
-obs_keys = ["Run"]
 var_keys = ["Protein_Group"]
 x_layer = "PG_MaxLFQ"
 
 [axis.duplicates]
 mode = "keep_first"
-
-[columns.obs.select]
-Run = "Run"
 
 [columns.var.select]
 Protein_Group = "Protein.Group"

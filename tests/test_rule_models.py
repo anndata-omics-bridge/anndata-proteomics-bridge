@@ -64,8 +64,12 @@ source = "Ms1.Area"
 
 [modifications]
 source_column = "Modified.Sequence"
-parser = "already_proforma"
-output_column = "proforma_sequence"
+parser = "token_regex"
+token_pattern = "\\\\(([^()]*)\\\\)"
+
+[[modifications.map]]
+token = "UniMod:35"
+accession = "UNIMOD:35"
 """
 
 
@@ -299,8 +303,10 @@ def test_apb_derived_columns_cannot_be_selected():
 def test_proforma_sequence_compute_requires_modifications():
     bad = LONG_EXAMPLE.replace(
         '\n[modifications]\nsource_column = "Modified.Sequence"\n'
-        'parser = "already_proforma"\noutput_column = "proforma_sequence"\n',
+        'parser = "token_regex"\ntoken_pattern = "\\\\(([^()]*)\\\\)"\n\n'
+        '[[modifications.map]]\ntoken = "UniMod:35"\naccession = "UNIMOD:35"\n',
         "\n",
     )
+    assert "[modifications]" not in bad  # guard: the replace above actually fired
     with pytest.raises(ValidationError, match="modifications"):
         _parse(bad)

@@ -52,16 +52,36 @@ source = "Intensity"
 
 def test_registry_loads_with_required_accessions():
     registry = load_registry()
-    for accession in ("UNIMOD:1", "UNIMOD:4", "UNIMOD:35", "UNIMOD:27", "UNIMOD:28"):
+    for accession in (
+        "UNIMOD:1",
+        "UNIMOD:4",
+        "UNIMOD:21",
+        "UNIMOD:35",
+        "UNIMOD:27",
+        "UNIMOD:28",
+        "UNIMOD:121",
+    ):
         assert accession in registry, f"{accession} should be in the registry"
 
 
 def test_resolve_returns_canonical_record():
     entry = resolve("UNIMOD:35")
     assert entry.name == "Oxidation"
-    assert entry.target == "M"
+    assert entry.target == ["M"]
     assert entry.position == "Anywhere"
     assert entry.mass_delta == pytest.approx(15.9949)
+
+
+def test_resolve_phospho_targets_s_t_y():
+    entry = resolve("UNIMOD:21")
+    assert entry.name == "Phospho"
+    assert entry.target == ["S", "T", "Y"]
+
+
+def test_resolve_glygly_on_lysine():
+    entry = resolve("UNIMOD:121")
+    assert entry.target == ["K"]
+    assert entry.mass_delta == pytest.approx(114.04293)
 
 
 def test_resolve_unknown_accession_raises():
@@ -70,28 +90,34 @@ def test_resolve_unknown_accession_raises():
 
 
 def test_registry_rejects_duplicate_accession(tmp_path, monkeypatch):
-    fake = UnimodRegistry(
-        entries=[
-            {
-                "accession": "UNIMOD:35",
-                "name": "A",
-                "target": "M",
-                "position": "Anywhere",
-                "mass_delta": 1.0,
-            },
-            {
-                "accession": "UNIMOD:35",
-                "name": "B",
-                "target": "M",
-                "position": "Anywhere",
-                "mass_delta": 2.0,
-            },
-        ]
+    # Point load_registry at a temp TOML with a repeated accession and confirm it raises.
+    from anndata_proteomics.modifications import unimod_registry as reg
+
+    dup = tmp_path / "dup_registry.toml"
+    dup.write_text(
+        """
+[[entries]]
+accession = "UNIMOD:35"
+name = "A"
+target = ["M"]
+position = "Anywhere"
+mass_delta = 1.0
+
+[[entries]]
+accession = "UNIMOD:35"
+name = "B"
+target = ["M"]
+position = "Anywhere"
+mass_delta = 2.0
+"""
     )
-    # Validation passes (list of entries is fine), but load_registry would reject duplicates
-    # We test the duplicate-rejection logic via a synthetic dict to avoid mutating the bundled TOML.
-    accessions = [e.accession for e in fake.entries]
-    assert len(accessions) != len(set(accessions))
+    monkeypatch.setattr(reg, "_REGISTRY_TOML", dup)
+    reg.load_registry.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="duplicate accession"):
+            reg.load_registry()
+    finally:
+        reg.load_registry.cache_clear()  # drop the temp result so other tests see the real registry
 
 
 def test_registry_entry_extras_forbidden():
@@ -101,7 +127,7 @@ def test_registry_entry_extras_forbidden():
                 {
                     "accession": "UNIMOD:35",
                     "name": "Oxidation",
-                    "target": "M",
+                    "target": ["M"],
                     "position": "Anywhere",
                     "mass_delta": 15.9949,
                     "vendor_specific": "nope",
@@ -128,7 +154,7 @@ accession = "UNIMOD:35"
     rule = ParseRule(**tomllib.loads(rule_toml))
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
-    assert runtime.entries[0].target == "M"
+    assert runtime.entries[0].target == ["M"]
     assert runtime.entries[0].position == "Anywhere"
     assert runtime.entries[0].mass_delta == pytest.approx(15.9949)
 

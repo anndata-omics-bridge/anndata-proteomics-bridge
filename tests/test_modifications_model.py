@@ -60,14 +60,20 @@ def test_sdrf_missing_nt_raises():
 
 
 def test_proforma_residue_with_accession():
-    occ = [ModificationOccurrence(name="Oxidation", accession="UNIMOD:35", sequence_index=0, position="Anywhere")]
+    occ = [
+        ModificationOccurrence(
+            name="Oxidation", accession="UNIMOD:35", sequence_index=0, position="Anywhere"
+        )
+    ]
     assert render_proforma("MPEPTIDE", occ) == "M[UNIMOD:35]PEPTIDE"
 
 
 def test_proforma_nterm_and_internal():
     occ = [
         ModificationOccurrence(name="Acetyl", accession="UNIMOD:1", position="N-term"),
-        ModificationOccurrence(name="Oxidation", accession="UNIMOD:35", sequence_index=3, position="Anywhere"),
+        ModificationOccurrence(
+            name="Oxidation", accession="UNIMOD:35", sequence_index=3, position="Anywhere"
+        ),
     ]
     assert render_proforma("PEPMIDE", occ) == "[UNIMOD:1]-PEPM[UNIMOD:35]IDE"
 
@@ -85,9 +91,30 @@ def test_proforma_unknown_token_preserved():
 # --- apply_rule -------------------------------------------------------------
 
 
-_OX_M = MapEntry(token="15.9949", name="Oxidation", accession="UNIMOD:35", target="M", position="Anywhere", mass_delta=15.9949)
-_CAM_C = MapEntry(token="57.0215", name="Carbamidomethyl", accession="UNIMOD:4", target="C", position="Anywhere", mass_delta=57.02146)
-_AC_NT = MapEntry(token="42.0106", name="Acetyl", accession="UNIMOD:1", target="N-term", position="N-term", mass_delta=42.0106)
+_OX_M = MapEntry(
+    token="15.9949",
+    name="Oxidation",
+    accession="UNIMOD:35",
+    target=["M"],
+    position="Anywhere",
+    mass_delta=15.9949,
+)
+_CAM_C = MapEntry(
+    token="57.0215",
+    name="Carbamidomethyl",
+    accession="UNIMOD:4",
+    target=["C"],
+    position="Anywhere",
+    mass_delta=57.02146,
+)
+_AC_NT = MapEntry(
+    token="42.0106",
+    name="Acetyl",
+    accession="UNIMOD:1",
+    target=["N-term"],
+    position="N-term",
+    mass_delta=42.0106,
+)
 
 
 def _rule(**overrides) -> ModificationRule:
@@ -121,8 +148,20 @@ def test_apply_rule_maxquant_style_parens():
     rule = _rule(
         token_pattern=r"\(([^)]+)\)",
         entries=(
-            MapEntry(token="ox", name="Oxidation", accession="UNIMOD:35", target="M", position="Anywhere"),
-            MapEntry(token="ac", name="Acetyl", accession="UNIMOD:1", target="N-term", position="N-term"),
+            MapEntry(
+                token="ox",
+                name="Oxidation",
+                accession="UNIMOD:35",
+                target=["M"],
+                position="Anywhere",
+            ),
+            MapEntry(
+                token="ac",
+                name="Acetyl",
+                accession="UNIMOD:1",
+                target=["N-term"],
+                position="N-term",
+            ),
         ),
     )
     result = apply_rule("_(ac)PEPTM(ox)IDE_", rule)
@@ -154,8 +193,22 @@ def test_apply_rule_mass_disambiguated_by_target():
     # Two entries share mass; target residue picks the right one.
     rule = _rule(
         entries=(
-            MapEntry(token="79.9663", name="Phospho-S", accession="UNIMOD:21", target="S", position="Anywhere", mass_delta=79.9663),
-            MapEntry(token="79.9663", name="Sulfo-Y", accession="UNIMOD:40", target="Y", position="Anywhere", mass_delta=79.9663),
+            MapEntry(
+                token="79.9663",
+                name="Phospho-S",
+                accession="UNIMOD:21",
+                target=["S"],
+                position="Anywhere",
+                mass_delta=79.9663,
+            ),
+            MapEntry(
+                token="79.9663",
+                name="Sulfo-Y",
+                accession="UNIMOD:40",
+                target=["Y"],
+                position="Anywhere",
+                mass_delta=79.9663,
+            ),
         ),
     )
     on_s = apply_rule("PEPS[79.9663]TIDE", rule)
@@ -164,12 +217,59 @@ def test_apply_rule_mass_disambiguated_by_target():
     assert on_y.occurrences[0].accession == "UNIMOD:40"
 
 
+def test_apply_rule_phospho_multi_target_s_t_y():
+    # One registry entry (UNIMOD:21) targeting S/T/Y resolves on any of the three.
+    rule = _rule(
+        entries=(
+            MapEntry(
+                token="79.96633",
+                name="Phospho",
+                accession="UNIMOD:21",
+                target=["S", "T", "Y"],
+                position="Anywhere",
+                mass_delta=79.96633,
+            ),
+        ),
+    )
+    for residue in ("S", "T", "Y"):
+        result = apply_rule(f"PEP{residue}[79.96633]IDE", rule)
+        assert result.occurrences[0].accession == "UNIMOD:21"
+        assert result.occurrences[0].target_residue == residue
+    # A residue NOT in the target list does not resolve (token preserved as unknown).
+    on_k = apply_rule("PEPK[79.96633]IDE", rule)
+    assert "79.96633" in on_k.unknown_tokens
+
+
+def test_apply_rule_glygly_on_lysine():
+    rule = _rule(
+        entries=(
+            MapEntry(
+                token="114.04293",
+                name="GG",
+                accession="UNIMOD:121",
+                target=["K"],
+                position="Anywhere",
+                mass_delta=114.04293,
+            ),
+        ),
+    )
+    result = apply_rule("PEPK[114.04293]IDE", rule)
+    assert result.occurrences[0].accession == "UNIMOD:121"
+    assert result.occurrences[0].target_residue == "K"
+
+
 def test_apply_rule_alphapept_before_residue_lowercase():
     rule = _rule(
         token_pattern=r"([a-z]+)",
         token_position="before_residue",
         entries=(
-            MapEntry(token="ox", name="Oxidation", accession="UNIMOD:35", target="M", position="Anywhere"),
+            MapEntry(
+                token="ox",
+                name="Oxidation",
+                accession="UNIMOD:35",
+                target=["M"],
+                position="Anywhere",
+            ),
         ),
     )
     result = apply_rule("PEPToxMIDE", rule)

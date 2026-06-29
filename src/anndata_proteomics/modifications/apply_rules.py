@@ -31,7 +31,7 @@ class MapEntry:
     token: str
     name: str
     accession: str | None = None
-    target: str | None = None
+    target: list[str] | None = None  # allowed residues/termini (from the Unimod registry)
     position: str | None = "Anywhere"
     mass_delta: float | None = None
 
@@ -52,23 +52,36 @@ class ModificationRule:
 
 _MASS_TOLERANCE = 1e-3
 _TERM_MARKERS = {"_", "-", "."}
-_TERMINUS_TARGETS = {"N-term", "C-term", "Protein N-term", "Protein C-term", "Peptide N-term", "Peptide C-term"}
+_TERMINUS_TARGETS = {
+    "N-term",
+    "C-term",
+    "Protein N-term",
+    "Protein C-term",
+    "Peptide N-term",
+    "Peptide C-term",
+}
 
 
-def _target_matches(entry_target: str | None, adjacent_residue: str | None, position: str) -> bool:
-    """Decide whether an entry's ``target`` is compatible with a token's context.
+def _target_matches(
+    entry_target: list[str] | None, adjacent_residue: str | None, position: str
+) -> bool:
+    """Decide whether an entry's allowed ``target``s are compatible with a token's context.
 
-    Terminal targets (e.g. ``"N-term"``) match when the token's position is
-    a corresponding terminus. Residue targets (``"M"``, ``"C"``, …) match
-    by amino-acid identity.
+    ``entry_target`` is the list of residues/termini the modification may sit on.
+    Terminal targets (e.g. ``"N-term"``) match when the token's position is a
+    corresponding terminus; residue targets (``"M"``, ``"C"``, …) match by
+    amino-acid identity. Matches if ANY listed target is compatible. An empty/None
+    target matches anything.
     """
-    if entry_target is None:
+    if not entry_target:
         return True
-    if entry_target in _TERMINUS_TARGETS:
-        return entry_target.endswith(position) or entry_target == position
-    if adjacent_residue is None:
-        return False
-    return entry_target == adjacent_residue
+    for target in entry_target:
+        if target in _TERMINUS_TARGETS:
+            if target.endswith(position) or target == position:
+                return True
+        elif adjacent_residue is not None and target == adjacent_residue:
+            return True
+    return False
 
 
 def _parse_mass(raw: str) -> float | None:
@@ -122,7 +135,7 @@ def _match_entry(
 class _PendingToken:
     raw_token: str
     residue_index: int | None  # None for terminal
-    position: str               # "Anywhere" | "N-term" | "C-term"
+    position: str  # "Anywhere" | "N-term" | "C-term"
     adjacent_residue: str | None
 
 
@@ -201,8 +214,11 @@ def _resolve_tokens(
 
     for tok in pending:
         entry = _match_entry(
-            rule.entries, tok.raw_token, tok.adjacent_residue,
-            tok.position, rule.case_sensitive,
+            rule.entries,
+            tok.raw_token,
+            tok.adjacent_residue,
+            tok.position,
+            rule.case_sensitive,
         )
         if entry is not None:
             occurrences.append(

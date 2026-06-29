@@ -18,8 +18,21 @@ def test_packaged_rules_root_exists() -> None:
 
 def test_iter_packaged_rules_returns_eleven_sorted() -> None:
     rules = list(iter_packaged_rules())
-    assert len(rules) == 11  # 6 DIA-NN (root + v1 + v2) + 5 single-version vendors
+    # 4 DIA-NN (ion + v1 fragment/protein + v2 protein) + 3 Spectronaut + maxquant/fragpipe/peaks/wombat
+    assert len(rules) == 11
     assert rules == sorted(rules)  # path-sorted
+
+
+def test_iter_packaged_rules_excludes_vendor_base_files() -> None:
+    # diann/diann.toml and spectronaut/spectronaut.toml exist as inheritance bases but are not
+    # rules — the parse_*.toml glob must skip them.
+    root = packaged_rules_root()
+    assert (root / "diann" / "diann.toml").exists()
+    assert (root / "spectronaut" / "spectronaut.toml").exists()
+    names = {p.name for p in iter_packaged_rules()}
+    assert "diann.toml" not in names
+    assert "spectronaut.toml" not in names
+    assert all(p.name.startswith("parse_") for p in iter_packaged_rules())
 
 
 def test_find_rule_happy() -> None:

@@ -1,15 +1,13 @@
-schema_version = "0.1"
-file_version = "1"
-software_name = "Spectronaut"
-software_version = "^(19|20)\\..*"
-input_shape = "long"
-quantification_level = "fragment"
-
+# Spectronaut fragment level. Inherits shared blocks (schema_version, file_version, software_name,
+# software_version, input_shape, axis.obs_keys, axis.duplicates, [modifications]) from
+# ../spectronaut.toml.
+#
 # Native Spectronaut fragment reports are already one row per observed fragment/run and carry
 # F.* fragment columns. Do not use a [fragments] packed-list block here; that block is for
 # DIA-NN-style precursor rows that need to be exploded.
+quantification_level = "fragment"
+
 [axis]
-obs_keys = ["R_FileName"]
 var_keys = [
   "EG_PrecursorId",
   "F_FrgIon",
@@ -19,9 +17,6 @@ var_keys = [
   "F_FrgNum",
 ]
 x_layer = "F_PeakArea"
-
-[axis.duplicates]
-mode = "error"
 
 [columns.obs.select]
 R_FileName = "R.FileName"
@@ -63,24 +58,3 @@ source = "F.FrgMz"
 [[layers]]
 name = "F_TheoreticalMz"
 source = "F.TheoreticalMz"
-
-[modifications]
-source_column = "EG.ModifiedSequence"
-parser = "token_regex"
-token_pattern = "\\[([^\\[\\]]+)\\]"
-token_position = "after_residue"
-case_sensitive = false
-unknown_policy = "preserve"
-output_column = "proforma_sequence"
-
-[[modifications.map]]
-token = "Acetyl (Protein N-term)"
-accession = "UNIMOD:1"
-
-[[modifications.map]]
-token = "Oxidation (M)"
-accession = "UNIMOD:35"
-
-[[modifications.map]]
-token = "Carbamidomethyl (C)"
-accession = "UNIMOD:4"

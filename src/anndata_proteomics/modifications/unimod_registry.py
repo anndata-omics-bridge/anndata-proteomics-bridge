@@ -23,7 +23,7 @@ class UnimodEntry(BaseModel):
 
     accession: str
     name: str
-    target: str
+    target: list[str]  # allowed residues/termini, e.g. ["S", "T", "Y"] for Phospho
     position: str
     mass_delta: float
 
@@ -50,9 +50,7 @@ def load_registry() -> dict[str, UnimodEntry]:
     by_accession: dict[str, UnimodEntry] = {}
     for entry in parsed.entries:
         if entry.accession in by_accession:
-            raise ValueError(
-                f"duplicate accession in unimod_registry.toml: {entry.accession!r}"
-            )
+            raise ValueError(f"duplicate accession in unimod_registry.toml: {entry.accession!r}")
         by_accession[entry.accession] = entry
     return by_accession
 

@@ -13,7 +13,7 @@ import pytest
 
 from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_for_version
 from anndata_proteomics.rules.registry import resolve_rule_path
-from anndata_proteomics.scripts import _ui_support as ui
+from anndata_proteomics.converters import pipeline as ui
 
 _V19 = "1.9.2"
 _V23 = "2.3.0 Academia "  # messy real catalog string
@@ -102,3 +102,36 @@ def test_select_rule_errors() -> None:
         raise AssertionError("expected ValueError (columns don't match)")
     except ValueError as exc:
         assert "don't match" in str(exc)
+
+
+def test_convert_level_passes_params_path(monkeypatch) -> None:
+    # _convert_level must thread params_path through to converters.assemble.convert.
+    import numpy as np
+    import pandas as pd
+    from anndata import AnnData
+
+    from anndata_proteomics.converters import assemble
+
+    captured = {}
+
+    def fake_convert(df, rule, *, params_path=None):
+        captured["params_path"] = params_path
+        return AnnData(
+            X=np.array([[1.0]]),
+            obs=pd.DataFrame(index=["run1"]),
+            var=pd.DataFrame(index=["feature1"]),
+        )
+
+    monkeypatch.setattr(ui, "select_rule", lambda slug, level, version, headers: object())
+    monkeypatch.setattr(assemble, "convert", fake_convert)
+
+    adata = ui._convert_level(
+        pd.DataFrame({"x": [1]}),
+        "diann",
+        "ion",
+        "1.9.2",
+        params_path="/tmp/param_0..txt",
+    )
+
+    assert adata.shape == (1, 1)
+    assert captured["params_path"] == "/tmp/param_0..txt"

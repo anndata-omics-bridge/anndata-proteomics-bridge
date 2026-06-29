@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from anndata_proteomics.rules.registry import find_rule
-from anndata_proteomics.test_data import find_test_data
+from anndata_proteomics.test_data import find_param_file, find_test_data
 
 # The console script lives next to the python that's running pytest.
 # Resolving via sys.executable means tests work regardless of whether the venv
@@ -63,16 +63,54 @@ def test_cli_list_outputs_eleven_rules() -> None:
     assert "wombat" in r.stderr
 
 
-def test_cli_convert_writes_h5ad(tmp_path: Path) -> None:
-    """Pick a small vendor file; convert via the binary; assert .h5ad exists."""
+def _require(software: str):
+    """Return (data_file, param_file) for a tool, or skip when either is unavailable."""
+    import pytest
+
+    data_file = find_test_data(software)
+    param_file = find_param_file(software)
+    if data_file is None or not data_file.exists():
+        pytest.skip(f"no {software} test data available")
+    if param_file is None or not param_file.exists():
+        pytest.skip(f"no {software} param fixture available")
+    return data_file, param_file
+
+
+def test_cli_convert_with_rule_toml_writes_h5ad(tmp_path: Path) -> None:
+    """The --rule-toml override (single level, version-agnostic) writes a .h5ad."""
     import pytest
 
     data_file = find_test_data("WOMBAT")
     if data_file is None or not data_file.exists():
         pytest.skip("no WOMBAT test data available")
-
+    rule = find_rule("wombat", "peptidoform")
     out = tmp_path / "wombat.h5ad"
-    r = _run("convert", str(data_file), "--output", str(out))
+    r = _run("convert", str(data_file), "--rule-toml", str(rule), "--output", str(out))
+    assert r.returncode == 0, r.stderr
+    assert out.exists()
+    assert "wrote" in r.stderr
+
+
+def test_cli_convert_default_writes_h5mu(tmp_path: Path) -> None:
+    """A multi-level vendor (DIA-NN) with no level argument writes a multi-modality .h5mu."""
+    import mudata
+
+    data_file, param_file = _require("DIA-NN")
+    out = tmp_path / "diann.h5mu"
+    r = _run("convert", str(data_file), "--params", str(param_file), "--output", str(out))
+    assert r.returncode == 0, r.stderr
+    assert out.exists()
+    md = mudata.read_h5mu(out)
+    assert len(md.mod) >= 2
+
+
+def test_cli_convert_explicit_level_writes_h5ad(tmp_path: Path) -> None:
+    """A single level argument (DIA-NN protein) writes a .h5ad."""
+    data_file, param_file = _require("DIA-NN")
+    out = tmp_path / "diann_protein.h5ad"
+    r = _run(
+        "convert", str(data_file), "protein", "--params", str(param_file), "--output", str(out)
+    )
     assert r.returncode == 0, r.stderr
     assert out.exists()
     assert "wrote" in r.stderr

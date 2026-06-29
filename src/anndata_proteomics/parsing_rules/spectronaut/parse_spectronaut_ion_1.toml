@@ -1,17 +1,11 @@
-schema_version = "0.1"
-file_version = "1"
-software_name = "Spectronaut"
-software_version = "^(19|20)\\..*"
-input_shape = "long"
+# Spectronaut ion level. Inherits shared blocks (schema_version, file_version, software_name,
+# software_version, input_shape, axis.obs_keys, axis.duplicates, [modifications]) from
+# ../spectronaut.toml.
 quantification_level = "ion"
 
 [axis]
-obs_keys = ["R_FileName"]
 var_keys = ["ProForma_ion"]
 x_layer = "FG_Quantity"
-
-[axis.duplicates]
-mode = "error"
 
 [columns.obs.select]
 E_Errors = "E.Errors"
@@ -147,24 +141,3 @@ source = "EG.Cscore"
 [[layers]]
 name = "EG_NormalizedCscore"
 source = "EG.NormalizedCscore"
-
-[modifications]
-source_column = "EG.ModifiedSequence"
-parser = "token_regex"
-token_pattern = "\\[([^\\[\\]]+)\\]"
-token_position = "after_residue"
-case_sensitive = false
-unknown_policy = "preserve"
-output_column = "proforma_sequence"
-
-[[modifications.map]]
-token = "Acetyl (Protein N-term)"
-accession = "UNIMOD:1"
-
-[[modifications.map]]
-token = "Oxidation (M)"
-accession = "UNIMOD:35"
-
-[[modifications.map]]
-token = "Carbamidomethyl (C)"
-accession = "UNIMOD:4"

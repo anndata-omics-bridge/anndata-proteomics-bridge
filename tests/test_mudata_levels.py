@@ -14,7 +14,7 @@ from __future__ import annotations
 import mudata
 from mudata import MuData
 
-from anndata_proteomics.scripts import _ui_support as ui
+from anndata_proteomics.converters import pipeline as ui
 
 # Per-level var_names prefix; the bare id stays available in the .var columns.
 _PREFIX = {

@@ -4,7 +4,7 @@ Subcommands:
 - validate [path ...]        validate one or more TOML rules; defaults to all packaged
 - list                       list packaged rules
 - export-schema              regenerate parse_rule.schema.json
-- convert <data> [toml]      convert a vendor file to AnnData (.h5ad)
+- convert <data> [level]     convert a vendor file to MuData (.h5mu) or one level to AnnData (.h5ad)
 - annotate <data> <toml>     join sample annotations onto obs
 - fasta <data> <fasta...>    annotate the protein layer's var from FASTA file(s)
 """
@@ -19,7 +19,6 @@ from loguru import logger
 
 from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics.converters.assemble import convert as _run_convert
-from anndata_proteomics.converters.recognize import recognize
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule
@@ -30,7 +29,7 @@ from anndata_proteomics.rules.validate import (
     validate_file,
 )
 
-app = App(name="apb", help="anndata_proteomics (APB) CLI")
+app = App(name="apb", help="anndata_proteomics (APB) CLI", help_on_error=True)
 
 
 @app.command
@@ -48,14 +47,13 @@ def validate(*paths: Path) -> int:
 
 @app.command(name="list")
 def list_rules() -> int:
-    """List packaged parsing rules: software, level, file_version, path."""
+    """List packaged parsing rules: software, level, file_version, version pattern, path."""
     for p in iter_packaged_rules():
-        parts = p.stem.split("_")
-        # filename: parse_<software_tokens>_<level>_<version>.toml
-        software = "_".join(parts[1:-2])
-        level = parts[-2]
-        version = parts[-1]
-        logger.info(f"{software:14}  {level:12}  v{version:<3}  {p}")
+        rule = load_rule(p)
+        logger.info(
+            f"{rule.software_name:14}  {rule.quantification_level:12}  "
+            f"v{rule.file_version:<3}  {rule.software_version:14}  {p}"
+        )
     return 0
 
 
@@ -69,24 +67,75 @@ def export_schema_cmd() -> int:
 @app.command
 def convert(
     data: Path,
+    level: str | None = None,
+    *,
+    params: Path | None = None,
     rule_toml: Path | None = None,
+    software: str | None = None,
     output: Path | None = None,
 ) -> int:
-    """Convert a vendor file to AnnData and write a .h5ad.
+    """Convert a vendor file to a multi-level MuData (.h5mu) or one level to an AnnData (.h5ad).
 
-    If --rule-toml is omitted, the rule is auto-recognized from the data's
-    column headers. Use --rule-toml to override or when recognition is ambiguous.
-    --output defaults to <data>.h5ad next to the input.
+    With no LEVEL, every quantification level the file/version provides is wrapped into a MuData
+    (.h5mu) on a shared run axis; a vendor that exposes a single level yields a .h5ad instead.
+    Pass a LEVEL (ion / fragment / peptidoform / peptide / protein) to emit just that level.
+
+    --params is the vendor parameter file; it supplies the software version that selects the rule
+    variant (e.g. DIA-NN v1 vs v2) and is required unless --rule-toml is given. The vendor is
+    auto-detected from the column headers; override with --software (the rule folder slug, e.g.
+    "diann"). --rule-toml overrides rule selection entirely (single level, version-agnostic).
+    --output defaults to <stem>.h5mu (MuData) or <stem>.h5ad (single level) next to the input.
     """
+    from anndata_proteomics.converters.pipeline import (
+        _build_mudata,
+        _convert_level,
+        _param_version,
+        convertible_levels,
+        recognize_software,
+    )
+
     df = read_table(data)
-    if rule_toml is None:
-        rule = recognize(list(df.columns))
-        if rule is None:
-            logger.error(f"could not auto-recognize a rule for {data}; pass --rule-toml PATH")
-            return 1
-    else:
-        rule = load_rule(rule_toml)
-    adata = _run_convert(df, rule)
+
+    # --rule-toml: explicit single-level rule, bypasses vendor/version selection.
+    if rule_toml is not None:
+        adata = _run_convert(df, load_rule(rule_toml), params_path=params)
+        return _write_anndata(adata, output, data)
+
+    slug = software or recognize_software(df.columns)
+    if slug is None:
+        logger.error(
+            f"could not auto-detect the vendor for {data}; pass --software SLUG or --rule-toml PATH"
+        )
+        return 1
+    if params is None:
+        logger.error("pass --params (it gives the software version) or --rule-toml PATH")
+        return 1
+    version = _param_version(params, slug)
+    logger.info(f"vendor={slug} software_version={version!r}")
+
+    if level is not None:
+        adata = _convert_level(df, slug, level, version, params_path=params)
+        return _write_anndata(adata, output, data)
+
+    levels = convertible_levels(slug, version, df.columns)
+    if len(levels) >= 2:
+        md = _build_mudata(df, slug, version, params_path=params)
+        out = output or data.with_suffix(".h5mu")
+        md.write_h5mu(out)
+        logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
+        return 0
+    if len(levels) == 1:
+        adata = _convert_level(df, slug, levels[0], version, params_path=params)
+        return _write_anndata(adata, output, data)
+    logger.error(
+        f"no quantification level resolves for {slug} at software version {version!r}; "
+        "check --params / --software"
+    )
+    return 1
+
+
+def _write_anndata(adata, output: Path | None, data: Path) -> int:
+    """Write a single-level AnnData to .h5ad and log a one-line summary."""
     out = output or data.with_suffix(".h5ad")
     adata.write_h5ad(out)
     logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
@@ -108,7 +157,7 @@ def annotate(
     """
     from anndata_proteomics.annotation.apply import annotate_obs
     from anndata_proteomics.annotation.loader import load_annotation
-    from anndata_proteomics.scripts._ui_support import load_converted_result
+    from anndata_proteomics.readers.result import load_converted_result
 
     obj = load_converted_result(data)
     spec = load_annotation(annotation_toml)
@@ -149,7 +198,7 @@ def fasta(
     ``<stem>.annotated<suffix>`` (non-destructive).
     """
     from anndata_proteomics.annotation.var_fasta import annotate_var_from_fasta
-    from anndata_proteomics.scripts._ui_support import load_converted_result
+    from anndata_proteomics.readers.result import load_converted_result
 
     if not fasta_files:
         logger.error("no FASTA file given; usage: apb fasta DATA FASTA [FASTA ...]")

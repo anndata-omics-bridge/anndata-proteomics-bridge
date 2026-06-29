@@ -65,12 +65,14 @@ def convert(
 
     Notes
     -----
-    If ``rule.modifications`` is set, modification normalization runs
-    before the long/wide dispatch so that downstream code can reference
-    the normalized output column (e.g. ``proforma_sequence``) in
-    ``axis.var_keys`` or ``columns.var.select``.
+    If ``rule.modifications`` is set *and* a ``proforma_sequence`` /
+    ``stripped_sequence`` compute consumes it, modification normalization runs
+    before the long/wide dispatch so those computes can read the normalized
+    columns. A rule that only *inherits* a ``[modifications]`` block from its
+    vendor base without a consuming compute (e.g. protein levels) skips it — the
+    output is identical and the per-row tokenization cost is avoided.
     """
-    if rule.modifications is not None:
+    if rule.modifications is not None and _modifications_consumed(rule):
         df = apply_modifications(df, rule.modifications)
 
     if rule.fragments is not None:
@@ -99,6 +101,20 @@ def convert(
     if params_path is not None:
         _attach_search_parameters(adata, params_path, rule.software_name)
     return adata
+
+
+def _modifications_consumed(rule: ParseRule) -> bool:
+    """True iff a var compute reads the modification output (proforma/stripped sequence).
+
+    ``apply_modifications`` only adds the ``proforma_sequence`` / ``stripped_sequence`` columns;
+    the sole consumers are ``how="proforma_sequence"`` / ``"stripped_sequence"`` computes. When a
+    rule merely inherits a ``[modifications]`` block from its vendor base but has no such compute
+    (protein levels), applying it would add unused columns — skip it.
+    """
+    return any(
+        column.how in {"proforma_sequence", "stripped_sequence"}
+        for column in rule.columns.var.compute
+    )
 
 
 def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:

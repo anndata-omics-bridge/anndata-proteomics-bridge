@@ -1,0 +1,37 @@
+# Spectronaut vendor BASE — shared blocks inherited by every spectronaut/ leaf rule.
+# Convention-based inheritance: merged into each leaf at load time (rules.loader). NOT a rule
+# itself (the parse_*.toml glob skips it). Holds only what is common to ALL spectronaut levels.
+# columns.obs.select is intentionally NOT hoisted: the levels select different obs columns and
+# hoisting the shared subset would reorder the merged obs columns, so each leaf keeps its own.
+schema_version = "0.1"
+file_version = "1"
+software_name = "Spectronaut"
+software_version = "^(19|20)\\..*"
+input_shape = "long"
+
+[axis]
+obs_keys = ["R_FileName"]
+
+[axis.duplicates]
+mode = "error"
+
+[modifications]
+source_column = "EG.ModifiedSequence"
+parser = "token_regex"
+token_pattern = "\\[([^\\[\\]]+)\\]"
+token_position = "after_residue"
+case_sensitive = false
+unknown_policy = "preserve"
+output_column = "proforma_sequence"
+
+[[modifications.map]]
+token = "Acetyl (Protein N-term)"
+accession = "UNIMOD:1"
+
+[[modifications.map]]
+token = "Oxidation (M)"
+accession = "UNIMOD:35"
+
+[[modifications.map]]
+token = "Carbamidomethyl (C)"
+accession = "UNIMOD:4"

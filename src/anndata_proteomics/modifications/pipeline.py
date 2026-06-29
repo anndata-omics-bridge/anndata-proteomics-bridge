@@ -10,7 +10,7 @@ from anndata_proteomics.modifications.apply_rules import (
     apply_rule,
 )
 from anndata_proteomics.modifications.unimod_registry import resolve
-from anndata_proteomics.rules.schema import Modifications, TokenRegexModifications
+from anndata_proteomics.rules.schema import TokenRegexModifications
 
 
 def _to_runtime_rule(mods: TokenRegexModifications) -> ModificationRule:
@@ -44,7 +44,7 @@ def _to_runtime_rule(mods: TokenRegexModifications) -> ModificationRule:
     )
 
 
-def apply_modifications(df: pd.DataFrame, mods: Modifications) -> pd.DataFrame:
+def apply_modifications(df: pd.DataFrame, mods: TokenRegexModifications) -> pd.DataFrame:
     """Add normalized modification columns to ``df`` based on ``mods``.
 
     Adds (and returns the same frame for convenience):
@@ -52,14 +52,9 @@ def apply_modifications(df: pd.DataFrame, mods: Modifications) -> pd.DataFrame:
     - ``"stripped_sequence"``: amino-acid-only sequence
     - ``"unknown_mod_tokens"``: list of unresolved vendor tokens per row
 
-    The original ``mods.source_column`` is left untouched. If the parser
-    mode is anything other than ``token_regex`` this is a no-op for now —
-    ``already_proforma`` and ``separate_mod_column`` will be added when a
-    rule that needs them lands.
+    The original ``mods.source_column`` is left untouched. ``token_regex`` is
+    the only modification parser (see ``rules.schema``).
     """
-    if mods.parser != "token_regex":
-        return df
-
     if mods.source_column not in df.columns:
         raise KeyError(
             f"[modifications].source_column={mods.source_column!r} not found "

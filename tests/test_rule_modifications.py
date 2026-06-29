@@ -92,28 +92,21 @@ token_pattern = "\\\\[([^]]+)\\\\]"
         _parse(BASE + extra)
 
 
-def test_already_proforma_rejects_token_pattern():
+def test_unknown_parser_mode_rejected():
+    # already_proforma / separate_mod_column were removed; parser must be the token_regex literal.
     extra = """
 [modifications]
 source_column = "ProForma"
 parser = "already_proforma"
-token_pattern = "anything"
-"""
-    with pytest.raises(ValidationError, match="token_pattern"):
-        _parse(BASE + extra)
-
-
-def test_already_proforma_rejects_map():
-    extra = """
-[modifications]
-source_column = "ProForma"
-parser = "already_proforma"
+token_pattern = "x"
 
 [[modifications.map]]
 token = "x"
 accession = "UNIMOD:35"
 """
-    with pytest.raises(ValidationError, match="map"):
+    # The only invalid field is `parser`; the error must be about the token_regex literal,
+    # proving the discriminated union is gone (not a generic extra-key rejection).
+    with pytest.raises(ValidationError, match="token_regex"):
         _parse(BASE + extra)
 
 

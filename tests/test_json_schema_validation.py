@@ -16,6 +16,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules, packaged_rules_root
 
 
@@ -66,8 +67,12 @@ def test_exported_schema_is_valid_draft_2020_12() -> None:
     ids=lambda p: f"{p.parent.name}/{p.name}",
 )
 def test_packaged_rule_passes_json_schema(toml_path: Path) -> None:
-    """Every packaged TOML must validate against the generated JSON Schema."""
-    data = tomllib.loads(toml_path.read_text())
+    """Every packaged rule, merged with its vendor base, must validate against the JSON Schema.
+
+    Loaded via ``load_rule`` (not raw ``tomllib``) so DIA-NN/Spectronaut leaves are merged onto
+    their vendor base first — a stripped leaf is an incomplete instance on its own.
+    """
+    data = load_rule(toml_path).model_dump(by_alias=True, mode="json")
     jsonschema.validate(instance=data, schema=_load_schema())
 
 

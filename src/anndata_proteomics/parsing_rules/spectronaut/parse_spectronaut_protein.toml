@@ -1,15 +1,13 @@
-schema_version = "0.1"
-file_version = "1"
-software_name = "Spectronaut"
-software_version = "^(19|20)\\..*"
-input_shape = "long"
-quantification_level = "protein"
-
+# Spectronaut protein level. Inherits shared blocks (schema_version, file_version, software_name,
+# software_version, input_shape, axis.obs_keys, [modifications]) from ../spectronaut.toml;
+# overrides axis.duplicates to keep_first.
+#
 # Spectronaut reports PG.* protein-group quantities and scores on the same export rows as
 # FG.* ion/precursor quantities. They are pre-aggregated per (R_FileName, PG_ProteinGroups), so
 # keep the first repeated value instead of summing over precursor rows.
+quantification_level = "protein"
+
 [axis]
-obs_keys = ["R_FileName"]
 var_keys = ["PG_ProteinGroups"]
 x_layer = "PG_Quantity"
 

@@ -19,6 +19,11 @@ build/
 htmlcov/
 .tox/
 
+# Documentation site build output
+public/
+docs/*.html
+TODO/*.html
+
 # IDEs
 .vscode/
 .idea/

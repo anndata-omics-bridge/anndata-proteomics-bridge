@@ -8,12 +8,66 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from anndata_proteomics.rules.registry import find_rule, resolve_rule_path
+from anndata_proteomics.rules.registry import _VERSION_FOLDER_RE, find_rule, resolve_rule_path
 from anndata_proteomics.rules.schema import ParseRule
+
+
+def _is_array_of_tables(value: list) -> bool:
+    """True if a TOML array holds tables (``[[...]]``), e.g. layers/compute/map entries.
+
+    A non-empty array whose every element is a table — distinguishes ``[[layers]]`` (append on
+    merge) from scalar arrays like ``obs_keys`` / ``var_keys`` (replace on merge).
+    """
+    return bool(value) and all(isinstance(item, dict) for item in value)
+
+
+def _merge_rule_dicts(base: dict, leaf: dict) -> dict:
+    """Deep-merge a leaf rule dict onto its vendor ``base`` (leaf wins).
+
+    - scalars: the leaf value replaces the base value;
+    - tables (dicts, e.g. ``[columns.var.select]``, ``[axis]``): deep-merged, leaf keys win;
+    - arrays of tables (``[[layers]]``, ``[[columns.var.compute]]``, ``[[modifications.map]]``):
+      base entries first, then the leaf's appended — this preserves compute dependency order;
+    - scalar arrays (``obs_keys``, ``var_keys``): the leaf value replaces the base value.
+    """
+    merged = dict(base)
+    for key, leaf_val in leaf.items():
+        base_val = merged.get(key)
+        if isinstance(base_val, dict) and isinstance(leaf_val, dict):
+            merged[key] = _merge_rule_dicts(base_val, leaf_val)
+        elif isinstance(base_val, list) and isinstance(leaf_val, list):
+            if _is_array_of_tables(base_val) or _is_array_of_tables(leaf_val):
+                merged[key] = base_val + leaf_val
+            else:
+                merged[key] = leaf_val
+        else:
+            merged[key] = leaf_val
+    return merged
+
+
+def _vendor_base_path(leaf_path: Path) -> Path | None:
+    """The vendor base file ``<vendor>/<vendor>.toml`` for a leaf rule, or None.
+
+    Convention-based inheritance: a leaf at ``<vendor>/parse_*.toml`` or
+    ``<vendor>/v*/parse_*.toml`` is merged onto its vendor base. The vendor directory is the
+    leaf's parent (skipping a ``v*`` version folder). Returns None when no base file exists
+    (the leaf then loads standalone) or when the path *is* the base.
+
+    Note: a vendor directory must not be named like a version folder (``v1``, ``v2_3``, …); such
+    a name would be mistaken for a version subfolder and its base skipped. No packaged vendor is.
+    """
+    parent = leaf_path.parent
+    vendor_dir = parent.parent if _VERSION_FOLDER_RE.match(parent.name) else parent
+    base = vendor_dir / f"{vendor_dir.name}.toml"
+    return base if base.exists() and base != leaf_path else None
 
 
 def load_rule(path: Path | str) -> ParseRule:
     """Load a TOML file and validate it as a ParseRule.
+
+    If a vendor base file (``<vendor>/<vendor>.toml``) sits alongside the rule, its shared
+    blocks are merged in first (see :func:`_merge_rule_dicts`); this is the single choke point,
+    so ``recognize`` / ``validate`` / ``convert`` all see the merged rule.
 
     Raises FileNotFoundError if the path doesn't exist.
     On pydantic validation failure, the file path is attached as an exception note
@@ -23,6 +77,9 @@ def load_rule(path: Path | str) -> ParseRule:
     if not p.exists():
         raise FileNotFoundError(p)
     data = tomllib.loads(p.read_text())
+    base_path = _vendor_base_path(p)
+    if base_path is not None:
+        data = _merge_rule_dicts(tomllib.loads(base_path.read_text()), data)
     try:
         return ParseRule.model_validate(data)
     except ValidationError as e:

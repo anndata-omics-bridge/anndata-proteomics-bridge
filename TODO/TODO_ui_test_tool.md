@@ -3,7 +3,45 @@
 **Date:** 2026-06-22
 **Status:** Implemented prototype; this note tracks current behavior and remaining gaps.
 **Related:** [TODO_viewer.md](TODO_viewer.md), [TODO_to_mu_data.md](TODO_to_mu_data.md),
-[HOWTO/test_gui.md](HOWTO/test_gui.md).
+[`apb_studio` README](../../apb_studio/README.md),
+[`apb_studio` handover](../../apb_studio/TODO/HANDOVER_test_tool_relocation.md).
+
+## 2026-06-28 — DONE: relocated all of this to apb_studio (apb = pure library + CLI)
+
+**apb now carries no marimo/UI.** This browser + viewer + their plumbing moved to the sibling
+`apb_studio` package, which runs conversions by **shelling out to `apb convert`** (CLI consumer)
+and **imports apb's small pure read-only helpers** for catalog/introspection metadata (option A —
+honours the reuse rule, no duplication; heavy conversion stays out-of-process). The notes below are
+retained for reference; the live code is in `apb_studio/src/apb_studio/{ui,conversion,support.py}`.
+
+Outcome: `apb/src/anndata_proteomics/scripts/` holds only `cli.py`; the conversion core is in
+`converters/pipeline.py`; `apb convert` smoke + full suite green; apb_studio logic tests green. The
+marimo apps were relocated faithfully but need a manual `make test-tool` launch to confirm at runtime.
+
+Execution (each step kept the `apb` CLI working):
+
+- **Phase 1 (apb internal):** extract the conversion core out of `scripts/_ui_support.py` into a
+  clean non-UI module **`converters/pipeline.py`** (`LEVELS`, `MUDATA`, `software_slug`,
+  `recognize_software`, `_param_version`, `select_rule`, `convertible_levels`, `available_targets`,
+  `_convert_level`, `_build_mudata`) and **`readers/result.py`** (`load_converted_result`).
+  `_ui_support.py` becomes a re-export shim; repoint `cli.py` + core tests; verify green and that
+  `import cli` pulls in no marimo.
+- **Phase 3 (apb_studio):** add `ui/` (`test_tool.py` ← ui_test_tool, `panels.py` ← _ui_panels,
+  `anndataview.py`), `conversion/` (`runner.py` ← jobrunner, `subprocess_adapter.py` = shell out to
+  `apb convert` with the **real** signature, `constants.py`), `summary/` (`catalog.py`, `runs.py`,
+  `introspect.py` ← the catalog/runs/`summarize` half of `_ui_support`). Add `anndata-proteomics`
+  + `plotly` deps and a `make test-tool` target; port the converted-runs tests.
+- **Phase 2 (apb cleanup, last):** delete `ui_test_tool.py`, `anndataview.py`, `_ui_panels.py`,
+  `jobrunner.py`, `convert_one.py`, `_ui_support.py`, `__marimo__/`; remove the `gui` extra and the
+  marimo Make targets; rewrite the `conftest` `diann_full_subset` fixture to be self-contained
+  (read the ProteoBench index directly, no catalog import); update ARCHITECTURE/README/AGENTS.
+
+`convert_target` and `convert_one` are **deleted, not moved** (the GUI shells out to `apb convert`),
+which also removes the core's only `test_data` coupling. Pre-existing separate bug to fix later:
+apb_studio's Snakefile/registry call `apb convert --input/--rule` + `apb assemble-mudata`, which the
+real CLI does not accept.
+
+--- (original prototype notes below) ---
 
 ## Current Flow
 

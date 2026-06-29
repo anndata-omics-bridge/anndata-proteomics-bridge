@@ -1,44 +1,47 @@
 # Architecture (current state)
 
-**Status as of 2026-05-06**. This document describes what is *implemented today*. For the broader design and remaining steps, see [RESTART_PLAN.md](RESTART_PLAN.md).
+**Status as of 2026-06-26**. This document describes what is *implemented today*; remaining work is listed under [Not yet implemented](#not-yet-implemented) below.
 
 ## Data flow
 
-```
-TOML rule file
-      │
-      ▼                              schema.ParseRule  ◄── _export_schema ──► parse_rule.schema.json
-loader.load_rule  ───────────────►  (validated rule)                          (IDE / CI consumers)
-      ▲
-      │ via
-      │
-registry.find_rule(software, level, version)
-      ▲
-      │ resolves against
-      │
-parsing_rules/<vendor>/parse_<software>_<level>_<version>.toml
-                                                              ▲
-                                                              │ enumerated by
-                                                              │
-                                              registry.iter_packaged_rules
-                                                              │ used by
-                                                              ▼
-                                                  validate.validate_all_packaged
+```mermaid
+flowchart TD
+    toml[/packaged rule TOML/] --> resolve[registry.resolve_rule_path / find_rule]
+    resolve --> load[loader.load_rule]
+    load --> rule([schema.ParseRule validated])
+    rule -. _export_schema .-> schemajson[[parse_rule.schema.json]]
+    rule -. apb validate .-> val[validate: PASS / FAIL]
 
-Vendor data file ──► readers.read_table ──► pandas.DataFrame
-                          │ dispatches on extension to
-                          ▼
-                   readers.tabular.read_csv / read_tsv / read_parquet
+    data[/vendor data file/] --> readtable[readers.read_table]
+    readtable --> df[(pandas.DataFrame)]
+    df -. recognize auto-pick .-> rule
 
-DataFrame ──► converters.recognize ──► ParseRule (auto-pick from packaged set)
-DataFrame + ParseRule ──► converters.convert ──► AnnData
-                              │ dispatches on rule.input_shape to
-                              ▼
-                       converters.long.convert_long  /  converters.wide.convert_wide
-                              │ then
-                              ▼
-                       converters.assemble.to_anndata  ◄── factors.encode_factor (per layer)
+    df --> convert[converters.assemble.convert]
+    rule --> convert
+    convert --> mods{rule.modifications?}
+    mods -->|yes| applymods[modifications.apply_modifications]
+    mods -->|no| shape{input_shape}
+    applymods --> shape
+    shape -->|long| long[long.convert_long]
+    shape -->|wide| wide[wide.convert_wide]
+    long --> pieces[ConversionPieces]
+    wide --> pieces
+    pieces --> assemble[assemble.to_anndata + factors.encode_factor]
+    assemble --> adata[(AnnData / MuData)]
+
+    paramfile[/vendor parameter file/] --> parseparams[params.parse_params]
+    parseparams --> params([params.model.Parameters])
+    params -. write_search_parameters .-> adata
+
+    adata --> annobs[annotation.annotate_obs: obs axis]
+    fastafile[/FASTA files/] --> annvar[var_fasta.annotate_var_from_fasta: protein varm]
+    adata --> annvar
+
+    classDef io fill:#eef2ff,stroke:#9aa7d8;
+    class toml,data,paramfile,fastafile io;
 ```
+
+For the detailed per-subsystem class and sequence diagrams, see [parsing_architecture.md](parsing_architecture.md); for the vendor parameter parsers see [parameter_parsers.md](parameter_parsers.md).
 
 ## Modules
 
@@ -63,7 +66,7 @@ DataFrame + ParseRule ──► converters.convert ──► AnnData
 **Public API**
 
 - `load_rule(path) -> ParseRule` — `tomllib.loads` + `ParseRule.model_validate`. Raises `FileNotFoundError` on missing path; on pydantic `ValidationError`, attaches the file path as an exception note before re-raising.
-- `load_packaged_rule(software, quantification_level, file_version="1") -> ParseRule` — sugar over `find_rule + load_rule`.
+- `load_packaged_rule(software, quantification_level, version=None) -> ParseRule` — sugar over `find_rule + load_rule`. `version=None` selects the version-agnostic vendor-root rule; pass a software version string to pick the matching `v*/` subfolder.
 
 **Depends on** — `rules.schema`, `rules.registry`, stdlib `tomllib`.
 
@@ -71,14 +74,15 @@ DataFrame + ParseRule ──► converters.convert ──► AnnData
 
 ### `rules/registry.py`
 
-**Purpose** — locate packaged TOMLs by `(software, level, version)` and enumerate them.
+**Purpose** — locate packaged TOMLs by `(software, level, version)` and enumerate them. Some vendors (notably DIA-NN) ship version-specific rules in `v*/` subfolders because their column sets change across releases; this module resolves a parsed software version to the most-specific covering folder.
 
 **Public API**
 
 - `packaged_rules_root() -> Path` — `parsing_rules/` inside the installed package, via `importlib.resources` (works for editable installs and wheels).
-- `iter_packaged_rules() -> Iterator[Path]` — sorted glob of all `parsing_rules/<vendor>/parse_*.toml`.
-- `find_rule(software, quantification_level, file_version="1") -> Path` — resolve to a specific TOML.
-- `RuleNotFound(LookupError)` — raised by `find_rule`; message lists what *is* available in the vendor folder.
+- `iter_packaged_rules() -> Iterator[Path]` — sorted glob of every packaged rule, covering both the flat `parsing_rules/<vendor>/parse_*.toml` and version-foldered `parsing_rules/<vendor>/v*/parse_*.toml` layouts.
+- `resolve_rule_path(software, level, version=None) -> Path | None` — path to the rule for `(software, level)` at a given software version. Picks the most-specific `v*` subfolder whose version is a prefix of `version` and that contains `parse_<software>_<level>.toml`; otherwise the vendor-root file (or a legacy `parse_<software>_<level>_<n>.toml`). Returns `None` when nothing matches; `version=None` skips the folders and uses the root file only.
+- `find_rule(software, level, version=None) -> Path` — `resolve_rule_path(...)` or raise `RuleNotFound`.
+- `RuleNotFound(LookupError)` — raised by `find_rule` when `(software, level, version)` resolves to no packaged TOML.
 
 **Depends on** — stdlib only (`importlib.resources`, `pathlib`).
 
@@ -93,7 +97,7 @@ DataFrame + ParseRule ──► converters.convert ──► AnnData
 - `ValidationResult` — frozen dataclass `{path, ok, error, rule}`. `error` is a one-line summary string; `rule` is populated when `ok=True`.
 - `validate_file(path) -> ValidationResult` — never raises; failures come back as `ok=False`.
 - `validate_all_packaged() -> list[ValidationResult]` — walks every packaged rule.
-- `main(argv=None) -> int` — `validate-rules` console entrypoint. Prints `PASS path` / `FAIL path: msg` per rule plus a summary line, returns 0 if all pass else 1.
+- `_log_and_exit_code(results) -> int` — logs `PASS path` / `FAIL path: msg` per rule plus a summary line, returns 0 if all pass else 1. Driven by the `apb validate` subcommand (there is no separate `validate-rules` console script).
 
 **Depends on** — `rules.loader`, `rules.registry`, `rules.schema`.
 
@@ -105,7 +109,7 @@ DataFrame + ParseRule ──► converters.convert ──► AnnData
 
 **Public API**
 
-- `main()` — `export-rule-schema` console entrypoint; writes to `parsing_rules/_schema/parse_rule.schema.json`.
+- `main()` — invoked by the `apb export-schema` subcommand; writes to `parsing_rules/_schema/parse_rule.schema.json`.
 
 **Depends on** — `rules.schema`, stdlib `json`.
 
@@ -119,16 +123,32 @@ DataFrame + ParseRule ──► converters.convert ──► AnnData
 
 ```
 parsing_rules/
-├── _schema/parse_rule.schema.json              generated, IDE-consumed
-├── diann/parse_diann_ion_1.toml                long, ion
-├── spectronaut/parse_spectronaut_ion_1.toml    long, ion
-├── maxquant/parse_maxquant_ion_1.toml          long, ion
-├── fragpipe/parse_fragpipe_ion_1.toml          wide, ion
-├── peaks/parse_peaks_ion_1.toml                wide, ion
-└── wombat/parse_wombat_peptidoform_1.toml      wide, peptidoform
+├── _schema/parse_rule.schema.json                generated, IDE-consumed
+├── diann/parse_diann_ion.toml                    long, ion
+├── diann/v1/parse_diann_fragment.toml            long, fragment
+├── diann/v1/parse_diann_protein.toml             long, protein
+├── diann/v2/parse_diann_protein.toml             long, protein
+├── spectronaut/parse_spectronaut_ion_1.toml      long, ion
+├── spectronaut/parse_spectronaut_fragment.toml   long, fragment
+├── spectronaut/parse_spectronaut_protein.toml    long, protein
+├── maxquant/parse_maxquant_ion_1.toml            long, ion
+├── fragpipe/parse_fragpipe_ion_1.toml            wide, ion
+├── peaks/parse_peaks_ion_1.toml                  wide, ion
+└── wombat/parse_wombat_peptidoform_1.toml        wide, peptidoform
 ```
 
-**Filename convention** — `parse_<software>_<level>_<file_version>.toml`. The level token must match the TOML's `quantification_level` field; [tests/test_packaged_rules.py](../tests/test_packaged_rules.py) enforces this.
+| Vendor | Level | Shape |
+|---|---|---|
+| DIA-NN | ion | long |
+| DIA-NN | fragment | long |
+| DIA-NN | protein (v1, v2) | long |
+| Spectronaut | ion / fragment / protein | long |
+| MaxQuant | ion | long |
+| FragPipe | ion | wide |
+| PEAKS | ion | wide |
+| WOMBAT | peptidoform | wide |
+
+**Filename convention** — `parse_<software>_<level>.toml`. The level token must match the TOML's `quantification_level` field; [tests/test_packaged_rules.py](../tests/test_packaged_rules.py) enforces this. Version-specific rules (whose columns change across software releases) live in a `v*/` subfolder of the vendor — `diann/v1/`, `diann/v2/`, finer `diann/v1_9/` when needed — and `registry.resolve_rule_path` selects the most-specific folder covering a parsed software version; version-agnostic levels stay at the vendor root. A legacy `parse_<software>_<level>_<n>.toml` form is still recognised as a root-level fallback.
 
 ### `readers/tabular.py`
 
@@ -169,13 +189,13 @@ Each is a thin wrapper around `pd.read_csv` / `pd.read_parquet` so the test suit
 | Subcommand | Behavior | Exit code |
 |---|---|---|
 | `validate [path ...]` | Validate one or more TOML rules. With no path, walks all packaged rules. | 0 if all pass, 1 otherwise |
-| `list` | List packaged rules: software, level, file_version, path. | 0 |
+| `list` | List packaged rules: software, level, file_version, version pattern, path (read from each parsed rule, not the filename). | 0 |
 | `export-schema` | Regenerate `parse_rule.schema.json`. | 0 |
-| `convert <data> [--rule-toml] [--output]` | Convert a vendor file to AnnData (.h5ad). Auto-recognizes the rule from headers if `--rule-toml` is omitted; defaults output to `<data>.h5ad`. | 0 on success, 1 on recognition / conversion failure |
+| `convert <data> [level] [--params] [--rule-toml] [--software] [--output]` | Convert a vendor file to a multi-level **MuData** (`.h5mu`, default) or one `level` (ion/fragment/peptidoform/peptide/protein) to an **AnnData** (`.h5ad`). The vendor is auto-detected from headers (`--software` overrides); `--params` supplies the software version that selects the rule variant and is required unless `--rule-toml` is given. A single-level vendor writes `.h5ad` even with no level. Defaults output to `<stem>.h5mu` / `<stem>.h5ad`. | 0 on success, 1 on vendor/level/recognition failure |
 | `annotate <data> <annotation-toml> [--output]` | Join the TOML's `obs.samples` table onto `obs` of an `.h5ad`/`.h5mu`; defaults output to `<stem>.annotated<suffix>`. | 0 on success |
 | `fasta <data> <fasta ...> [--match-on] [--no-is-uniprot] [--decoy-pattern] [--cleavage] [--min-length] [--max-length] [--output]` | Attach FASTA-derived annotation (`fasta.id`, `fasta.header`, `protein_length`, `nr_peptides`, `gene_name`) to the **protein layer's** `varm['fasta']`. Joins on the leading accession of each protein group; defaults output to `<stem>.annotated<suffix>`. | 0 on success, 1 if no FASTA given |
 
-**Implementation principle** — `validate` shares the PASS/FAIL formatter (`rules.validate._print_and_exit_code`) with the older `validate-rules` console script, so output is identical.
+**Implementation principle** — `validate` delegates to the shared PASS/FAIL formatter `rules.validate._log_and_exit_code`, so the output and exit code match `validate_all_packaged` called directly.
 
 **Tests** — [tests/test_cli.py](../tests/test_cli.py)
 
@@ -186,6 +206,8 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 | Command | Module | Purpose |
 |---|---|---|
 | `apb` | `scripts.cli:main` | Umbrella CLI with `validate / list / export-schema / convert / annotate / fasta` subcommands |
+
+`apb` is the only installed console script, and `scripts/` now holds only `cli.py` behind it. The param-driven conversion **core** that `apb convert` orchestrates lives in [`converters/pipeline.py`](../src/anndata_proteomics/converters/pipeline.py) (`recognize_software` → `_param_version` → `select_rule`/`convertible_levels` → `_convert_level`/`_build_mudata`); `readers/result.py` loads a written `.h5ad`/`.h5mu` back. The marimo GUI tools (test-data browser, AnnData viewer, background-job plumbing, ProteoBench catalog) were extracted to the sibling **`apb_studio`** package on 2026-06-28 — apb is a pure library + CLI with no marimo dependency, and apb_studio drives it via the `apb` CLI.
 
 ### `converters/recognize.py`
 
@@ -238,6 +260,31 @@ Wired in [pyproject.toml](../pyproject.toml) under `[project.scripts]`:
 - `convert(df, rule) -> ad.AnnData` — dispatches to `convert_long` or `convert_wide` based on `rule.input_shape`, then assembles.
 
 **Tests** — [tests/test_converters_assemble.py](../tests/test_converters_assemble.py); end-to-end coverage for all 6 packaged vendors in [tests/test_converters_e2e.py](../tests/test_converters_e2e.py).
+
+### `params/`
+
+**Purpose** — parse a vendor **search-parameter file** (whole-experiment settings: enzyme, FDR, tolerances, modifications, …) into a single typed `Parameters` record, and attach/read it on an AnnData.
+
+**Public API (summary)**
+
+- Each vendor module exposes the same entry point `extract_params(source) -> Parameters` (`diann`, `maxquant`, `spectronaut`, `fragpipe`, `sage`, `alphapept`, `metamorpheus`, `msaid`, `peaks`, `wombat`).
+- `params.registry.parse_params(path, software)` / `get_parser(software)` / `available_software()` — dispatch by software name.
+- `params.model.Parameters` — the typed record; a validator **canonicalizes `enzyme`** to a fixed name set (`Trypsin`, `Trypsin/P`, `Lys-C`, `Arg-C`, `Glu-C`, `Chymotrypsin`, `Asp-N`), which is what the FASTA annotation reads to pick its cleavage rule.
+- `params.anndata_io.read_search_parameters(adata)` / `write_search_parameters(adata, params, *, source_path=None)` — round-trip `Parameters` through `uns['anndata_proteomics']['search_parameters']` (JSON), with optional `search_parameters_path` provenance. `converters.convert` attaches them automatically when given a `params_path`.
+
+**Detail** — full module-by-module breakdown and class/flow diagrams in [parameter_parsers.md](parameter_parsers.md) and [parsing_architecture.md](parsing_architecture.md).
+
+### `modifications/`
+
+**Purpose** — turn vendor **modified-sequence strings** into a normalised ProForma sequence plus modification models (for SDRF and downstream use).
+
+**Public API (summary)**
+
+- `modifications.pipeline.apply_modifications(df, rule.modifications)` — the converter-facing entry point; produces `proforma_sequence` and `stripped_sequence` columns from a rule's `[modifications]` section.
+- `modifications.apply_rules.apply_rule(seq, rule)` — token extraction + mapping for a single sequence.
+- `modifications.proforma.render_proforma(...)`, `modifications.sdrf.to_sdrf_value(mod)`, `modifications.unimod_registry.resolve(accession)`, and the `model.py` identity types (`SearchedModification`, `ModificationOccurrence`).
+
+**Detail** — full module-by-module breakdown and class diagrams in [parsing_architecture.md](parsing_architecture.md).
 
 ### `fasta/`
 
@@ -321,7 +368,7 @@ Tests bridge loguru into pytest's `capsys` via [tests/conftest.py](../tests/conf
 
 ## Not yet implemented
 
-The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete. Remaining work:
+The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is complete, and the package has since grown beyond it: vendor parameter parsing (`params/`), modified-sequence normalisation (`modifications/`), and second-stage obs/var annotation (`annotation/`, including FASTA-driven protein annotation). Remaining work:
 
 - Per-tool `uns['<app_name>']['column_roles']` writeback per the [adr_tool_specific_views](../../anndata_omics_bridge/docs/adr_tool_specific_views.md) ADR (only `uns['anndata_proteomics']` is populated today). Once populated, the `uns` tab in the annProtSum report will surface them automatically (every top-level `uns` key gets a YAML block).
 - `obs` enrichment from `sample_name_cleanup` regex capture groups.
@@ -329,6 +376,6 @@ The first-pass restart goal (`vendor file + parsing TOML → AnnData`) is comple
 
 ## Adding things
 
-- **New vendor TOML** — drop a file at `parsing_rules/<software>/parse_<software>_<level>_<file_version>.toml`. `validate-rules` and the test suite pick it up automatically; no registry edits needed. The level in the filename must match the TOML's `quantification_level`.
-- **New schema field** — edit [rules/schema.py](../src/anndata_proteomics/rules/schema.py), update the fixtures in [tests/test_rule_models.py](../tests/test_rule_models.py) and [docs/toml_schema.md](toml_schema.md), then run `export-rule-schema` to regenerate the JSON Schema.
+- **New vendor TOML** — drop a file at `parsing_rules/<software>/parse_<software>_<level>.toml` (or `parsing_rules/<software>/v<N>/parse_<software>_<level>.toml` for a version-specific rule). `apb validate` and the test suite pick it up automatically; no registry edits needed. The level in the filename must match the TOML's `quantification_level`.
+- **New schema field** — edit [rules/schema.py](../src/anndata_proteomics/rules/schema.py), update the fixtures in [tests/test_rule_models.py](../tests/test_rule_models.py) and [docs/toml_schema.md](toml_schema.md), then run `apb export-schema` to regenerate the JSON Schema.
 - **New `quantification_level` value** (e.g. `protein`) — already in the `QuantificationLevel` literal; just author the TOMLs and matching tests.

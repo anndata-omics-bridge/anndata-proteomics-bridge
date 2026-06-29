@@ -116,8 +116,9 @@ class ModificationMapEntry(_Strict):
 class TokenRegexModifications(_Strict):
     """Extract vendor modification tokens with a regex and map them to Unimod.
 
-    The only parser with a runtime implementation today (see
-    ``modifications.pipeline``).
+    ``token_regex`` is the only modification parser with a runtime
+    implementation (see ``modifications.pipeline``), so it is the only
+    accepted ``parser`` value.
     """
 
     parser: Literal["token_regex"]
@@ -130,31 +131,9 @@ class TokenRegexModifications(_Strict):
     map: list[ModificationMapEntry] = Field(min_length=1)
 
 
-class AlreadyProformaModifications(_Strict):
-    """``source_column`` already holds a ProForma string; copy it through."""
-
-    parser: Literal["already_proforma"]
-    source_column: str
-    output_column: str = "proforma_sequence"
-
-
-class SeparateModColumnModifications(_Strict):
-    """Modification tokens live in a column separate from the stripped sequence."""
-
-    parser: Literal["separate_mod_column"]
-    source_column: str
-    sequence_column: str
-    token_position: TokenPosition = "after_residue"
-    case_sensitive: bool = False
-    unknown_policy: UnknownPolicy = "preserve"
-    output_column: str = "proforma_sequence"
-    map: list[ModificationMapEntry] = Field(default_factory=list)
-
-
-Modifications = Annotated[
-    TokenRegexModifications | AlreadyProformaModifications | SeparateModColumnModifications,
-    Field(discriminator="parser"),
-]
+# Only ``token_regex`` has a runtime implementation; the alias keeps the public
+# name stable for ``ParseRule.modifications`` and importers.
+Modifications = TokenRegexModifications
 
 
 class PositionalFragments(_Strict):

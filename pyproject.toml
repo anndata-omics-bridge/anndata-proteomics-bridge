@@ -40,9 +40,10 @@ dev = [
     "jsonschema>=4",
     "pre-commit",
 ]
-gui = [
-    "marimo",
-    "plotly",
+
+[dependency-groups]
+docs = [
+    "mkdocs-material>=9.5",
 ]
 
 [tool.black]

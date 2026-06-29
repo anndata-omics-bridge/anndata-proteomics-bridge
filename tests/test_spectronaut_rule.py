@@ -11,12 +11,9 @@ from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_packaged_rule
 from anndata_proteomics.rules.registry import resolve_rule_path
 from anndata_proteomics.rules.schema import ParseRule
-from anndata_proteomics.scripts import _ui_support as ui
 
-
-def _spectronaut_catalog() -> pd.DataFrame:
-    catalog = ui.load_catalog()
-    return catalog[catalog["slug"] == "spectronaut"].reset_index(drop=True)
+# Cached Spectronaut datasets come from the catalog-free ``spectronaut_datasets`` fixture
+# (conftest.py); the ProteoBench browser/catalog itself lives in apb_studio.
 
 
 def _resolve_var_feature_sources(rule: ParseRule) -> set[str]:
@@ -74,38 +71,38 @@ def test_spectronaut_has_report_backed_ion_protein_and_fragment_rules() -> None:
     assert resolve_rule_path("spectronaut", "peptide") is None
 
 
-def test_spectronaut_rule_matches_cached_common_headers() -> None:
+def test_spectronaut_rule_matches_cached_common_headers(spectronaut_datasets) -> None:
     rules = [
         load_packaged_rule("spectronaut", "ion"),
         load_packaged_rule("spectronaut", "protein"),
     ]
-    for _, row in _spectronaut_catalog().iterrows():
-        headers = pd.read_csv(ui._dataset_path(row["input_file_path"]), sep="\t", nrows=0).columns
+    for dataset in spectronaut_datasets:
+        headers = dataset["headers"]
         for rule in rules:
-            assert matches(headers, rule), f"{rule.quantification_level}: {row['input_file_path']}"
+            assert matches(headers, rule), (
+                f"{rule.quantification_level}: {dataset['input_file_path']}"
+            )
         assert not matches(headers, load_packaged_rule("spectronaut", "fragment"))
 
 
-def test_spectronaut_catalog_offers_mudata() -> None:
-    catalog = _spectronaut_catalog()
-    if catalog.empty:
+def test_spectronaut_catalog_offers_mudata(spectronaut_datasets) -> None:
+    if not spectronaut_datasets:
         return
-    assert (
-        catalog["targets"].apply(lambda targets: {"ion", "protein", "mudata"} <= set(targets)).all()
+    assert all(
+        {"ion", "protein", "mudata"} <= set(dataset["targets"]) for dataset in spectronaut_datasets
     )
-    assert not catalog["targets"].apply(lambda targets: "fragment" in set(targets)).any()
+    assert not any("fragment" in set(dataset["targets"]) for dataset in spectronaut_datasets)
 
 
 @pytest.mark.parametrize("level", ["ion", "protein"])
-def test_spectronaut_conversion_matches_declared_columns(level: str) -> None:
+def test_spectronaut_conversion_matches_declared_columns(level: str, spectronaut_datasets) -> None:
     """Conformance: the converted AnnData realizes exactly what the TOML declares — every
     selected/computed var and obs column is present, and the layer set is precisely the declared
     one (no stray, no missing). The expectations are read from the rule, not hardcoded."""
-    catalog = _spectronaut_catalog()
-    if catalog.empty:
+    if not spectronaut_datasets:
         return
     rule = load_packaged_rule("spectronaut", level)
-    df = read_table(ui._dataset_path(catalog.iloc[0]["input_file_path"]))
+    df = read_table(spectronaut_datasets[0]["input_path"])
     run = df["R.FileName"].iloc[0]
     subset = df[df["R.FileName"] == run].head(2000).copy()
 
@@ -123,16 +120,15 @@ def test_spectronaut_conversion_matches_declared_columns(level: str) -> None:
 
 
 @pytest.mark.parametrize("level", ["ion", "protein"])
-def test_spectronaut_declared_layout_matches_data(level: str) -> None:
+def test_spectronaut_declared_layout_matches_data(level: str, spectronaut_datasets) -> None:
     """Placement correctness: a layer is an obs x var matrix, so a column belongs in [[layers]]
     only if it varies across samples for the same feature. This checks the TOML's split against
     the real multi-sample report (the dimensionality test), which is what conformance alone cannot
     do — deriving the truth from the same TOML would let a misplacement pass unnoticed."""
-    catalog = _spectronaut_catalog()
-    if catalog.empty:
+    if not spectronaut_datasets:
         return
     rule = load_packaged_rule("spectronaut", level)
-    df = read_table(ui._dataset_path(catalog.iloc[0]["input_file_path"]))
+    df = read_table(spectronaut_datasets[0]["input_path"])
     if df[list(_sample_sources(rule))].drop_duplicates().shape[0] < 2:
         pytest.skip("single-sample export cannot distinguish layers from .var")
 

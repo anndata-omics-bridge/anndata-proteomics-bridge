@@ -214,21 +214,11 @@ classDiagram
         +str encoding_mode
         +dict categories
     }
-    class Modifications {
-        <<union by parser>>
+    class TokenRegexModifications {
         +str source_column
         +str parser
         +str output_column
-    }
-    class TokenRegexModifications {
         +str token_pattern
-        +str token_position
-        +bool case_sensitive
-        +str unknown_policy
-    }
-    class AlreadyProformaModifications
-    class SeparateModColumnModifications {
-        +str sequence_column
         +str token_position
         +bool case_sensitive
         +str unknown_policy
@@ -252,19 +242,15 @@ classDiagram
     ParseRule *-- Axis
     ParseRule *-- Columns
     ParseRule *-- "1..*" Layer
-    ParseRule *-- "0..1" Modifications
+    ParseRule *-- "0..1" TokenRegexModifications
     ParseRule *-- "0..1" Fragments
     ParseRule *-- "0..1" SampleNameCleanup
     Axis *-- Duplicates
     Columns *-- "2" ColumnGroup : obs / var
     ColumnGroup *-- "*" ColumnCompute : compute
-    Modifications <|-- TokenRegexModifications
-    Modifications <|-- AlreadyProformaModifications
-    Modifications <|-- SeparateModColumnModifications
     Fragments <|-- PositionalFragments
     Fragments <|-- ColumnLabeledFragments
     TokenRegexModifications *-- "*" ModificationMapEntry : map
-    SeparateModColumnModifications *-- "*" ModificationMapEntry : map
 ```
 
 ---

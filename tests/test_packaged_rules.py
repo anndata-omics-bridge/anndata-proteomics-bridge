@@ -1,14 +1,18 @@
-"""Verify every packaged parse_*.toml validates and matches its filename."""
+"""Verify every packaged parse_*.toml validates and matches its filename.
+
+Rules are loaded through ``load_rule`` (not raw ``tomllib``) so that DIA-NN/Spectronaut leaves
+are merged onto their vendor base file before validation — a stripped leaf is an incomplete
+ParseRule on its own.
+"""
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 import pytest
 
+from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
-from anndata_proteomics.rules.schema import ParseRule
 from anndata_proteomics.rules.validate import validate_all_packaged
 
 
@@ -19,7 +23,7 @@ def test_all_packaged_rules_validate() -> None:
 
 
 def test_at_least_one_long_and_one_wide_rule() -> None:
-    rules = [ParseRule.model_validate(tomllib.loads(p.read_text())) for p in iter_packaged_rules()]
+    rules = [load_rule(p) for p in iter_packaged_rules()]
     shapes = {r.input_shape for r in rules}
     assert "long" in shapes, f"no long rule found: {shapes}"
     assert "wide" in shapes, f"no wide rule found: {shapes}"
@@ -27,7 +31,7 @@ def test_at_least_one_long_and_one_wide_rule() -> None:
 
 def test_all_packaged_rules_declare_software_version() -> None:
     for path in iter_packaged_rules():
-        rule = ParseRule.model_validate(tomllib.loads(path.read_text()))
+        rule = load_rule(path)
         assert rule.software_version, f"{path} missing software_version"
 
 
@@ -42,7 +46,7 @@ def test_filename_quant_level_matches_toml(toml_path: Path) -> None:
     if parts[-1].isdigit():  # drop a trailing flat-file version token
         parts = parts[:-1]
     filename_level = parts[-1]
-    rule = ParseRule.model_validate(tomllib.loads(toml_path.read_text()))
+    rule = load_rule(toml_path)
     assert rule.quantification_level == filename_level, (
         f"{toml_path.name}: filename says level={filename_level!r} "
         f"but TOML has quantification_level={rule.quantification_level!r}"

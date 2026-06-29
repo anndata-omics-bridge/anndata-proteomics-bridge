@@ -3,14 +3,14 @@
 The ``diann_full_subset`` fixture (conftest.py) supplies a small slice of a cached DIA-NN dataset
 whose param-parsed version supports ion, protein, and fragment layers (a 1.9.x export:
 positional fragment + PG.*), plus that version. Conversion goes through the param-driven
-``_ui_support`` path. Skips when no such dataset is cached.
+``converters.pipeline`` core. Skips when no such dataset is cached.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from anndata_proteomics.scripts import _ui_support as ui
+from anndata_proteomics.converters import pipeline as ui
 
 _LEVELS = ["ion", "protein", "fragment"]
 

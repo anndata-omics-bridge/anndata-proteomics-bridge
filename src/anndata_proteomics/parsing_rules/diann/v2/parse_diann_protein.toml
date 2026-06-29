@@ -1,23 +1,20 @@
-schema_version = "0.1"
+# DIA-NN protein level (v2 = DIA-NN 2.x). Inherits shared blocks (software_name, input_shape,
+# axis.obs_keys, columns.obs.select, [modifications]) from ../../diann.toml; overrides
+# axis.duplicates to keep_first.
+#
+# DIA-NN 2.x dropped PG.Normalised / PG.Quantity from report.tsv; only PG.MaxLFQ (+ Genes.MaxLFQ)
+# remain. Same projection as the v1 protein rule (keep_first, since PG values are pre-aggregated
+# and repeated per (Run, Protein.Group)), with the leaner layers.
 file_version = "2"
-software_name = "DIA-NN"
 software_version = "^2\\..*"
-input_shape = "long"
 quantification_level = "protein"
 
-# DIA-NN 2.x (this folder = v2) dropped PG.Normalised / PG.Quantity from report.tsv; only
-# PG.MaxLFQ (+ Genes.MaxLFQ) remain. Same projection as the v1 protein rule (keep_first, since
-# PG values are pre-aggregated and repeated per (Run, Protein.Group)), with the leaner layers.
 [axis]
-obs_keys = ["Run"]
 var_keys = ["Protein_Group"]
 x_layer = "PG_MaxLFQ"
 
 [axis.duplicates]
 mode = "keep_first"
-
-[columns.obs.select]
-Run = "Run"
 
 [columns.var.select]
 Protein_Group = "Protein.Group"

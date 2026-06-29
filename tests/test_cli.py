@@ -138,7 +138,7 @@ source = "Intensity"
     assert "wrote" in err
 
 
-def test_convert_returns_one_when_recognition_fails(
+def test_convert_returns_one_when_vendor_not_detected(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     data_path = tmp_path / "unknown.csv"
@@ -146,4 +146,16 @@ def test_convert_returns_one_when_recognition_fails(
     rc = convert(data_path)
     captured = capsys.readouterr()
     assert rc == 1
-    assert "auto-recognize" in (captured.out + captured.err).lower()
+    assert "auto-detect" in (captured.out + captured.err).lower()
+
+
+def test_convert_requires_params_without_rule_toml(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --software bypasses vendor detection, so the missing-params branch is reached.
+    data_path = tmp_path / "x.tsv"
+    data_path.write_text("Run\tSequence\nS1\tP1\n")
+    rc = convert(data_path, software="diann")
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "--params" in (captured.out + captured.err)

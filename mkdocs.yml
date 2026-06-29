@@ -1,0 +1,56 @@
+site_name: APB Documentation
+site_description: Convert proteomics software output to AnnData and MuData.
+repo_url: https://github.com/anndata-omics-bridge/anndata-proteomics-bridge
+docs_dir: docs
+site_dir: public
+
+# Emit real .html files with relative links so the site can be browsed directly
+# from disk via public/index.html.
+use_directory_urls: false
+
+exclude_docs: |
+  Makefile
+  *.html
+  _*.html
+  _*.lua
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - toc.integrate
+    - content.code.copy
+    - search.suggest
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Architecture:
+      - Package Architecture: ARCHITECTURE.md
+      - Parsing Architecture: parsing_architecture.md
+  - Reference:
+      - TOML Schema: toml_schema.md
+      - Parameter Parsers: parameter_parsers.md
