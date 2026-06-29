@@ -349,10 +349,8 @@ cannot fit every version. Version-dependent levels live in **version subfolders*
 software version:
 
 ```text
-parsing_rules/diann/
+src/anndata_proteomics/parsing_rules/diann/
   parse_diann_ion.toml          # version-agnostic levels live at the vendor root
-  parse_diann_peptidoform.toml
-  parse_diann_peptide.toml
   v1/ parse_diann_protein.toml  # 1.x: PG.Normalised/PG.Quantity present
       parse_diann_fragment.toml #      positional fragment (no Fragment.Info)
   v2/ parse_diann_protein.toml  # 2.x: PG.MaxLFQ + Genes.MaxLFQ only
@@ -386,7 +384,7 @@ the merged rule. This is **convention only — there is no `extends`/include key
 the relationship is inferred from the directory layout:
 
 ```text
-parsing_rules/diann/
+src/anndata_proteomics/parsing_rules/diann/
   diann.toml                    # BASE: blocks common to every diann level (merged into each leaf)
   parse_diann_ion.toml          # leaf: only ion-specific content
   v1/ parse_diann_fragment.toml # leaf in a version folder: still merges ../../diann.toml
@@ -543,9 +541,8 @@ accession = "UNIMOD:35"
 - Long: DIA-NN, Spectronaut, MaxQuant (evidence-like).
 - Wide: FragPipe, PEAKS, WOMBAT.
 
-DIA-NN ships all five levels from one `report.tsv` —
-`parse_diann_{ion,peptidoform,peptide,protein,fragment}_1.toml` — demonstrating the
-one-TOML-per-level pattern.
+DIA-NN currently ships ion, v1 fragment, and v1/v2 protein rules from one
+`report.tsv`, demonstrating the one-TOML-per-level pattern.
 
 This is why a layer's single `source` is interpreted per `input_shape`: an exact column
 name for long rules, a `(?P<sample>...)` regex for wide rules.
@@ -553,7 +550,7 @@ name for long rules, a `(?P<sample>...)` regex for wide rules.
 ## Adding a new vendor
 
 1. Copy the closest-matching shipped TOML into a new
-   `parsing_rules/<vendor>/parse_<vendor>_<level>_1.toml`.
+   `src/anndata_proteomics/parsing_rules/<vendor>/parse_<vendor>_<level>_1.toml`.
 2. Update `software_name`, `software_version`, `input_shape`,
    `quantification_level`.
 3. Replace `[columns.var.select]` RHS values with the new vendor's

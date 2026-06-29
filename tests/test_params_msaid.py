@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.params.msaid import extract_params
+from anndata_proteomics.params.parsers.msaid import extract_params
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 

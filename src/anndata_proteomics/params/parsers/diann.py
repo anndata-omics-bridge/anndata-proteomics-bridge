@@ -9,7 +9,7 @@ from typing import IO, Optional, Union
 
 from packaging.version import Version
 
-from anndata_proteomics.params._common import read_lines
+from anndata_proteomics.params.parsers._common import read_lines
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 _Source = Union[str, Path, IO]

@@ -10,7 +10,7 @@ from typing import IO, Union
 
 import pandas as pd
 
-from anndata_proteomics.params._common import lookup_mass_mod, read_text
+from anndata_proteomics.params.parsers._common import lookup_mass_mod, read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 Parameter = namedtuple("Parameter", ["name", "value", "comment"])
@@ -191,8 +191,8 @@ def _tolerances(fp: pd.Series) -> tuple[str, MassTolerance]:
     """
     precursor_unit = "ppm" if int(fp.loc["msfragger.precursor_mass_units"]) else "Da"
     precursor_tol = (
-        f'[{fp.loc["msfragger.precursor_mass_lower"]} {precursor_unit}, '
-        f'{fp.loc["msfragger.precursor_mass_upper"]} {precursor_unit}]'
+        f"[{fp.loc['msfragger.precursor_mass_lower']} {precursor_unit}, "
+        f"{fp.loc['msfragger.precursor_mass_upper']} {precursor_unit}]"
     )
     fragment_unit = "ppm" if int(fp.loc["msfragger.fragment_mass_units"]) else "Da"
     fragment_tol = MassTolerance(
@@ -227,9 +227,9 @@ def _fdr_and_mbr(
         enable_mbr = bool(int(fp.loc["ionquant.mbr"]))
     elif is_diann:
         enable_mbr = (
-            ("diann.fragpipe.cmd-opts" in fp.index and "--reanalyse" in fp.loc["diann.fragpipe.cmd-opts"])
-            or ("diann.cmd-opts" in fp.index and "--reanalyse" in fp.loc["diann.cmd-opts"])
-        )
+            "diann.fragpipe.cmd-opts" in fp.index
+            and "--reanalyse" in fp.loc["diann.fragpipe.cmd-opts"]
+        ) or ("diann.cmd-opts" in fp.index and "--reanalyse" in fp.loc["diann.cmd-opts"])
         quantification_method = _DIANN_QUANT[int(fp.loc["diann.quantification-strategy"])]
 
     return psm, peptide_fdr, protein_fdr, abundance_norm, enable_mbr, quantification_method
@@ -280,7 +280,9 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
             fragpipe_version = match.group(1)
 
     precursor_tol, fragment_tol = _tolerances(fp)
-    psm, peptide_fdr, protein_fdr, abundance_norm, enable_mbr, quantification_method = _fdr_and_mbr(fp)
+    psm, peptide_fdr, protein_fdr, abundance_norm, enable_mbr, quantification_method = _fdr_and_mbr(
+        fp
+    )
     min_z, max_z = _charge_range(fp)
     min_prec_mz, max_prec_mz = _precursor_mz(fp, min_z, max_z)
 

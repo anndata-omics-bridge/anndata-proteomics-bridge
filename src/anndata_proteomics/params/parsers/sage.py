@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import IO, Union
 
-from anndata_proteomics.params._common import format_tolerance_range, lookup_mass_mod, read_text
+from anndata_proteomics.params.parsers._common import (
+    format_tolerance_range,
+    lookup_mass_mod,
+    read_text,
+)
 from anndata_proteomics.params.model import Parameters
 
 # Mass shift (Da) -> human-readable modification name, matched within MASS_TOLERANCE.

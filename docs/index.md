@@ -1,8 +1,7 @@
 # APB Documentation
 
 APB converts proteomics vendor output into AnnData and MuData through declarative
-parsing rules. The package is a library plus the `apb` CLI; GUI and workflow
-orchestration live in the sibling `apb_studio` package.
+parsing rules. The package is a library plus the `apb` CLI; it ships no GUI.
 
 ## Where to go next
 

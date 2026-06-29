@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import IO, Optional, Union
 
-from anndata_proteomics.params._common import homogenize_paren_mods, read_lines
+from anndata_proteomics.params.parsers._common import homogenize_paren_mods, read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
@@ -58,9 +58,7 @@ def _value_regex(lines: list[str], pattern: str) -> Optional[str]:
     return None
 
 
-def _extract_tolerances(
-    lines: list[str], system: str
-) -> tuple[Optional[str], Optional[str]]:
+def _extract_tolerances(lines: list[str], system: str) -> tuple[Optional[str], Optional[str]]:
     in_tolerance_block = False
     in_system_block = False
     calibration: Optional[str] = None
@@ -87,7 +85,9 @@ def _extract_tolerances(
         if calibration in ("Static", "Relative"):
             unit = "Th" if calibration == "Static" else "ppm"
             ms1_pat, ms2_pat = (
-                (_MS1_STATIC, _MS2_STATIC) if calibration == "Static" else (_MS1_RELATIVE, _MS2_RELATIVE)
+                (_MS1_STATIC, _MS2_STATIC)
+                if calibration == "Static"
+                else (_MS1_RELATIVE, _MS2_RELATIVE)
             )
             if ms1 is None:
                 hit = ms1_pat.search(line)
@@ -111,8 +111,7 @@ def extract_params(source: _Source) -> Parameters:
     vendor = _value(lines, "Vendor:")
     if vendor not in _VENDOR_SYSTEM_MAP:
         raise ValueError(
-            f"unknown Spectronaut vendor: {vendor!r}; expected one of "
-            f"{sorted(_VENDOR_SYSTEM_MAP)}"
+            f"unknown Spectronaut vendor: {vendor!r}; expected one of {sorted(_VENDOR_SYSTEM_MAP)}"
         )
     system = _VENDOR_SYSTEM_MAP[vendor]
 

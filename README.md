@@ -233,18 +233,9 @@ accession = "UNIMOD:35"     # → oxidation
 
 Vendors that encode modifications as **mass deltas** rather than UniMod names use the same mechanism with a different pattern and map keys — e.g. FragPipe writes `M[15.9949]`, so `token_pattern = "\\[([^\\]]+)\\]"` and `token = "15.9949"` → `accession = "UNIMOD:35"`.
 
-## Interactive tools
+## Scope
 
-apb is a pure library + `apb` CLI — it ships **no** GUI and does not depend on marimo. All
-interactive [marimo](https://marimo.io) tooling lives in the sibling **`apb_studio`** package (in
-its own repo), which drives apb entirely through the `apb` CLI:
-
-- the **test-data browser** (`apb_studio … ui/test_tool.py`, `make test-tool`) — browse the
-  ProteoBench corpus, convert a dataset (shelling out to `apb convert`), and inspect the result;
-- the **corpus dashboard** + Snakemake pipeline (`make ui`) for whole-corpus coverage.
-
-apb_studio consumes apb as a sibling install and imports only apb's pure read-only helpers for
-catalog/metadata — conversion itself always runs via the CLI.
+APB is a pure library plus the `apb` CLI. It ships no GUI.
 
 ## Limitations & next steps
 

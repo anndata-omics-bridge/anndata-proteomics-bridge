@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import IO, Union
 
-from anndata_proteomics.params._common import read_text
+from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 _Source = Union[str, Path, IO]

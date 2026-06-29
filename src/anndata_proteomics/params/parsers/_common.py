@@ -78,9 +78,7 @@ def homogenize_paren_mods(mod: str, mapping: Mapping[str, str]) -> str:
     return ", ".join(f"{aa}[{name}]" for aa in residues)
 
 
-def lookup_mass_mod(
-    mass: float, mapping: Mapping[float, str], *, tol: float = 0.001
-) -> str | None:
+def lookup_mass_mod(mass: float, mapping: Mapping[float, str], *, tol: float = 0.001) -> str | None:
     """Return the modification name whose reference mass is within *tol* of *mass*, else ``None``.
 
     The mass→name table and any fallback are per-vendor; only this nearest-match

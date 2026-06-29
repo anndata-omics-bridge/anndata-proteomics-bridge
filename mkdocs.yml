@@ -10,6 +10,7 @@ use_directory_urls: false
 
 exclude_docs: |
   Makefile
+  render_docs.sh
   *.html
   _*.html
   _*.lua

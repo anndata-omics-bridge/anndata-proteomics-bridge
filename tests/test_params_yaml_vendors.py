@@ -7,9 +7,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.alphapept import extract_params as alphapept_extract
+from anndata_proteomics.params.parsers.alphapept import extract_params as alphapept_extract
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.params.wombat import extract_params as wombat_extract
+from anndata_proteomics.params.parsers.wombat import extract_params as wombat_extract
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
@@ -56,7 +56,11 @@ def test_alphapept_matches_proteobench(yaml_name):
     if not yaml_path.exists():
         pytest.skip("ProteoBench fixture missing")
     params = alphapept_extract(yaml_path)
-    _compare(params, csv_path, extra=["ident_fdr_psm", "ident_fdr_protein", "fixed_mods", "variable_mods"])
+    _compare(
+        params,
+        csv_path,
+        extra=["ident_fdr_psm", "ident_fdr_protein", "fixed_mods", "variable_mods"],
+    )
 
 
 def test_wombat_matches_proteobench():

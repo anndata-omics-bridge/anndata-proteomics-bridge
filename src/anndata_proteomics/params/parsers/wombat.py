@@ -7,7 +7,7 @@ from typing import IO, Union
 
 import yaml
 
-from anndata_proteomics.params._common import read_text
+from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import Parameters
 
 

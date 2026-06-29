@@ -5,18 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Union
 
-from anndata_proteomics.params.alphapept import extract_params as _alphapept_extract
-from anndata_proteomics.params.diann import extract_params as _diann_extract
-from anndata_proteomics.params.fragpipe import extract_params as _fragpipe_extract
-from anndata_proteomics.params.maxquant import extract_params as _maxquant_extract
-from anndata_proteomics.params.metamorpheus import extract_params as _metamorpheus_extract
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.params.msaid import extract_params as _msaid_extract
-from anndata_proteomics.params.peaks import extract_params as _peaks_extract
-from anndata_proteomics.params.sage import extract_params as _sage_extract
-from anndata_proteomics.params.spectronaut import extract_params as _spectronaut_extract
-from anndata_proteomics.params.wombat import extract_params as _wombat_extract
-
+from anndata_proteomics.params.parsers.alphapept import extract_params as _alphapept_extract
+from anndata_proteomics.params.parsers.diann import extract_params as _diann_extract
+from anndata_proteomics.params.parsers.fragpipe import extract_params as _fragpipe_extract
+from anndata_proteomics.params.parsers.maxquant import extract_params as _maxquant_extract
+from anndata_proteomics.params.parsers.metamorpheus import extract_params as _metamorpheus_extract
+from anndata_proteomics.params.parsers.msaid import extract_params as _msaid_extract
+from anndata_proteomics.params.parsers.peaks import extract_params as _peaks_extract
+from anndata_proteomics.params.parsers.sage import extract_params as _sage_extract
+from anndata_proteomics.params.parsers.spectronaut import extract_params as _spectronaut_extract
+from anndata_proteomics.params.parsers.wombat import extract_params as _wombat_extract
 
 ParseFn = Callable[..., Parameters]
 
@@ -41,8 +40,7 @@ def get_parser(software: str) -> ParseFn:
     key = software.lower()
     if key not in _REGISTRY:
         raise KeyError(
-            f"no parameter parser registered for {software!r}; "
-            f"available: {sorted(_REGISTRY)}"
+            f"no parameter parser registered for {software!r}; available: {sorted(_REGISTRY)}"
         )
     return _REGISTRY[key]
 

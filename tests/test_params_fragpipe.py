@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.fragpipe import extract_params
+from anndata_proteomics.params.parsers.fragpipe import extract_params
 from anndata_proteomics.params.model import Parameters
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"

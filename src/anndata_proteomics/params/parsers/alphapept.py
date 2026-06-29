@@ -7,7 +7,7 @@ from typing import IO, Union
 
 import yaml
 
-from anndata_proteomics.params._common import read_text
+from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 MODIFICATION_MAPPING = {
@@ -33,8 +33,16 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     if enzyme == "trypsin":
         enzyme = "Trypsin"
 
-    fixed = list(fasta["mods_fixed"]) + list(fasta["mods_fixed_terminal"]) + list(fasta["mods_fixed_terminal_prot"])
-    variable = list(fasta["mods_variable"]) + list(fasta["mods_variable_terminal"]) + list(fasta["mods_variable_terminal_prot"])
+    fixed = (
+        list(fasta["mods_fixed"])
+        + list(fasta["mods_fixed_terminal"])
+        + list(fasta["mods_fixed_terminal_prot"])
+    )
+    variable = (
+        list(fasta["mods_variable"])
+        + list(fasta["mods_variable_terminal"])
+        + list(fasta["mods_variable_terminal_prot"])
+    )
 
     unit = "ppm" if search["ppm"] else "Da"
     prec_tol = MassTolerance(mode="absolute", value=float(search["prec_tol"]), unit=unit)
@@ -48,7 +56,9 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
         enzyme=enzyme,
         allowed_miscleavages=fasta["n_missed_cleavages"],
         fixed_mods=", ".join(MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in fixed),
-        variable_mods=", ".join(MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in variable),
+        variable_mods=", ".join(
+            MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in variable
+        ),
         max_mods=fasta["n_modifications_max"],
         min_peptide_length=fasta["pep_length_min"],
         max_peptide_length=fasta["pep_length_max"],

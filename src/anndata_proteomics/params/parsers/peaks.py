@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import IO, Union
 
-from anndata_proteomics.params._common import read_lines
+from anndata_proteomics.params.parsers._common import read_lines
 from anndata_proteomics.params.model import Parameters
 
 _Source = Union[str, Path, IO]
@@ -86,7 +86,9 @@ def extract_params(source: _Source) -> Parameters:
     try:
         charge_range = _value(lines, "Precursor Charge between:").split(",")
     except AttributeError:
-        charge_range = _value(lines, "Charge between:").replace("[", "").replace("]", "").split(" - ")
+        charge_range = (
+            _value(lines, "Charge between:").replace("[", "").replace("]", "").split(" - ")
+        )
 
     min_prec_mz = max_prec_mz = min_frag_mz = max_frag_mz = None
     try:

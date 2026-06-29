@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.maxquant import extract_params
+from anndata_proteomics.params.parsers.maxquant import extract_params
 from anndata_proteomics.params.model import Parameters
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"

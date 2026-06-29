@@ -9,7 +9,7 @@ from typing import IO, Union
 
 import pandas as pd
 
-from anndata_proteomics.params._common import homogenize_paren_mods
+from anndata_proteomics.params.parsers._common import homogenize_paren_mods
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
 XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
@@ -86,9 +86,7 @@ def _extend(t: KeyPath, target_length: int) -> KeyPath:
     return t + (None,) * (target_length - len(t))
 
 
-def _flatten(
-    d: dict[str, XmlValue], parent_key: KeyPath = ()
-) -> list[tuple[KeyPath, FlatValue]]:
+def _flatten(d: dict[str, XmlValue], parent_key: KeyPath = ()) -> list[tuple[KeyPath, FlatValue]]:
     items: list[tuple[KeyPath, FlatValue]] = []
     for key, value in d.items():
         new_key = parent_key + (key,)
@@ -113,10 +111,18 @@ def _build_series(record: dict[str, XmlValue], index_length: int = 4) -> pd.Seri
 
 def _tolerance_pair(series: pd.Series) -> tuple[MassTolerance, MassTolerance]:
     """Build precursor (ppm) and fragment (ppm/Da) tolerances from the mqpar series."""
-    prec_value = float(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze())
+    prec_value = float(
+        series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze()
+    )
     precursor = MassTolerance(mode="absolute", value=prec_value, unit="ppm")
-    frag_value = float(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze())
-    in_ppm = bool(series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchToleranceInPpm", :]].squeeze())
+    frag_value = float(
+        series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze()
+    )
+    in_ppm = bool(
+        series.loc[
+            pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchToleranceInPpm", :]
+        ].squeeze()
+    )
     fragment = MassTolerance(mode="absolute", value=frag_value, unit="ppm" if in_ppm else "Da")
     return precursor, fragment
 
@@ -139,7 +145,9 @@ def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:
     if not isinstance(fixed_mods, str):
         fixed_mods = ",".join(fixed_mods)
 
-    variable_mods = series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]].squeeze()
+    variable_mods = series.loc[
+        pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]
+    ].squeeze()
     if not isinstance(variable_mods, str):
         variable_mods = ",".join(variable_mods)
 
@@ -180,12 +188,18 @@ def extract_params(
         fragment_mass_tolerance=fragment_tolerance,
         enzyme=series.loc[("parameterGroups", "parameterGroup", "enzymes", "string")].squeeze(),
         semi_enzymatic=enzyme_mode != 0,
-        allowed_miscleavages=int(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "maxMissedCleavages", :]].squeeze()),
+        allowed_miscleavages=int(
+            series.loc[
+                pd.IndexSlice["parameterGroups", "parameterGroup", "maxMissedCleavages", :]
+            ].squeeze()
+        ),
         min_peptide_length=_min_peptide_length(series),
         max_peptide_length=None,
         fixed_mods=fixed_mods,
         variable_mods=variable_mods,
         max_mods=int(series.loc[("parameterGroups", "parameterGroup", "maxNmods")].squeeze()),
         min_precursor_charge=None,
-        max_precursor_charge=int(series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "maxCharge", :]].squeeze()),
+        max_precursor_charge=int(
+            series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "maxCharge", :]].squeeze()
+        ),
     )

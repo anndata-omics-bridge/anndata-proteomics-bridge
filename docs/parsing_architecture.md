@@ -13,10 +13,13 @@ Two distinct "parsing" concerns to keep separate:
 
 ---
 
-## Module dependency overview
+## Module Dependency Overview
 
 Arrows mean **"imports / depends on"**. `rules` and `readers` are leaves; `converters` is the
 orchestrator that pulls everything together.
+
+**Figure:** the package dependency map. `converters` coordinates readers, rules,
+modifications, and optional parameters; the lower packages remain reusable.
 
 ```mermaid
 flowchart TD
@@ -42,20 +45,26 @@ flowchart TD
 
 ---
 
-## `params/` — vendor parameter-file parsing
+## `params/` — Vendor Parameter-File Parsing
 
 **Parses a vendor search-parameter file into one typed `Parameters` record** — the model for
 parameter-file parsing.
 
 - **Inputs:** DIA-NN log/cfg, MaxQuant `mqpar.xml`, Sage JSON, AlphaPept / WOMBAT YAML,
   FragPipe `.workflow`, PEAKS / Spectronaut text, MSAID, MetaMorpheus.
-- **Entry point:** each vendor module exposes `extract_params(source) -> Parameters`.
+- **Entry point:** each module under `params/parsers/` exposes
+  `extract_params(source) -> Parameters`.
 - **Dispatch:** `registry.py` looks up the parser by software name.
-- **Reading:** `_common.py` centralizes file I/O (`read_text` / `read_lines`).
+- **Reading:** `params/parsers/_common.py` centralizes file I/O
+  (`read_text` / `read_lines`).
 - **AnnData I/O:** `anndata_io.py` reads/writes a `Parameters` into `adata.uns`.
 
 See [parameter_parsers.md](parameter_parsers.md) for the per-vendor breakdown (input formats,
 parse techniques, and the three modification-mapping families).
+
+**Figure:** the parameter model. Vendor parsers construct one `Parameters`
+object; pydantic validators normalize tolerances, FDR values, enzymes, and
+searched modifications.
 
 ```mermaid
 classDiagram
@@ -102,7 +111,7 @@ classDiagram
 
 ---
 
-## `modifications/` — modification-string parsing & models
+## `modifications/` — Modification-String Parsing And Models
 
 **Normalizes peptide modifications** — modification identities/strings, distinct from `params/`
 (whole-file settings). Two jobs:
@@ -114,6 +123,10 @@ classDiagram
 - **Searched modifications:** `SearchedModification` models fixed/variable mods from parameter
   files, for SDRF export (`sdrf.py`).
 - **Rendering:** `proforma.py` renders the ProForma string.
+
+**Figure:** runtime modification models. Rule-map entries resolve vendor tokens
+to UniMod-backed occurrences; searched modifications from parameter files use
+the same identity model.
 
 ```mermaid
 classDiagram
@@ -172,7 +185,7 @@ classDiagram
 
 ---
 
-## `rules/` — the TOML parsing-rule schema
+## `rules/` — TOML Parsing-Rule Schema
 
 **Defines and loads the TOML parsing-rule schema** that tells the converters how to turn a
 vendor table into AnnData. A leaf subpackage (imports no other subpackage).
@@ -182,6 +195,10 @@ vendor table into AnnData. A leaf subpackage (imports no other subpackage).
 - `loader.py` — parse + validate a TOML file.
 - `registry.py` — find packaged rules by `(software, level, version)`.
 - `validate.py` — validate rule files.
+
+**Figure:** the TOML schema model. `ParseRule` owns axis definitions, column
+selection/computation, layers, optional modification rules, and optional
+fragment handling.
 
 ```mermaid
 classDiagram
@@ -255,12 +272,15 @@ classDiagram
 
 ---
 
-## `readers/` — tabular file reading
+## `readers/` — Tabular File Reading
 
 **Reads a quant table into a pandas `DataFrame`.** A leaf subpackage.
 
 - `tabular.py` — per-format readers (csv / tsv / parquet).
 - `dispatch.read_table` — picks a reader by file extension.
+
+**Figure:** file-extension dispatch. The reader layer has no vendor semantics;
+it only returns a `DataFrame`.
 
 ```mermaid
 flowchart LR
@@ -275,7 +295,7 @@ flowchart LR
 
 ---
 
-## `converters/` — DataFrame + ParseRule → AnnData
+## `converters/` — DataFrame + ParseRule To AnnData
 
 **Turns a `DataFrame` + a `ParseRule` into an `AnnData`.**
 
@@ -285,6 +305,9 @@ flowchart LR
 - `assemble.to_anndata` — builds the `AnnData` (rule stored in `uns`).
 - `recognize.py` — auto-picks a rule from table headers.
 - When a `params_path` is given, parsed `Parameters` are attached to `uns`.
+
+**Figure:** conversion internals. A rule may first normalize modified sequences,
+then materialize columns and choose the long or wide conversion strategy.
 
 ```mermaid
 flowchart TD
@@ -313,13 +336,16 @@ flowchart TD
 
 ### A. Vendor parameter file → `Parameters`
 
+**Figure:** parameter parsing sequence. Registry dispatch selects the vendor
+parser; the typed model performs the shared validation and normalization.
+
 ```mermaid
 sequenceDiagram
     autonumber
     participant Caller
     participant Reg as params.registry
-    participant V as params vendor
-    participant Common as params._common
+    participant V as params.parsers vendor
+    participant Common as params.parsers._common
     participant Model as params.model.Parameters
 
     Caller->>Reg: parse_params(path, software)
@@ -334,6 +360,9 @@ sequenceDiagram
 ```
 
 ### B. Rule TOML + table → `AnnData` (+ optional params)
+
+**Figure:** table conversion sequence. A loaded rule and read table flow through
+the converter; optional parameter files are attached to `uns`.
 
 ```mermaid
 sequenceDiagram
