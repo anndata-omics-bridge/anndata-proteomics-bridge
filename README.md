@@ -2,6 +2,8 @@
 
 Convert proteomics quantification output into **AnnData / MuData** using declarative TOML parsing rules.
 
+**Documentation:** <https://anndata-omics-bridge.github.io/anndata-proteomics-bridge/>
+
 - **Declarative, not bespoke.** Every vendor × quantification-level is a small TOML rule shipped inside the package — adding or fixing a converter means editing a `.toml`, not writing tool-specific Python.
 - **One file → a multi-level MuData.** A single vendor export is converted into a MuData whose modalities are the quantification levels it provides (`ion` / `fragment` / `peptidoform` / `protein`) on a shared run axis — or a single-level AnnData when you ask for one level.
 - **Standardised content.** Peptide modifications are normalised to **ProForma**; a per-vendor parser reads the vendor **parameter file** (enzyme, FDR, tolerances, …) into one typed record under `uns['search_parameters']`.
