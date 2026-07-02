@@ -30,6 +30,7 @@ dependencies = [
 
 [project.scripts]
 apb = "anndata_proteomics.scripts.cli:main"
+apb-testdata = "anndata_proteomics.scripts.extract_raw_file_db:main"
 
 [project.optional-dependencies]
 dev = [

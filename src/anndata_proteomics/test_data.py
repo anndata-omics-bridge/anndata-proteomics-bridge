@@ -33,9 +33,11 @@ _MODULE_FASTA: dict[str, str] = {
     "dia_singlecell": "ProteoBenchFASTA_DDAQuantification_noecoli.fasta",
 }
 
-# ProteoBench checks in a representative parameter file per tool. Same workspace
-# layout used by the tests in `tests/test_params_*.py`.
-PROTEOBENCH_PARAMS_DIR = REPO_ROOT.parent / "ProteoBench" / "test" / "params"
+# A representative parameter file per tool, committed in-repo under tests/params/
+# (the same fixtures the tests/test_params_*.py suite reads). Kept in-repo so the
+# CLI integration test and the report generator need no external ProteoBench
+# checkout.
+PARAM_FIXTURE_DIR = REPO_ROOT / "tests" / "params"
 
 # One canonical sample per packaged tool, keyed by the rule's software_name.
 _PROTEOBENCH_PARAM_FIXTURES: dict[str, str] = {
@@ -63,9 +65,7 @@ def find_test_data(software_name: str) -> Path | None:
     return None
 
 
-def find_fasta(
-    *, dataset_dir: Path | None = None, module: str | None = None
-) -> Path | None:
+def find_fasta(*, dataset_dir: Path | None = None, module: str | None = None) -> Path | None:
     """Return the cached ProteoBench FASTA for a module, or None if missing.
 
     Pass either ``module`` (the ProteoBench module key as it appears in
@@ -76,7 +76,7 @@ def find_fasta(
 
     Returns the absolute path to the unzipped FASTA, or ``None`` when
     the FASTA cache has not been downloaded yet
-    (``make -C test_data_download fasta``).
+    (``cd test_data_download && make fasta``).
     """
     if module is None and dataset_dir is not None:
         module = _module_for_dataset(dataset_dir)
@@ -97,10 +97,7 @@ def _module_for_dataset(dataset_dir: Path) -> str | None:
     with open(DOWNLOADED_DB) as f:
         for row in csv.DictReader(f):
             cached = TEST_DATA_DIR / "json_dir" / row["input_file_path"]
-            if (
-                str(cached.resolve()) == target
-                or str(cached.parent.resolve()) == target
-            ):
+            if str(cached.resolve()) == target or str(cached.parent.resolve()) == target:
                 return row.get("module")
     return None
 
@@ -108,12 +105,12 @@ def _module_for_dataset(dataset_dir: Path) -> str | None:
 def find_param_file(software_name: str) -> Path | None:
     """Return a sample parameter file for ``software_name``, or None.
 
-    Resolves against the workspace-local ProteoBench fixtures directory.
-    Returns None when no fixture is registered for the tool or the file
-    is missing on disk.
+    Resolves against the in-repo ``tests/params/`` fixtures directory. Returns
+    None when no fixture is registered for the tool or the file is missing on
+    disk.
     """
     fixture = _PROTEOBENCH_PARAM_FIXTURES.get(software_name)
     if fixture is None:
         return None
-    path = PROTEOBENCH_PARAMS_DIR / fixture
+    path = PARAM_FIXTURE_DIR / fixture
     return path if path.exists() else None

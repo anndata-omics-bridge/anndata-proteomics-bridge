@@ -7,10 +7,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Optional, Union
 
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 from anndata_proteomics.params.parsers._common import read_lines
-from anndata_proteomics.params.model import MassTolerance, Parameters
+from anndata_proteomics.params.model import MassTolerance, Parameters, ParamsError
 
 _Source = Union[str, Path, IO]
 
@@ -128,13 +128,29 @@ def _find_cmdline(lines: list[str]) -> Optional[str]:
     return None
 
 
+def _version_below(software_version: str, threshold: str) -> bool:
+    """DIA-NN version < threshold, tolerant of a missing/unparseable version string.
+
+    A param-less or non-DIA-NN file yields an empty version; treat it as "not below" (the newer-DIA-NN
+    branch) instead of crashing on ``Version("")`` — see ``extract_params`` for the clean rejection of
+    files that are not DIA-NN parameter files at all.
+    """
+    head = (software_version or "").split(" ")[0]
+    try:
+        return Version(head) < Version(threshold)
+    except InvalidVersion:
+        return False
+
+
 def _parse_cmdline(cmd: str, software_version: str) -> dict[str, _SettingValue]:
     settings: dict[str, _SettingValue] = {}
     var_mods: list[str] = []
     fixed_mods: list[str] = []
-    below_1_8 = Version(software_version.split(" ")[0]) < Version("1.8")
+    below_1_8 = _version_below(software_version, "1.8")
 
     for parts in (s.split() for s in cmd.split(" --")):
+        if not parts:  # empty token (e.g. an empty command line) — nothing to parse
+            continue
         key, values = parts[0], parts[1:]
         if key.startswith("unimod"):
             if len(parts) != 1:
@@ -344,6 +360,13 @@ def extract_params(source: _Source) -> Parameters:
     lines = read_lines(source)
     software_version = _extract_with_regex(lines, _SOFTWARE_VERSION)
     cmdline = _find_cmdline(lines) or ""
+    if not software_version and not cmdline:
+        # Neither a DIA-NN version banner nor a `diann --...` command line: this is not a DIA-NN
+        # parameter file (e.g. a FragPipe `.workflow` mis-attached to a DIA-NN submission). Reject
+        # cleanly so callers can degrade instead of parsing garbage or crashing.
+        raise ParamsError(
+            "not a DIA-NN parameter file: no 'diann --' command line or DIA-NN version string found"
+        )
     cfg_used = bool(cmdline) and "--cfg" in cmdline
     cmd_dict = _parse_cmdline(cmdline, software_version or "")
 

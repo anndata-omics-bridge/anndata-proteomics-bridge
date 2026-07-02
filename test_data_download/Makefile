@@ -8,19 +8,19 @@ help:  ## Show this help message.
 catalog: raw_file_db_full.csv  ## Build the full catalog CSV by downloading datapoint JSONs for all 8 quant modules.
 
 raw_file_db_full.csv:
-	uv run python extract_raw_file_db.py catalog \
+	uv run apb-testdata catalog \
 		--json-dir ./json_dir \
 		--output ./raw_file_db_full.csv
 
 select: raw_file_db_selected.csv  ## Reduce the catalog to one row per (module, software, version) -> raw_file_db_selected.csv.
 
 raw_file_db_selected.csv: raw_file_db_full.csv
-	uv run python extract_raw_file_db.py select \
+	uv run apb-testdata select \
 		--input ./raw_file_db_full.csv \
 		--output ./raw_file_db_selected.csv
 
 download: raw_file_db_selected.csv  ## Download raw quantification files for the selected rows -> raw_file_db_downloaded.csv.
-	uv run python extract_raw_file_db.py download \
+	uv run apb-testdata download \
 		--input ./raw_file_db_selected.csv \
 		--json-dir ./json_dir \
 		--output ./raw_file_db_downloaded.csv

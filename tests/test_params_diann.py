@@ -75,3 +75,28 @@ def test_diann_matches_proteobench(txt_name):
         if str(a) != str(e):
             mismatches.append((f, a, e))
     assert not mismatches, f"Mismatched fields in {txt_name}: {mismatches}"
+
+
+# --- graceful degrade: a non-DIA-NN param file must not crash the parser (root-cause fix) --------
+
+
+def test_extract_params_rejects_non_diann_file_cleanly(tmp_path):
+    # A FragPipe workflow file mis-attached to a DIA-NN submission (real ProteoBench case): no
+    # `diann --` command line and no DIA-NN version banner → a clean ParamsError, NOT InvalidVersion.
+    from anndata_proteomics.params.model import ParamsError
+
+    bad = tmp_path / "param_0..workflow"
+    bad.write_text("# FragPipe (22.0) runtime properties\nfragpipe.config.bin-msfragger=/x\n")
+    with pytest.raises(ParamsError, match="not a DIA-NN parameter file"):
+        extract_params(bad)
+
+
+def test_version_below_tolerates_missing_or_garbage_version():
+    # The crash was Version("") in the <1.8 gate; an absent/garbage version must degrade to False,
+    # never raise InvalidVersion.
+    from anndata_proteomics.params.parsers.diann import _version_below
+
+    assert _version_below("", "1.8") is False
+    assert _version_below("not-a-version", "1.8") is False
+    assert _version_below("1.7", "1.8") is True
+    assert _version_below("1.9", "1.8") is False

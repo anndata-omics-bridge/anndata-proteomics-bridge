@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from anndata_proteomics.modifications.pipeline import apply_modifications
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.registry import available_software, parse_params
 from anndata_proteomics.rules.schema import ColumnCompute, ColumnGroup, ParseRule
+
+logger = logging.getLogger(__name__)
 
 
 def to_anndata(pieces: ConversionPieces, rule: ParseRule) -> ad.AnnData:
@@ -217,12 +220,29 @@ def _format_charge(value: object) -> str:
 
 
 def _attach_search_parameters(adata: ad.AnnData, params_path: str | Path, software: str) -> None:
-    """Parse ``params_path`` and store the result under ``uns``."""
+    """Parse ``params_path`` and store the result under ``uns``.
+
+    Parameter parsing is best-effort metadata extraction over user-supplied files (e.g. ProteoBench
+    uploads, which sometimes bundle a param file for the wrong tool). A parse failure must NOT abort
+    the conversion of otherwise-valid quant data: on failure we keep the source path, record a
+    ``search_parameters_error`` under ``uns`` (a machine-readable flag downstream tools surface), log a
+    warning, and return. The specific parser bugs behind the common failures are fixed at the source
+    (e.g. the DIA-NN parser rejecting a non-DIA-NN file cleanly); this boundary is the graceful
+    degrade the flag rides on.
+    """
     software_key = software.lower()
     available = {s.lower() for s in available_software()}
     if software_key not in available:
         # No parser yet for this vendor — keep the path as provenance, skip parsing.
         adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
         return
-    params = parse_params(params_path, software=software_key)
+    try:
+        params = parse_params(params_path, software=software_key)
+    except Exception as exc:  # noqa: BLE001 - degrade on ANY malformed param file; surface, never hide
+        logger.warning(
+            "could not parse %s search parameters from %s: %s", software, params_path, exc
+        )
+        adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
+        adata.uns["anndata_proteomics"]["search_parameters_error"] = f"{type(exc).__name__}: {exc}"
+        return
     write_search_parameters(adata, params, source_path=str(params_path))

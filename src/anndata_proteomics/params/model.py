@@ -20,6 +20,17 @@ from pydantic import (
 
 from anndata_proteomics.modifications.model import SearchedModification
 
+
+class ParamsError(Exception):
+    """A parameter file could not be parsed for the requested software.
+
+    Raised when the file is clearly not the expected format (e.g. a FragPipe workflow handed to the
+    DIA-NN parser) or lacks the markers a parser needs. It is a *clean* signal — callers such as
+    ``convert`` catch it to degrade gracefully (attach no search parameters + record the problem)
+    rather than aborting the whole conversion with a traceback.
+    """
+
+
 ScalarValue = str | int | float | bool | None
 ToleranceUnit = Literal["ppm", "Da"]
 ToleranceMode = Literal["absolute", "automatic"]
@@ -29,6 +40,7 @@ _MISSING_STRINGS = {"", "-", "none", "nan", "n/a", "na", "not specified", "unkno
 # Canonical enzyme-name mapping (lowercase key -> display name), ported from
 # ProteoBench's io/params `_ENZYME_MAP`. Applied symmetrically to parser output
 # and round-tripped CSV expectations via the `enzyme` before-validator.
+# COMMENT: map is for all the tools. Should this not be per tool?
 _ENZYME_MAP = {
     "trypsin": "Trypsin",
     "trypsin/p": "Trypsin/P",
@@ -108,6 +120,7 @@ class Probability(_Strict):
             numeric /= 100
         return cls(value=numeric)
 
+
 class MassTolerance(_Strict):
     """Mass tolerance centered at the theoretical mass.
 
@@ -160,15 +173,11 @@ class MassTolerance(_Strict):
 
         range_match = _RANGE_RE.match(text)
         if range_match:
-            unit = _normalize_unit(
-                range_match.group("unit1") or range_match.group("unit2")
-            )
+            unit = _normalize_unit(range_match.group("unit1") or range_match.group("unit2"))
             lower = float(range_match.group("lower"))
             upper = float(range_match.group("upper"))
             if not math.isclose(lower, -upper, abs_tol=1e-9):
-                raise ValueError(
-                    f"asymmetric mass tolerance ranges are not supported: {value!r}"
-                )
+                raise ValueError(f"asymmetric mass tolerance ranges are not supported: {value!r}")
             return cls(mode="absolute", value=abs(upper), unit=unit)
 
         absolute_match = _ABSOLUTE_RE.match(text)
@@ -191,6 +200,7 @@ class UnparsedParameter(_Strict):
     source: str | None = None
 
 
+# COMMENT : as few possible NONE fields.
 class Parameters(_Strict):
     """Proteomics search-parameter record with typed fields."""
 

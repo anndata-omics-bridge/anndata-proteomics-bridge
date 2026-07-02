@@ -24,30 +24,34 @@ Output CSV columns (catalog):
     is_temporary
     old_new
 
+Exposed as the `apb-testdata` console command (see pyproject `[project.scripts]`).
+
 Usage:
-    uv run python extract_raw_file_db.py catalog [--output OUTPUT] \\
-                                                 [--json-dir DIR] \\
-                                                 [--modules KEY ...]
-    uv run python extract_raw_file_db.py select [--input INPUT] [--output OUTPUT]
-    uv run python extract_raw_file_db.py download [--input INPUT] \\
-                                                  [--json-dir DIR] \\
-                                                  [--output OUTPUT]
+    apb-testdata catalog [--output OUTPUT] [--json-dir DIR] [--modules KEY ...]
+    apb-testdata select [--input INPUT] [--output OUTPUT]
+    apb-testdata download [--input INPUT] [--json-dir DIR] [--output OUTPUT]
 """
 
 import argparse
+import io
 import json
 import os
 import shutil
+import zipfile
 from contextlib import chdir
 from pathlib import Path
 
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
-from proteobench.utils.server_io import get_merged_json, get_raw_data
+from anndata_proteomics.test_data import TEST_DATA_DIR
 
 
 CONFIGS = {
-    "dda_qexactive": {"repo_url": "https://github.com/Proteobench/Results_quant_ion_DDA/archive/refs/heads/main.zip"},
+    "dda_qexactive": {
+        "repo_url": "https://github.com/Proteobench/Results_quant_ion_DDA/archive/refs/heads/main.zip"
+    },
     "dda_astral": {
         "repo_url": "https://github.com/Proteobench/Results_quant_ion_DDA_Astral/archive/refs/heads/main.zip"
     },
@@ -60,7 +64,9 @@ CONFIGS = {
     "dia_diapasef": {
         "repo_url": "https://github.com/Proteobench/Results_quant_ion_DIA_diaPASEF/archive/refs/heads/main.zip"
     },
-    "dia_aif": {"repo_url": "https://github.com/Proteobench/Results_quant_ion_DIA_AIF/archive/refs/heads/main.zip"},
+    "dia_aif": {
+        "repo_url": "https://github.com/Proteobench/Results_quant_ion_DIA_AIF/archive/refs/heads/main.zip"
+    },
     "dia_zenotof": {
         "repo_url": "https://github.com/Proteobench/Results_quant_ion_DIA_ZenoTOF/archive/refs/heads/main.zip"
     },
@@ -68,6 +74,95 @@ CONFIGS = {
         "repo_url": "https://github.com/Proteobench/Results_quant_ion_DIA_singlecell/archive/refs/heads/main.zip"
     },
 }
+
+
+# --- ProteoBench download primitives -----------------------------------------
+# Ported from `proteobench.utils.server_io` so this catalog tool needs no
+# proteobench install. Both helpers depend only on requests + beautifulsoup4,
+# which APB already requires (see pyproject.toml). Behaviour matches upstream
+# `get_merged_json` (GitHub results-repo ZIP -> extract) and `get_raw_data`
+# (scrape + download raw files from the ProteoBench datasets server) as of
+# 2026-07; the unused DataFrame return of the original get_merged_json and its
+# unused content-length read were dropped.
+
+DATASETS_BASE_URL = "https://proteobench.cubimed.rub.de/datasets/"
+
+
+def get_merged_json(repo_url: str) -> None:
+    """Download a results-repo ZIP from GitHub and extract it into the cwd.
+
+    Lands the datapoint JSONs at `./{repo_name}/{repo_name}-main/*.json`; the
+    caller (`_download_module_jsons`) then reads them. `repo_name` is the fifth
+    path segment from the end of the archive URL, matching the ZIP's top folder.
+    """
+    response = requests.get(repo_url)
+    response.raise_for_status()
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
+        zip_ref.extractall(repo_url.split("/")[-5])
+
+
+def get_raw_data(
+    df: pd.DataFrame,
+    base_url: str = DATASETS_BASE_URL,
+    output_directory: str = "extracted_files",
+) -> dict[str, str]:
+    """Download raw quantification files for the submissions listed in `df`.
+
+    Scrapes the datasets-server directory listing, matches folder names to
+    `df["intermediate_hash"]`, downloads each matching folder's ZIP(s), and
+    extracts them to `{output_directory}/{hash}/`. Returns
+    `{intermediate_hash: extract_dir}` for the folders found. Folders already
+    present and non-empty are skipped (idempotent re-runs).
+    """
+    hash_vis_dir: dict[str, str] = {}
+    hash_list = df["intermediate_hash"].tolist()
+
+    response = requests.get(base_url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    folder_links = [
+        link["href"].strip("/") for link in soup.find_all("a") if link["href"].endswith("/")
+    ]
+    matching_folders = [folder for folder in folder_links if folder in hash_list]
+
+    for folder in matching_folders:
+        extract_dir = f"{output_directory}/{folder}"
+        if os.path.exists(extract_dir) and os.listdir(extract_dir):
+            print(f"Folder already exists and is not empty, skipping download: {extract_dir}")
+            hash_vis_dir[folder] = extract_dir
+            continue
+
+        folder_url = f"{base_url}{folder}/"
+        print(f"Processing folder: {folder_url}")
+
+        folder_response = requests.get(folder_url)
+        folder_response.raise_for_status()
+        folder_soup = BeautifulSoup(folder_response.text, "html.parser")
+        zip_files = [
+            link["href"] for link in folder_soup.find_all("a") if link["href"].endswith(".zip")
+        ]
+
+        for zip_file in zip_files:
+            zip_url = f"{folder_url}{zip_file}"
+            print(f"Downloading: {zip_url}")
+
+            zip_response = requests.get(zip_url, stream=True)
+            zip_response.raise_for_status()
+
+            zip_filename = os.path.basename(zip_file)
+            with open(zip_filename, "wb") as f:
+                for data in zip_response.iter_content(1024):
+                    f.write(data)
+
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_filename, "r") as zip_ref:
+                zip_ref.extractall(extract_dir)
+                print(f"Extracted contents to: {extract_dir}")
+
+            os.remove(zip_filename)
+            hash_vis_dir[folder] = extract_dir
+
+    return hash_vis_dir
 
 
 def _download_module_jsons(repo_url: str, json_dir_root: Path) -> Path:
@@ -330,14 +425,14 @@ def main() -> None:
     p_catalog.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).parent / "raw_file_db_full.csv",
-        help="Output CSV path (default: ./raw_file_db_full.csv).",
+        default=TEST_DATA_DIR / "raw_file_db_full.csv",
+        help="Output CSV path (default: test_data_download/raw_file_db_full.csv).",
     )
     p_catalog.add_argument(
         "--json-dir",
         type=Path,
-        default=Path(__file__).parent / "temp_results",
-        help="Directory under which per-repo JSON folders are placed (default: ./temp_results).",
+        default=TEST_DATA_DIR / "temp_results",
+        help="Directory under which per-repo JSON folders are placed (default: test_data_download/temp_results).",
     )
     p_catalog.add_argument(
         "--modules",
@@ -355,14 +450,14 @@ def main() -> None:
     p_select.add_argument(
         "--input",
         type=Path,
-        default=Path(__file__).parent / "raw_file_db_full.csv",
-        help="Input catalog CSV (default: ./raw_file_db_full.csv).",
+        default=TEST_DATA_DIR / "raw_file_db_full.csv",
+        help="Input catalog CSV (default: test_data_download/raw_file_db_full.csv).",
     )
     p_select.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).parent / "raw_file_db_selected.csv",
-        help="Output CSV path (default: ./raw_file_db_selected.csv).",
+        default=TEST_DATA_DIR / "raw_file_db_selected.csv",
+        help="Output CSV path (default: test_data_download/raw_file_db_selected.csv).",
     )
     p_select.set_defaults(func=cmd_select)
 
@@ -373,20 +468,20 @@ def main() -> None:
     p_download.add_argument(
         "--input",
         type=Path,
-        default=Path(__file__).parent / "raw_file_db_selected.csv",
-        help="Input CSV with module, repo_name, intermediate_hash columns (default: ./raw_file_db_selected.csv).",
+        default=TEST_DATA_DIR / "raw_file_db_selected.csv",
+        help="Input CSV with module, repo_name, intermediate_hash columns (default: test_data_download/raw_file_db_selected.csv).",
     )
     p_download.add_argument(
         "--json-dir",
         type=Path,
-        default=Path(__file__).parent / "json_dir",
-        help="Root dir; raw files land at {json-dir}/{repo_name}/{hash}/ (default: ./json_dir).",
+        default=TEST_DATA_DIR / "json_dir",
+        help="Root dir; raw files land at {json-dir}/{repo_name}/{hash}/ (default: test_data_download/json_dir).",
     )
     p_download.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).parent / "raw_file_db_downloaded.csv",
-        help="Output CSV augmented with input_file_path, input_file_size_bytes, status (default: ./raw_file_db_downloaded.csv).",
+        default=TEST_DATA_DIR / "raw_file_db_downloaded.csv",
+        help="Output CSV augmented with input_file_path, input_file_size_bytes, status (default: test_data_download/raw_file_db_downloaded.csv).",
     )
     p_download.set_defaults(func=cmd_download)
 
