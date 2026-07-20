@@ -9,21 +9,21 @@ catalog: raw_file_db_full.csv  ## Build the full catalog CSV by downloading data
 
 raw_file_db_full.csv:
 	uv run apb-testdata catalog \
-		--json-dir ./json_dir \
-		--output ./raw_file_db_full.csv
+		--cache-dir ./json_dir \
+		--catalog-csv ./raw_file_db_full.csv
 
 select: raw_file_db_selected.csv  ## Reduce the catalog to one row per (module, software, version) -> raw_file_db_selected.csv.
 
 raw_file_db_selected.csv: raw_file_db_full.csv
 	uv run apb-testdata select \
-		--input ./raw_file_db_full.csv \
-		--output ./raw_file_db_selected.csv
+		--catalog-csv ./raw_file_db_full.csv \
+		--selection-csv ./raw_file_db_selected.csv
 
 download: raw_file_db_selected.csv  ## Download raw quantification files for the selected rows -> raw_file_db_downloaded.csv.
 	uv run apb-testdata download \
-		--input ./raw_file_db_selected.csv \
-		--json-dir ./json_dir \
-		--output ./raw_file_db_downloaded.csv
+		--selection-csv ./raw_file_db_selected.csv \
+		--cache-dir ./json_dir \
+		--manifest-csv ./raw_file_db_downloaded.csv
 
 fasta: ## Download the ProteoBench FASTA databases (HYE + HY mixed-species) to ./fasta/.
 	mkdir -p ./fasta
@@ -34,4 +34,4 @@ fasta: ## Download the ProteoBench FASTA databases (HYE + HY mixed-species) to .
 	rm -rf ./fasta/__MACOSX
 
 clean:  ## Remove downloaded JSON folders, FASTAs, and all CSVs.
-	rm -rf ./json_dir ./fasta ./raw_file_db_full.csv ./raw_file_db_selected.csv ./raw_file_db_downloaded.csv
+	uv run apb-testdata clean

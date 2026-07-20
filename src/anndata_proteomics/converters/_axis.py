@@ -26,9 +26,7 @@ def build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
     return joined
 
 
-def build_axis_frame(
-    df: pd.DataFrame, keys: list[str], output_columns: list[str]
-) -> pd.DataFrame:
+def build_axis_frame(df: pd.DataFrame, keys: list[str], output_columns: list[str]) -> pd.DataFrame:
     """Take first occurrence per key tuple for already-materialized output columns."""
     needed_cols = list(dict.fromkeys(list(keys) + output_columns))
     block = df[needed_cols].drop_duplicates(subset=keys).copy()

@@ -1,38 +1,11 @@
-"""
-Build a test-dataset catalog of ProteoBench submissions.
+"""Build a local test-data cache from ProteoBench submissions.
 
-Subcommands:
-    catalog     Download datapoint JSONs from all configured quant result repos and
-                write one CSV row per submission. No raw quantification files are
-                downloaded. Always downloads fresh (overwrites any existing folder
-                under --json-dir for each repo).
-    select      Reduce a catalog CSV to one representative row per
-                (module, software_name, software_version) by picking the row with
-                the smallest nr_prec (tiebreaker: lexicographic intermediate_hash).
-    download    Download raw quantification files for the submissions listed in a
-                catalog-style CSV. Files land at
-                {json-dir}/{repo_name}/{intermediate_hash}/input_file.txt. Already
-                present hashes are skipped.
-
-Output CSV columns (catalog):
-    module              - CONFIGS key (e.g. dda_qexactive)
-    repo_name           - results repository name (e.g. Results_quant_ion_DDA)
-    intermediate_hash
-    software_name
-    software_version
-    nr_prec             - precursor count at the default cutoff (min_nr_observed=3)
-    is_temporary
-    old_new
-
-Exposed as the `apb-testdata` console command (see pyproject `[project.scripts]`).
-
-Usage:
-    apb-testdata catalog [--output OUTPUT] [--json-dir DIR] [--modules KEY ...]
-    apb-testdata select [--input INPUT] [--output OUTPUT]
-    apb-testdata download [--input INPUT] [--json-dir DIR] [--output OUTPUT]
+Run the commands in order: ``catalog`` collects submission metadata, ``select``
+chooses representative submissions without downloading them, and ``download``
+fetches the selected vendor files. All generated files default to APB's
+``test_data_download`` directory.
 """
 
-import argparse
 import io
 import json
 import os
@@ -40,10 +13,12 @@ import shutil
 import zipfile
 from contextlib import chdir
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from cyclopts import App
 
 from anndata_proteomics.test_data import TEST_DATA_DIR
 
@@ -75,6 +50,42 @@ CONFIGS = {
     },
 }
 
+ModuleKey = Literal[
+    "dda_qexactive",
+    "dda_astral",
+    "dda_peptidoform",
+    "dia_astral",
+    "dia_diapasef",
+    "dia_aif",
+    "dia_zenotof",
+    "dia_singlecell",
+]
+SelectionStrategy = Literal[
+    "smallest-per-software-version",
+    "smallest-per-software",
+    "smallest-per-module",
+    "all",
+]
+
+app = App(name="apb-testdata", help=__doc__, help_on_error=True)
+
+GENERATED_CSV_NAMES = (
+    "raw_file_db_full.csv",
+    "raw_file_db_selected.csv",
+    "raw_file_db_downloaded.csv",
+)
+
+
+def _feature_count(data: dict) -> int | float | None:
+    """Return ProteoBench's canonical feature count from one submission.
+
+    ProteoBench renamed the serialized ``nr_prec`` field to ``nr_feature`` so
+    the metric also applies to non-precursor quantification modules. Older
+    result repositories can still contain the legacy field.
+    """
+    value = data.get("nr_feature")
+    return value if value is not None else data.get("nr_prec")
+
 
 # --- ProteoBench download primitives -----------------------------------------
 # Ported from `proteobench.utils.server_io` so this catalog tool needs no
@@ -88,17 +99,28 @@ CONFIGS = {
 DATASETS_BASE_URL = "https://proteobench.cubimed.rub.de/datasets/"
 
 
-def get_merged_json(repo_url: str) -> None:
+def get_merged_json(repo_url: str) -> Path:
     """Download a results-repo ZIP from GitHub and extract it into the cwd.
 
-    Lands the datapoint JSONs at `./{repo_name}/{repo_name}-main/*.json`; the
-    caller (`_download_module_jsons`) then reads them. `repo_name` is the fifth
-    path segment from the end of the archive URL, matching the ZIP's top folder.
+    Returns the archive's actual extracted root. GitHub can redirect a historical
+    repository URL to a renamed repository, so the ZIP root is discovered from its
+    members instead of being derived from the request URL.
     """
     response = requests.get(repo_url)
     response.raise_for_status()
+    output_directory = Path(repo_url.split("/")[-5])
     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
-        zip_ref.extractall(repo_url.split("/")[-5])
+        archive_roots = {
+            Path(member.filename).parts[0]
+            for member in zip_ref.infolist()
+            if member.filename and Path(member.filename).parts
+        }
+        if len(archive_roots) != 1:
+            raise RuntimeError(
+                f"Expected one root folder in {repo_url}, found {sorted(archive_roots)}"
+            )
+        zip_ref.extractall(output_directory)
+    return output_directory / archive_roots.pop()
 
 
 def get_raw_data(
@@ -180,27 +202,40 @@ def _download_module_jsons(repo_url: str, json_dir_root: Path) -> Path:
 
     json_dir_root.mkdir(parents=True, exist_ok=True)
     with chdir(json_dir_root):
-        get_merged_json(repo_url=repo_url)
+        extracted_dir = get_merged_json(repo_url=repo_url)
+
+    extracted_dir = json_dir_root / extracted_dir
+    if extracted_dir != target_json_dir:
+        extracted_dir.rename(target_json_dir)
 
     if not target_json_dir.is_dir():
         raise RuntimeError(f"Expected extracted folder not found: {target_json_dir}")
     return target_json_dir
 
 
-def cmd_catalog(args: argparse.Namespace) -> None:
-    """Run the `catalog` subcommand."""
-    module_keys = args.modules or list(CONFIGS.keys())
-    json_dir_root = args.json_dir.resolve()
+@app.command
+def catalog(
+    *,
+    catalog_csv: Path = TEST_DATA_DIR / "raw_file_db_full.csv",
+    cache_dir: Path = TEST_DATA_DIR / "json_dir",
+) -> None:
+    """Refresh the complete ProteoBench submission catalog.
+
+    Args:
+        catalog_csv: CSV file to write with one row per ProteoBench submission.
+        cache_dir: Directory for repository metadata and downloaded submission files.
+    """
+    cache_dir = cache_dir.resolve()
 
     rows: list[dict] = []
-    for module_key in module_keys:
+    for module_key in CONFIGS:
         repo_url = CONFIGS[module_key]["repo_url"]
         repo_name = repo_url.split("/")[-5]
         print(f"[{module_key}] downloading {repo_url}")
-        json_dir = _download_module_jsons(repo_url, json_dir_root)
+        metadata_dir = _download_module_jsons(repo_url, cache_dir)
 
-        json_files = sorted(json_dir.glob("*.json"))
-        print(f"[{module_key}] read {len(json_files)} JSON file(s) from {json_dir}")
+        json_files = sorted(metadata_dir.glob("*.json"))
+        print(f"[{module_key}] read {len(json_files)} JSON file(s) from {metadata_dir}")
 
         for jf in json_files:
             try:
@@ -217,14 +252,14 @@ def cmd_catalog(args: argparse.Namespace) -> None:
                     "intermediate_hash": data.get("intermediate_hash", jf.stem),
                     "software_name": data.get("software_name", ""),
                     "software_version": data.get("software_version", ""),
-                    "nr_prec": data.get("nr_prec"),
+                    "nr_feature": _feature_count(data),
                     "is_temporary": data.get("is_temporary"),
                     "old_new": data.get("old_new", ""),
                 }
             )
 
     df = pd.DataFrame(rows)
-    df.to_csv(args.output, index=False)
+    df.to_csv(catalog_csv, index=False)
 
     print(f"\nTotal rows: {len(df)}")
     print("\nRows per module:")
@@ -235,33 +270,81 @@ def cmd_catalog(args: argparse.Namespace) -> None:
         include_groups=False,
     )
     print(unique_counts.to_string())
-    print(f"\nWritten to {args.output}")
+    print(f"\nWritten to {catalog_csv}")
 
 
-def cmd_select(args: argparse.Namespace) -> None:
-    """Run the `select` subcommand."""
-    df = pd.read_csv(args.input)
+@app.command
+def select(
+    *,
+    catalog_csv: Path = TEST_DATA_DIR / "raw_file_db_full.csv",
+    selection_csv: Path = TEST_DATA_DIR / "raw_file_db_selected.csv",
+    strategy: SelectionStrategy = "smallest-per-software-version",
+    module: ModuleKey | None = None,
+) -> None:
+    """Select ProteoBench submissions for download.
+
+    Use --strategy to choose how rows are reduced and --module to restrict the
+    selection to one ProteoBench module. The default keeps the smallest submission
+    for every module, software, and software version.
+
+    Args:
+        catalog_csv: CSV containing all cataloged ProteoBench submissions.
+        selection_csv: CSV to write with the submissions selected for download.
+        strategy: Row-selection policy; smallest means the lowest nr_feature.
+        module: Restrict selection to this ProteoBench module.
+    """
+    df = pd.read_csv(catalog_csv)
     n_input = len(df)
 
-    n_missing = int(df["nr_prec"].isna().sum())
-    df = df.dropna(subset=["nr_prec"])
+    print("Available catalog rows per module:")
+    print(df["module"].value_counts().to_string())
 
-    group_cols = ["module", "software_name", "software_version"]
-    selected = (
-        df.sort_values(["nr_prec", "intermediate_hash"], kind="stable")
-        .groupby(group_cols, dropna=False, as_index=False)
-        .head(1)
-        .reset_index(drop=True)
-    )
+    if module is not None:
+        df = df[df["module"] == module]
 
-    selected.to_csv(args.output, index=False)
+    n_considered = len(df)
+    selected, n_missing, rule = _select_rows(df, strategy)
+    print(f"\nSelection rule: {rule}")
+    if module is not None:
+        print(f"Module filter:   {module}")
 
-    print(f"Input rows:           {n_input}")
-    print(f"Dropped (nr_prec NA): {n_missing}")
+    selected.to_csv(selection_csv, index=False)
+
+    print(f"Catalog rows:         {n_input}")
+    print(f"Rows considered:      {n_considered}")
+    print(f"Dropped (nr_feature NA): {n_missing}")
     print(f"Selected rows:        {len(selected)}")
     print("\nSelected rows per module:")
     print(selected["module"].value_counts().to_string())
-    print(f"\nWritten to {args.output}")
+    print(f"\nWritten to {selection_csv}")
+
+
+def _select_rows(
+    df: pd.DataFrame,
+    strategy: SelectionStrategy,
+) -> tuple[pd.DataFrame, int, str]:
+    """Apply a download-selection strategy to catalog rows."""
+    if strategy == "all":
+        return df.reset_index(drop=True), 0, "all catalog rows"
+
+    group_columns = {
+        "smallest-per-software-version": ["module", "software_name", "software_version"],
+        "smallest-per-software": ["module", "software_name"],
+        "smallest-per-module": ["module"],
+    }[strategy]
+    group_label = " + ".join(column.removesuffix("_name") for column in group_columns)
+    n_missing = int(df["nr_feature"].isna().sum())
+    ranked = df.dropna(subset=["nr_feature"]).sort_values(
+        ["nr_feature", "intermediate_hash"], kind="stable"
+    )
+    selected = (
+        ranked.groupby(group_columns, dropna=False, as_index=False).head(1).reset_index(drop=True)
+    )
+    rule = (
+        f"smallest nr_feature per {group_label}; "
+        "ties use the lexicographically smallest intermediate_hash"
+    )
+    return selected, n_missing, rule
 
 
 def get_datasets_to_download(df: pd.DataFrame, output_directory: Path) -> tuple[pd.DataFrame, dict]:
@@ -286,20 +369,34 @@ def get_datasets_to_download(df: pd.DataFrame, output_directory: Path) -> tuple[
     return df, hash_vis_dir
 
 
-def cmd_download(args: argparse.Namespace) -> None:
-    """Run the `download` subcommand."""
-    df = pd.read_csv(args.input)
+@app.command
+def download(
+    *,
+    selection_csv: Path = TEST_DATA_DIR / "raw_file_db_selected.csv",
+    cache_dir: Path = TEST_DATA_DIR / "json_dir",
+    manifest_csv: Path = TEST_DATA_DIR / "raw_file_db_downloaded.csv",
+) -> None:
+    """Download raw quantification files listed in a selection CSV.
+
+    Run ``catalog`` and ``select`` first to create the selection CSV.
+
+    Args:
+        selection_csv: CSV listing the submissions to download.
+        cache_dir: Directory for repository metadata and downloaded submission files.
+        manifest_csv: CSV to write with download paths, sizes, and statuses.
+    """
+    df = pd.read_csv(selection_csv)
     required = {"module", "repo_name", "intermediate_hash"}
     missing_cols = required - set(df.columns)
     if missing_cols:
         raise SystemExit(f"Input CSV missing required columns: {sorted(missing_cols)}")
 
-    json_dir_root = args.json_dir.resolve()
-    json_dir_root.mkdir(parents=True, exist_ok=True)
+    cache_dir = cache_dir.resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     hash_to_dir: dict[str, str] = {}
     for repo_name, group in df.groupby("repo_name"):
-        module_output_dir = json_dir_root / repo_name
+        module_output_dir = cache_dir / repo_name
         module_output_dir.mkdir(parents=True, exist_ok=True)
 
         df_to_download, already_present = get_datasets_to_download(group, module_output_dir)
@@ -326,7 +423,7 @@ def cmd_download(args: argparse.Namespace) -> None:
             inputs = sorted(Path(extract_dir).glob("input_file.*"))
             if inputs:
                 inp = inputs[0]
-                row["input_file_path"] = str(inp.relative_to(json_dir_root))
+                row["input_file_path"] = str(inp.relative_to(cache_dir))
                 row["input_file_size_bytes"] = inp.stat().st_size
                 row["status"] = "ok"
             else:
@@ -336,12 +433,43 @@ def cmd_download(args: argparse.Namespace) -> None:
         out_rows.append(row)
 
     out_df = pd.DataFrame(out_rows)
-    out_df.to_csv(args.output, index=False)
+    out_df.to_csv(manifest_csv, index=False)
 
     print(f"\nTotal rows:         {len(out_df)}")
     print("\nStatus breakdown:")
     print(out_df["status"].value_counts().to_string())
-    print(f"\nWritten to {args.output}")
+    print(f"\nWritten to {manifest_csv}")
+
+
+@app.command
+def clean(*, data_dir: Path = TEST_DATA_DIR) -> None:
+    """Remove generated test-data artifacts from one explicit data directory.
+
+    Args:
+        data_dir: Root containing the generated cache, FASTAs, catalogs, and manifests.
+    """
+    removed = clean_generated_data(data_dir.resolve())
+    print(f"Removed {len(removed)} generated path(s).")
+    for path in removed:
+        print(f"  {path}")
+
+
+def clean_generated_data(test_data_dir: Path) -> list[Path]:
+    """Remove only known generated test-data artifacts below test_data_dir."""
+    test_data_dir = test_data_dir.expanduser().resolve()
+    if test_data_dir in {Path(test_data_dir.anchor), Path.home().resolve()}:
+        raise ValueError("Refusing to clean the filesystem or home root.")
+    targets = [test_data_dir / "json_dir", test_data_dir / "fasta"]
+    targets.extend(test_data_dir / name for name in GENERATED_CSV_NAMES)
+    removed = []
+    for path in targets:
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed.append(path)
+        elif path.exists():
+            path.unlink()
+            removed.append(path)
+    return removed
 
 
 def build_database(results_dir: Path) -> pd.DataFrame:
@@ -412,81 +540,8 @@ def build_database(results_dir: Path) -> pd.DataFrame:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    p_catalog = subparsers.add_parser(
-        "catalog",
-        help="Download datapoint JSONs for configured quant modules and write a catalog CSV.",
-    )
-    p_catalog.add_argument(
-        "--output",
-        type=Path,
-        default=TEST_DATA_DIR / "raw_file_db_full.csv",
-        help="Output CSV path (default: test_data_download/raw_file_db_full.csv).",
-    )
-    p_catalog.add_argument(
-        "--json-dir",
-        type=Path,
-        default=TEST_DATA_DIR / "temp_results",
-        help="Directory under which per-repo JSON folders are placed (default: test_data_download/temp_results).",
-    )
-    p_catalog.add_argument(
-        "--modules",
-        nargs="+",
-        choices=list(CONFIGS.keys()),
-        default=None,
-        help="Subset of module keys to process (default: all 8).",
-    )
-    p_catalog.set_defaults(func=cmd_catalog)
-
-    p_select = subparsers.add_parser(
-        "select",
-        help="Reduce a catalog CSV to one representative row per (module, software, version).",
-    )
-    p_select.add_argument(
-        "--input",
-        type=Path,
-        default=TEST_DATA_DIR / "raw_file_db_full.csv",
-        help="Input catalog CSV (default: test_data_download/raw_file_db_full.csv).",
-    )
-    p_select.add_argument(
-        "--output",
-        type=Path,
-        default=TEST_DATA_DIR / "raw_file_db_selected.csv",
-        help="Output CSV path (default: test_data_download/raw_file_db_selected.csv).",
-    )
-    p_select.set_defaults(func=cmd_select)
-
-    p_download = subparsers.add_parser(
-        "download",
-        help="Download raw quantification files for submissions in a CSV (full or selected).",
-    )
-    p_download.add_argument(
-        "--input",
-        type=Path,
-        default=TEST_DATA_DIR / "raw_file_db_selected.csv",
-        help="Input CSV with module, repo_name, intermediate_hash columns (default: test_data_download/raw_file_db_selected.csv).",
-    )
-    p_download.add_argument(
-        "--json-dir",
-        type=Path,
-        default=TEST_DATA_DIR / "json_dir",
-        help="Root dir; raw files land at {json-dir}/{repo_name}/{hash}/ (default: test_data_download/json_dir).",
-    )
-    p_download.add_argument(
-        "--output",
-        type=Path,
-        default=TEST_DATA_DIR / "raw_file_db_downloaded.csv",
-        help="Output CSV augmented with input_file_path, input_file_size_bytes, status (default: test_data_download/raw_file_db_downloaded.csv).",
-    )
-    p_download.set_defaults(func=cmd_download)
-
-    args = parser.parse_args()
-    args.func(args)
+    """Run the test-data command-line application."""
+    app()
 
 
 if __name__ == "__main__":

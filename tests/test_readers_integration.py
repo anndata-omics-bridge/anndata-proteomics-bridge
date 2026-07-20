@@ -34,6 +34,5 @@ def test_reader_loads_test_data_for_packaged_rule(toml_path: Path) -> None:
     )
     assert not df.empty, f"{data_file} produced an empty DataFrame"
     assert len(df.columns) >= expected_min_cols, (
-        f"{data_file}: got {len(df.columns)} columns, "
-        f"rule expects at least {expected_min_cols}"
+        f"{data_file}: got {len(df.columns)} columns, rule expects at least {expected_min_cols}"
     )

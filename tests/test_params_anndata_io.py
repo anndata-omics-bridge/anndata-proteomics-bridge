@@ -55,12 +55,8 @@ def test_write_then_read_typed_value_roundtrip():
         software_name="DIA-NN",
         software_version="2.3.0 Academia ",
         ident_fdr_psm=Probability(value=0.01),
-        precursor_mass_tolerance=MassTolerance(
-            mode="absolute", value=15.0, unit="ppm"
-        ),
-        fragment_mass_tolerance=MassTolerance(
-            mode="absolute", value=20.0, unit="ppm"
-        ),
+        precursor_mass_tolerance=MassTolerance(mode="absolute", value=15.0, unit="ppm"),
+        fragment_mass_tolerance=MassTolerance(mode="absolute", value=20.0, unit="ppm"),
     )
     write_search_parameters(adata, params, source_path="/tmp/diann.log.txt")
 

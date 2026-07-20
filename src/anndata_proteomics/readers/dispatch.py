@@ -32,7 +32,6 @@ def read_table(path: Path | str) -> pd.DataFrame:
     reader = EXTENSION_TO_READER.get(p.suffix.lower())
     if reader is None:
         raise UnknownFormat(
-            f"unsupported extension {p.suffix!r} for {p}; "
-            f"known: {sorted(EXTENSION_TO_READER)}"
+            f"unsupported extension {p.suffix!r} for {p}; known: {sorted(EXTENSION_TO_READER)}"
         )
     return reader(p)

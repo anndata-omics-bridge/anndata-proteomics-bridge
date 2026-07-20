@@ -38,7 +38,7 @@ test_data_download/
 ```
 
 The three CSVs share the same 8 catalog columns — `module`, `repo_name`,
-`intermediate_hash`, `software_name`, `software_version`, `nr_prec`,
+`intermediate_hash`, `software_name`, `software_version`, `nr_feature`,
 `is_temporary`, `old_new`. `selected` differs from `full` only in row count;
 `downloaded` adds `input_file_path`, `input_file_size_bytes`, and `status` (one of
 `ok`, `not_on_server`, `input_file_missing`).
@@ -88,27 +88,33 @@ make clean       # remove json_dir/, fasta/, and the three CSVs
 `make help` lists the targets.
 
 **How `select` chooses its one row:** it drops submissions with a missing
-`nr_prec` (precursor count), then for each `(module, software_name,
-software_version)` group keeps the row with the **smallest `nr_prec`**, breaking
+`nr_feature` (quantified feature count), then for each `(module, software_name,
+software_version)` group keeps the row with the **smallest `nr_feature`**, breaking
 ties by the lexicographically smallest `intermediate_hash`. Fewest precursors
 means the smallest, fastest file to download and convert, so the cache stays small
 while still exercising the parser for every module/software/version combination
-that has a usable submission. (Dropping missing-`nr_prec` rows can silently
+that has a usable submission. (Dropping missing-`nr_feature` rows can silently
 exclude a version that has no precursor count.)
 
 The three data steps are the subcommands of the `apb-testdata` command (source:
 [`extract_raw_file_db.py`](../src/anndata_proteomics/scripts/extract_raw_file_db.py)),
-which you can run directly for finer control (e.g. a subset of modules). Outputs
-default under `test_data_download/` regardless of your working directory; pass
-`--json-dir test_data_download/json_dir` to `catalog` so it doesn't fall back to
-its own default of `test_data_download/temp_results`, which the rest of the
-pipeline never reads (and which `make clean` does not remove):
+which you can run directly. All paths default under `test_data_download/`
+regardless of your working directory:
 
 ```bash
-uv run apb-testdata catalog --json-dir test_data_download/json_dir --modules dia_aif dda_astral
-uv run apb-testdata select
-uv run apb-testdata download
+uv run apb-testdata catalog
+uv run apb-testdata select --selection-csv test_data_download/my_selection.csv
+uv run apb-testdata download --selection-csv test_data_download/my_selection.csv
 ```
+
+`catalog` always refreshes all configured ProteoBench modules. `select` prints the
+available module summary and writes `--selection-csv`; use `--module` to restrict
+it to one module and `--strategy` to keep all rows, the smallest row per module,
+the smallest per module/software, or the smallest per module/software/version.
+`download` downloads every row in `--selection-csv`. Use `--catalog-csv`,
+`--cache-dir`, and `--manifest-csv` to override their standard paths.
+Use `clean --data-dir <folder>` to remove only the known generated artifacts
+under a custom test-data root.
 
 There is **no `fasta` subcommand** — the FASTAs are fetched by `make fasta` only
 (curl + unzip in the [`Makefile`](../test_data_download/Makefile)).

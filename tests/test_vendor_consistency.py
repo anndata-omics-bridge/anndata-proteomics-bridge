@@ -56,8 +56,6 @@ def test_packaged_rules_and_param_fixtures_cover_the_same_tools() -> None:
     Resolved through the registry so that ``"DIA-NN"`` (fixture key) and
     ``"diann"`` (rule dir) collapse to the same parser.
     """
-    fixture_parsers = {
-        registry.get_parser(name) for name in _PROTEOBENCH_PARAM_FIXTURES
-    }
+    fixture_parsers = {registry.get_parser(name) for name in _PROTEOBENCH_PARAM_FIXTURES}
     rule_parsers = {registry.get_parser(vendor) for vendor in _rule_vendor_dirs()}
     assert fixture_parsers == rule_parsers
