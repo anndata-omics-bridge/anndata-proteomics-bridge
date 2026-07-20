@@ -25,7 +25,7 @@ apb fasta data.h5mu proteome.fasta
 ## Build these docs
 
 ```bash
-docs/render_docs.sh
+make docs
 ```
 
 The static site is written to `public/`; open `public/index.html` to browse it

@@ -52,6 +52,20 @@ source .venv/bin/activate
 uv pip install -e '.[dev]'   # drop [dev] if you only need the CLI (it adds pytest + ruff)
 ```
 
+## Integration test data
+
+`test_data_download/` is the single local ProteoBench cache used by APB's
+integration tests. Build it with the dedicated CLI:
+
+```bash
+apb-testdata catalog
+apb-testdata select
+apb-testdata download
+apb-testdata fasta
+```
+
+The cache and its CSV manifests are generated and remain outside git.
+
 ## Command-line interface
 
 The umbrella CLI is `apb` (the installed Python package is `anndata-proteomics`). Typical flow: **convert** a vendor file → **annotate** / **fasta** to enrich it → **validate** / **list** to manage rules.
@@ -248,7 +262,7 @@ APB is a pure library plus the `apb` CLI. It ships no GUI.
 Browse the generated documentation site:
 
 - Published site: [anndata-omics-bridge.github.io/anndata-proteomics-bridge](https://anndata-omics-bridge.github.io/anndata-proteomics-bridge/)
-- Local build: run `docs/render_docs.sh`, then open [public/index.html](public/index.html)
+- Local build: run `make docs`, then open `public/index.html`
 
 Source pages:
 

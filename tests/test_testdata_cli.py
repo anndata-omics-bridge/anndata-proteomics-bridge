@@ -10,6 +10,7 @@ from anndata_proteomics.scripts.extract_raw_file_db import (
     _feature_count,
     clean,
     clean_generated_data,
+    fasta,
 )
 
 
@@ -87,3 +88,26 @@ def test_download_module_jsons_normalizes_renamed_github_archive(
 
     assert result == tmp_path / "historical-name" / "historical-name-main"
     assert (result / "abc.json").exists()
+
+
+def test_fasta_download_extracts_archives_without_zip_files(tmp_path: Path, monkeypatch) -> None:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_file:
+        zip_file.writestr("reference.fasta", ">protein\nPEPTIDE\n")
+
+    class Response:
+        content = archive.getvalue()
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    monkeypatch.setattr(
+        "anndata_proteomics.scripts.extract_raw_file_db.requests.get",
+        lambda _url: Response(),
+    )
+
+    fasta(fasta_dir=tmp_path)
+
+    assert (tmp_path / "reference.fasta").read_text() == ">protein\nPEPTIDE\n"
+    assert not list(tmp_path.glob("*.zip"))

@@ -1,9 +1,8 @@
 """Locate downloaded benchmark inputs for a packaged ParseRule by software_name.
 
-The cache lives at `<repo_root>/test_data_download/json_dir/...` and is indexed
-by `<repo_root>/test_data_download/raw_file_db_downloaded.csv`. The cache is
-gitignored — regenerate via `test_data_download/Makefile`. Both the test suite
-and `tools/generate_report.py` use this lookup.
+The canonical cache lives at `<repo_root>/test_data_download/json_dir/...` and
+is indexed by `<repo_root>/test_data_download/raw_file_db_downloaded.csv`. It is
+gitignored, regenerated with ``apb-testdata``, and consumed by the test suite.
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ def find_fasta(*, dataset_dir: Path | None = None, module: str | None = None) ->
 
     Returns the absolute path to the unzipped FASTA, or ``None`` when
     the FASTA cache has not been downloaded yet
-    (``cd test_data_download && make fasta``).
+    (``apb-testdata fasta``).
     """
     if module is None and dataset_dir is not None:
         module = _module_for_dataset(dataset_dir)

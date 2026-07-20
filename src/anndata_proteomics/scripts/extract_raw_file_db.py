@@ -97,6 +97,20 @@ def _feature_count(data: dict) -> int | float | None:
 # unused content-length read were dropped.
 
 DATASETS_BASE_URL = "https://proteobench.cubimed.rub.de/datasets/"
+FASTA_URLS = (
+    "https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HYE.zip",
+    "https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HY.zip",
+)
+
+
+def _extract_zip(zip_file: zipfile.ZipFile, output_directory: Path) -> None:
+    """Extract an archive after rejecting members outside the destination."""
+    destination = output_directory.resolve()
+    for member in zip_file.infolist():
+        target = (destination / member.filename).resolve()
+        if target != destination and destination not in target.parents:
+            raise RuntimeError(f"Unsafe ZIP member outside destination: {member.filename}")
+    zip_file.extractall(destination)
 
 
 def get_merged_json(repo_url: str) -> Path:
@@ -119,7 +133,7 @@ def get_merged_json(repo_url: str) -> Path:
             raise RuntimeError(
                 f"Expected one root folder in {repo_url}, found {sorted(archive_roots)}"
             )
-        zip_ref.extractall(output_directory)
+        _extract_zip(zip_ref, output_directory)
     return output_directory / archive_roots.pop()
 
 
@@ -439,6 +453,27 @@ def download(
     print("\nStatus breakdown:")
     print(out_df["status"].value_counts().to_string())
     print(f"\nWritten to {manifest_csv}")
+
+
+@app.command
+def fasta(*, fasta_dir: Path = TEST_DATA_DIR / "fasta") -> None:
+    """Download and extract the ProteoBench HYE and HY reference FASTAs.
+
+    Args:
+        fasta_dir: Directory in which the extracted FASTA files are stored.
+    """
+    fasta_dir = fasta_dir.resolve()
+    fasta_dir.mkdir(parents=True, exist_ok=True)
+    for url in FASTA_URLS:
+        print(f"Downloading {url}")
+        response = requests.get(url)
+        response.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+            _extract_zip(zip_file, fasta_dir)
+    macos_metadata = fasta_dir / "__MACOSX"
+    if macos_metadata.exists():
+        shutil.rmtree(macos_metadata)
+    print(f"Extracted FASTAs to {fasta_dir}")
 
 
 @app.command

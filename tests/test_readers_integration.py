@@ -26,7 +26,7 @@ def test_reader_loads_test_data_for_packaged_rule(toml_path: Path) -> None:
     if data_file is None or not data_file.exists():
         pytest.skip(
             f"no downloaded test data for {rule.software_name!r}; "
-            f"regenerate via test_data_download/Makefile"
+            f"regenerate via apb-testdata catalog/select/download"
         )
     df = read_table(data_file)
     expected_min_cols = (

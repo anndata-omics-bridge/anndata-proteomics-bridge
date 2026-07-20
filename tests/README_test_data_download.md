@@ -20,11 +20,10 @@ tests, and how the tests consume the cache.
 ## Where it lives
 
 Everything sits under `../test_data_download/` (gitignored — see
-[`.gitignore`](../.gitignore), which pegs it at ~52 GB, all regenerable):
+[`.gitignore`](../.gitignore), all regenerable):
 
 ```
 test_data_download/
-├── Makefile                   # thin wrapper: `make catalog/select/download` → `apb-testdata` (+ a `fasta` step)
 ├── raw_file_db_full.csv       # every ProteoBench submission, one row each (from `catalog`)
 ├── raw_file_db_selected.csv   # one representative row per module+software+version (from `select`)
 ├── raw_file_db_downloaded.csv # the selected rows plus download results (from `download`) ← the index tests read
@@ -34,7 +33,7 @@ test_data_download/
 │       └── <hash>/                               # one folder per downloaded submission (from `download`)
 │           ├── input_file.{tsv,txt,csv,parquet}  # raw vendor output
 │           └── param_0..<ext>                     # co-located search parameters (note the double dot)
-└── fasta/                     # ProteoBench HYE / HY reference FASTAs (from `make fasta`)
+└── fasta/                     # ProteoBench HYE / HY reference FASTAs (from `fasta`)
 ```
 
 The three CSVs share the same 8 catalog columns — `module`, `repo_name`,
@@ -67,25 +66,18 @@ rule from a co-located parameter file. There is no separate parameter download.
 
 **Prerequisites:** the package installed in your environment (`uv venv && source
 .venv/bin/activate && uv pip install -e ".[dev]"`) — this provides the
-`apb-testdata` command that the `make` targets and the direct calls below both
-use. Regeneration needs **network access** to GitHub and
+`apb-testdata` command. Regeneration needs **network access** to GitHub and
 `proteobench.cubimed.rub.de`.
 
-Run the pipeline from the cache directory; each step feeds the next:
+Run the commands from any directory; each step feeds the next:
 
 ```bash
-cd test_data_download
-make catalog     # 1. pull datapoint JSONs from the 8 ProteoBench Results_quant_* GitHub
-                 #    repos → json_dir/<repo>/<repo>-main/  +  raw_file_db_full.csv
-make select      # 2. reduce to one representative row per (module, software, version)
-                 #    → raw_file_db_selected.csv
-make download    # 3. download the raw input_file.* for the selected rows
-                 #    → json_dir/<repo>/<hash>/  +  raw_file_db_downloaded.csv
-make fasta       # 4. download the HYE + HY reference FASTAs → fasta/
-make clean       # remove json_dir/, fasta/, and the three CSVs
+apb-testdata catalog   # 1. metadata JSONs + raw_file_db_full.csv
+apb-testdata select    # 2. representative rows → raw_file_db_selected.csv
+apb-testdata download  # 3. vendor files + raw_file_db_downloaded.csv
+apb-testdata fasta     # 4. HYE + HY reference FASTAs → fasta/
+apb-testdata clean     # remove json_dir/, fasta/, and the three CSVs
 ```
-
-`make help` lists the targets.
 
 **How `select` chooses its one row:** it drops submissions with a missing
 `nr_feature` (quantified feature count), then for each `(module, software_name,
@@ -105,6 +97,7 @@ regardless of your working directory:
 uv run apb-testdata catalog
 uv run apb-testdata select --selection-csv test_data_download/my_selection.csv
 uv run apb-testdata download --selection-csv test_data_download/my_selection.csv
+uv run apb-testdata fasta
 ```
 
 `catalog` always refreshes all configured ProteoBench modules. `select` prints the
@@ -115,9 +108,6 @@ the smallest per module/software, or the smallest per module/software/version.
 `--cache-dir`, and `--manifest-csv` to override their standard paths.
 Use `clean --data-dir <folder>` to remove only the known generated artifacts
 under a custom test-data root.
-
-There is **no `fasta` subcommand** — the FASTAs are fetched by `make fasta` only
-(curl + unzip in the [`Makefile`](../test_data_download/Makefile)).
 
 `download` is **idempotent**: hashes already present under `json_dir/` are skipped,
 so a re-run fetches only what is missing. `catalog` is the one step that wipes and
@@ -139,8 +129,7 @@ over the cached inputs and skips per tool when a tool's cached data is missing.
 ## How the tests consume it
 
 The consumer side lives in the package, not in a catalog service: the test suite
-(and the report generator, [`generate_report.py`](../tools/generate_report.py))
-read `raw_file_db_downloaded.csv` directly and run the real converter over each
+reads `raw_file_db_downloaded.csv` directly and runs the real converter over each
 cached vendor file. Everything degrades gracefully — when the gitignored cache is
 absent, lookups return `None`/`[]` and the fixtures `pytest.skip(...)`, so the
 suite is green on a fresh checkout.

@@ -122,14 +122,6 @@ Vendor-specific parser implementations live only under `params/parsers/`.
 Every parser exposes `extract_params(source) -> Parameters`; `params.registry`
 dispatches by software name.
 
-## Optional Report Helper
-
-`tools/generate_report.py` is a development helper. It iterates packaged rules,
-converts one canonical test-data input per rule, and writes an HTML index for
-review. Any external report renderer is outside APB. Generated `.h5ad`,
-`.html`, `.log`, `.meta.json`, and `index.html` outputs are build artifacts
-and must stay out of git.
-
 ## Current Limits
 
 - Conversion coverage is limited to the packaged vendor/level rules above.

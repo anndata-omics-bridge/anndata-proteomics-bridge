@@ -24,7 +24,7 @@ _HY_NAME = "ProteoBenchFASTA_DDAQuantification_noecoli.fasta"
 
 def _require_fasta_cache():
     if not FASTA_DIR.exists() or not any(FASTA_DIR.glob("*.fasta")):
-        pytest.skip("FASTA cache not downloaded (run `make -C test_data_download fasta`)")
+        pytest.skip("FASTA cache not downloaded (run `apb-testdata fasta`)")
 
 
 def test_find_fasta_returns_hye_for_dda_modules():
@@ -54,7 +54,7 @@ def test_find_fasta_resolves_module_from_dataset_dir():
     if not DOWNLOADED_DB.exists():
         pytest.skip("test_data cache index missing")
     # Use the canonical DIA-NN dataset path (AIF) which we already use in
-    # generate_report.py to make sure the dataset-dir branch resolves
+    # Exercise the dataset-dir branch against a real cached submission.
     # correctly through the index lookup.
     dataset = find_test_data("DIA-NN")
     if dataset is None:

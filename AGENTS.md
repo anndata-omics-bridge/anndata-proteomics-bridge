@@ -61,9 +61,10 @@ holds only `cli.py`). Do not reintroduce marimo or a GUI here.
 
 ## Test Data
 
-ProteoBench test data:
-- `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DIA_AIF/`
-- `/Users/wolski/projects/ProteoBench/test/data/quant/quant_lfq_ion_DDA_QExactive/`
+`test_data_download/` is the single canonical local ProteoBench cache. It is
+generated with `apb-testdata catalog/select/download/fasta`, consumed by the
+integration tests, and gitignored. Do not add parallel `benchmark_data/`,
+`examples/`, or test-data download scripts.
 
 ## Coding Rules
 

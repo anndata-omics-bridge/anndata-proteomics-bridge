@@ -26,7 +26,7 @@ note is `TODO_modification_homogenization_design.md`, which is intentionally def
 - `docs/toml_schema.md` -- parsing-rule authoring contract.
 - `docs/parameter_parsers.md` -- vendor parameter parser contract and caveats.
 - `docs/parsing_architecture.md` -- lower-level UML/flow diagrams.
-- `mkdocs.yml` and `docs/render_docs.sh` -- documentation build contract.
+- `mkdocs.yml` and the root `make docs` target -- documentation build contract.
 - `AGENTS.md` -- maintainer rules; should agree with the public docs but not duplicate them.
 
 ## Known reconciliation problems
