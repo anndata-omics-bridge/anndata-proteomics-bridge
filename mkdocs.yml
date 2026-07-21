@@ -56,6 +56,8 @@ nav:
   - Architecture:
       - Package Architecture: ARCHITECTURE.md
       - Parsing Architecture: parsing_architecture.md
+  - Design:
+      - Feature mapping (MuData varp): feature_mapping.md
   - Reference:
       - TOML Schema: toml_schema.md
       - Parameter Parsers: parameter_parsers.md

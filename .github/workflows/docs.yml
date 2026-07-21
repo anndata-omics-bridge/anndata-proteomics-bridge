@@ -44,7 +44,9 @@ jobs:
           enable-cache: true
 
       - name: Build documentation
-        run: uv run --frozen --group docs mkdocs build
+        # --strict fails the build on broken internal links / nav, so a shared
+        # site never ships a dead link.
+        run: uv run --frozen --group docs mkdocs build --strict
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
