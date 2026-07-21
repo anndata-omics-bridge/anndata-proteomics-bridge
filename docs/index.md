@@ -9,7 +9,7 @@ parsing rules. The package is a library plus the `apb` CLI; it ships no GUI.
 |-------------------|------|
 | Understand the package layout and current supported vendors | [Package Architecture](ARCHITECTURE.md) |
 | Understand how vendor tables become AnnData or MuData | [Parsing Architecture](parsing_architecture.md) |
-| Write or review parsing-rule TOMLs | [TOML Schema](toml_schema.md) |
+| Write or review parsing-rule JSON | [JSON Schema](json_schema.md) |
 | Understand search-parameter parsing and rule version selection | [Parameter Parsers](parameter_parsers.md) |
 
 ## Common commands
@@ -18,7 +18,7 @@ parsing rules. The package is a library plus the `apb` CLI; it ships no GUI.
 apb list
 apb validate
 apb convert report.tsv --params report.log.txt
-apb annotate data.h5mu annotation.toml
+apb annotate data.h5mu annotation.json
 apb fasta data.h5mu proteome.fasta
 ```
 

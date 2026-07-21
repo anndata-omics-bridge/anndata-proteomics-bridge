@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 from anndata_proteomics.rules.registry import find_rule
+from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.test_data import find_param_file, find_test_data
 
 # The console script lives next to the python that's running pytest.
@@ -39,28 +41,58 @@ def test_cli_validate_no_args_returns_zero() -> None:
 
 
 def test_cli_validate_path_happy() -> None:
-    p = find_rule("diann", "ion")
+    p = find_rule("diann", "ion").path
     r = _run("validate", str(p))
     assert r.returncode == 0, r.stderr
     assert "PASS" in r.stderr
 
 
 def test_cli_validate_path_bad(tmp_path: Path) -> None:
-    bad = tmp_path / "bad.toml"
-    bad.write_text("not = valid [[")
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"not": valid}')
     r = _run("validate", str(bad))
     assert r.returncode == 1
     assert "FAIL" in r.stderr
     assert "1 failed" in r.stderr
 
 
-def test_cli_list_outputs_eleven_rules() -> None:
+def test_cli_list_outputs_twelve_document_levels() -> None:
     r = _run("list")
     assert r.returncode == 0, r.stderr
     lines = [line for line in r.stderr.splitlines() if line.strip()]
-    assert len(lines) == 11
+    assert len(lines) == 12
     assert "diann" in r.stderr
     assert "wombat" in r.stderr
+
+
+def test_cli_fasta_is_unified_and_validation_is_disableable() -> None:
+    root_help = _run("--help")
+    assert root_help.returncode == 0
+    assert "validate-fasta" not in root_help.stdout
+    assert "fasta" in root_help.stdout
+
+    fasta_help = _run("fasta", "--help")
+    assert fasta_help.returncode == 0
+    assert "--no-validate" in fasta_help.stdout
+
+
+def test_cli_summary_outputs_json(tmp_path: Path) -> None:
+    import anndata as ad
+    import numpy as np
+
+    obj = ad.AnnData(X=np.array([[1.0]]), layers={"intensity": np.array([[1.0]])})
+    obj.uns["anndata_proteomics"] = {
+        "quantification_level": "protein",
+        "software_name": "Synthetic",
+    }
+    store_quantification_summary(obj)
+    path = tmp_path / "result.h5ad"
+    obj.write_h5ad(path)
+
+    result = _run("summary", str(path), "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["quantification"]["level"] == "protein"
 
 
 def _require(software: str):
@@ -76,16 +108,17 @@ def _require(software: str):
     return data_file, param_file
 
 
-def test_cli_convert_with_rule_toml_writes_h5ad(tmp_path: Path) -> None:
-    """The --rule-toml override (single level, version-agnostic) writes a .h5ad."""
+def test_cli_convert_with_rule_config_writes_h5ad(tmp_path: Path) -> None:
+    """A single-level --rule-config document writes a .h5ad."""
     import pytest
 
     data_file = find_test_data("WOMBAT")
     if data_file is None or not data_file.exists():
         pytest.skip("no WOMBAT test data available")
-    rule = find_rule("wombat", "peptidoform")
-    out = tmp_path / "wombat.h5ad"
-    r = _run("convert", str(data_file), "--rule-toml", str(rule), "--output", str(out))
+    rule = find_rule("wombat", "peptidoform").path
+    out_base = tmp_path / "wombat"
+    out = out_base.with_suffix(".h5ad")
+    r = _run("convert", str(data_file), "--rule-config", str(rule), "--output", str(out_base))
     assert r.returncode == 0, r.stderr
     assert out.exists()
     assert "wrote" in r.stderr
@@ -96,20 +129,32 @@ def test_cli_convert_default_writes_h5mu(tmp_path: Path) -> None:
     import mudata
 
     data_file, param_file = _require("DIA-NN")
-    out = tmp_path / "diann.h5mu"
-    r = _run("convert", str(data_file), "--params", str(param_file), "--output", str(out))
+    out_base = tmp_path / "diann"
+    out = out_base.with_suffix(".h5mu")
+    r = _run("convert", str(data_file), "--params", str(param_file), "--output", str(out_base))
     assert r.returncode == 0, r.stderr
     assert out.exists()
     md = mudata.read_h5mu(out)
     assert len(md.mod) >= 2
+    assert "descriptive_summary" in md.uns["anndata_proteomics"]
+    assert all(
+        "descriptive_summary" in modality.uns["anndata_proteomics"] for modality in md.mod.values()
+    )
 
 
 def test_cli_convert_explicit_level_writes_h5ad(tmp_path: Path) -> None:
     """A single level argument (DIA-NN protein) writes a .h5ad."""
     data_file, param_file = _require("DIA-NN")
-    out = tmp_path / "diann_protein.h5ad"
+    out_base = tmp_path / "diann_protein"
+    out = out_base.with_suffix(".h5ad")
     r = _run(
-        "convert", str(data_file), "protein", "--params", str(param_file), "--output", str(out)
+        "convert",
+        str(data_file),
+        "protein",
+        "--params",
+        str(param_file),
+        "--output",
+        str(out_base),
     )
     assert r.returncode == 0, r.stderr
     assert out.exists()

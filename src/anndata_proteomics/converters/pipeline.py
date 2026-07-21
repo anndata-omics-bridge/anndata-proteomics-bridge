@@ -9,7 +9,7 @@ axis. No GUI / marimo / test-data-cache dependency — this is plain library cod
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -17,8 +17,10 @@ import pandas as pd
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.registry import parse_params
+from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.loader import load_rule, resolve_rule_for_version
 from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.schema import ParseRule
 
 # Quantification levels, coarse to fine. Not every vendor exposes every level.
 LEVELS = ["ion", "peptidoform", "peptide", "protein", "fragment"]
@@ -110,6 +112,24 @@ def available_targets(slug: str, version: str | None, headers: Iterable[str]) ->
     return targets
 
 
+def matching_rules(
+    rules: Mapping[str, ParseRule],
+    headers: Iterable[str],
+) -> dict[str, ParseRule]:
+    """Return document levels whose required source columns match a vendor table."""
+    header_set = set(headers)
+    matched = {}
+    for level, rule in rules.items():
+        label_column = (
+            rule.fragments.label_column
+            if rule.fragments is not None and rule.fragments.label_strategy == "column"
+            else None
+        )
+        if matches(header_set, rule) and (label_column is None or label_column in header_set):
+            matched[level] = rule
+    return matched
+
+
 def _noop(_msg: str) -> None:
     pass
 
@@ -143,9 +163,6 @@ def _build_mudata(
 
     Levels the version doesn't provide (e.g. fragment on DIA-NN 2.x) are skipped, not failed.
     """
-    import mudata
-    from mudata import MuData
-
     resolvable = set(convertible_levels(slug, version, df.columns))
     skipped = [level for level in LEVELS if level not in resolvable]
     if skipped:
@@ -156,20 +173,52 @@ def _build_mudata(
             f"(resolved: {sorted(resolvable)}) — nothing to wrap in a MuData"
         )
 
+    rules = {
+        level: select_rule(slug, level, version, df.columns)
+        for level in LEVELS
+        if level in resolvable
+    }
+    return _build_mudata_from_rules(
+        df,
+        rules,
+        params_path=params_path,
+        software=slug,
+        log=log,
+    )
+
+
+def _build_mudata_from_rules(
+    df: pd.DataFrame,
+    rules: Mapping[str, ParseRule],
+    *,
+    params_path: Path | str | None = None,
+    software: str | None = None,
+    log: Callable[[str], None] = _noop,
+):
+    """Build MuData from already selected effective rules."""
+    import mudata
+    from mudata import MuData
+
+    if len(rules) < 2:
+        raise ValueError(f"fewer than two levels supplied: {sorted(rules)}")
     mods = {}
     for level in LEVELS:
-        if level not in resolvable:
+        if level not in rules:
             continue
         log(f"converting level: {level}")
-        adata = _convert_level(df.copy(), slug, level, version, params_path=params_path, log=log)
+        from anndata_proteomics.converters.assemble import convert
+
+        adata = convert(df.copy(), rules[level], params_path=params_path)
+        log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
     # Adopt the mudata 0.4 default now (no auto-pull of per-modality obs/var into the global
     # frames); each modality keeps its own obs/var. Silences the 0.3 FutureWarning.
     with mudata.set_options(pull_on_update=False):
         md = MuData(mods, axis=0)
-    if params_path is not None:
-        params = parse_params(params_path, software=slug)
+    if params_path is not None and software is not None:
+        params = parse_params(params_path, software=software)
         write_search_parameters(md, params, source_path=str(params_path))
+    store_quantification_summary(md)
     log(f"  MuData: {md.n_obs} obs × {sum(a.n_vars for a in mods.values())} var, {len(mods)} mods")
     return md

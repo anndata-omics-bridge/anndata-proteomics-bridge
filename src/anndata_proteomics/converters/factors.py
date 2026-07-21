@@ -1,4 +1,4 @@
-"""Factor-encode string-valued layer data to integer codes per the TOML categories map."""
+"""Factor-encode string-valued layer data to integer codes per the rule's categories map."""
 
 from __future__ import annotations
 

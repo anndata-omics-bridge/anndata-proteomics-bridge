@@ -1,4 +1,4 @@
-"""Validate parsing-rule TOMLs and produce CLI-friendly results."""
+"""Validate software-version parsing-rule documents and produce CLI-friendly results."""
 
 from __future__ import annotations
 
@@ -7,49 +7,50 @@ from pathlib import Path
 
 from loguru import logger
 
-from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules, packaged_rules_root
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.rules.loader import load_rule_document
+from anndata_proteomics.rules.registry import iter_packaged_documents, packaged_rules_root
+from anndata_proteomics.rules.schema import ParseRuleDocument
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidationResult:
+    """Operational validation outcome for one source document."""
+
     path: Path
     ok: bool
     error: str | None = None
-    rule: ParseRule | None = None
+    document: ParseRuleDocument | None = None
 
 
 def validate_file(path: Path | str) -> ValidationResult:
-    """Validate one TOML file. Never raises; failures come back in the result."""
-    p = Path(path)
+    """Validate one JSON document and every merged level without raising."""
+    source = Path(path)
     try:
-        rule = load_rule(p)
-    except Exception as e:
-        notes = getattr(e, "__notes__", [])
-        msg = "; ".join([str(e)] + list(notes)) if notes else str(e)
-        return ValidationResult(path=p, ok=False, error=msg)
-    return ValidationResult(path=p, ok=True, rule=rule)
+        document = load_rule_document(source)
+    except Exception as exc:  # noqa: BLE001 - validation results carry all config failures
+        notes = getattr(exc, "__notes__", [])
+        message = "; ".join([str(exc), *notes]) if notes else str(exc)
+        return ValidationResult(path=source, ok=False, error=message)
+    return ValidationResult(path=source, ok=True, document=document)
 
 
 def validate_all_packaged() -> list[ValidationResult]:
-    """Validate every packaged rule. Sorted by path."""
-    return [validate_file(p) for p in iter_packaged_rules()]
+    """Validate every packaged software-version document in path order."""
+    return [validate_file(path) for path in iter_packaged_documents()]
 
 
 def _log_and_exit_code(results: list[ValidationResult]) -> int:
-    """Log PASS/FAIL per result and a summary line; return 0 if all ok else 1.
-
-    Used by the `anndata-proteomics validate` subcommand.
-    """
-    pkg_parent = packaged_rules_root().parent
-    for r in results:
-        rel = r.path.relative_to(pkg_parent) if r.path.is_relative_to(pkg_parent) else r.path
-        if r.ok:
-            logger.info(f"PASS  {rel}")
+    """Log PASS/FAIL per document and return zero only when all are valid."""
+    package_parent = packaged_rules_root().parent
+    for result in results:
+        path = result.path
+        relative = path.relative_to(package_parent) if path.is_relative_to(package_parent) else path
+        if result.ok:
+            levels = ", ".join(result.document.levels) if result.document is not None else ""
+            logger.info(f"PASS  {relative} [{levels}]")
         else:
-            err_summary = (r.error or "(no error message)").splitlines()[0]
-            logger.error(f"FAIL  {rel}: {err_summary}")
-    failed = sum(1 for r in results if not r.ok)
-    logger.info(f"{len(results)} rule(s) checked, {failed} failed.")
+            summary = (result.error or "(no error message)").splitlines()[0]
+            logger.error(f"FAIL  {relative}: {summary}")
+    failed = sum(not result.ok for result in results)
+    logger.info(f"{len(results)} document(s) checked, {failed} failed.")
     return 0 if failed == 0 else 1

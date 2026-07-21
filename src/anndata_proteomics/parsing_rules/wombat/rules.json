@@ -1,0 +1,91 @@
+{
+  "schema_version": "0.1",
+  "file_version": "1",
+  "software_name": "WOMBAT",
+  "software_version": "^0\\.9\\.11$",
+  "base": {
+    "input_shape": "wide",
+    "axis": {
+      "obs_keys": [
+        "sample"
+      ],
+      "duplicates": {
+        "mode": "error"
+      }
+    },
+    "columns": {
+      "obs": {
+        "select": {
+          "sample": "<sample>"
+        }
+      }
+    },
+    "modifications": {
+      "source_column": "modified_peptide",
+      "parser": "token_regex",
+      "token_pattern": "\\[([^\\[\\]]+)\\]",
+      "token_position": "after_residue",
+      "case_sensitive": false,
+      "unknown_policy": "preserve",
+      "output_column": "proforma_sequence",
+      "map": [
+        {
+          "token": "Acetyl",
+          "accession": "UNIMOD:1"
+        },
+        {
+          "token": "Oxidation",
+          "accession": "UNIMOD:35"
+        },
+        {
+          "token": "Carbamidomethyl",
+          "accession": "UNIMOD:4"
+        }
+      ]
+    }
+  },
+  "levels": {
+    "peptidoform": {
+      "axis": {
+        "var_keys": [
+          "ProForma_peptidoform"
+        ],
+        "x_layer": "Abundance"
+      },
+      "columns": {
+        "var": {
+          "select": {
+            "modified_peptide": "modified_peptide",
+            "protein_group": "protein_group"
+          },
+          "compute": [
+            {
+              "name": "ProForma_peptidoform",
+              "from": [
+                "modified_peptide"
+              ],
+              "how": "proforma_sequence"
+            },
+            {
+              "name": "ProForma_peptide",
+              "from": [
+                "modified_peptide"
+              ],
+              "how": "stripped_sequence"
+            }
+          ]
+        }
+      },
+      "layers": [
+        {
+          "name": "Abundance",
+          "source": "^abundance_(?P<sample>.+)$"
+        },
+        {
+          "name": "Number_Of_Psms",
+          "source": "^number_of_psms_(?P<sample>.+)$"
+        }
+      ]
+    }
+  }
+}

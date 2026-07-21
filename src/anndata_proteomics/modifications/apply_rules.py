@@ -26,7 +26,7 @@ from anndata_proteomics.modifications.proforma import render_proforma
 
 @dataclass(frozen=True)
 class MapEntry:
-    """One ``[[modifications.map]]`` entry from a parsing-rule TOML."""
+    """One ``modifications.map`` entry from a parsing-rule JSON document."""
 
     token: str
     name: str

@@ -1,4 +1,4 @@
-"""Generate parse_rule.schema.json from the pydantic ParseRule model."""
+"""Generate source-document and effective-rule JSON Schemas from Pydantic."""
 
 from __future__ import annotations
 
@@ -7,20 +7,20 @@ from pathlib import Path
 
 from loguru import logger
 
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.rules.schema import ParseRule, ParseRuleDocument
 
 
 def main() -> None:
-    schema = ParseRule.model_json_schema()
-    out = (
-        Path(__file__).resolve().parent.parent
-        / "parsing_rules"
-        / "_schema"
-        / "parse_rule.schema.json"
-    )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(schema, indent=2) + "\n")
-    logger.info(f"wrote {out}")
+    output_directory = Path(__file__).resolve().parent.parent / "parsing_rules" / "_schema"
+    output_directory.mkdir(parents=True, exist_ok=True)
+    schemas = {
+        "parse_rule.schema.json": ParseRule.model_json_schema(),
+        "parse_rule_document.schema.json": ParseRuleDocument.model_json_schema(),
+    }
+    for filename, schema in schemas.items():
+        output = output_directory / filename
+        output.write_text(json.dumps(schema, indent=2) + "\n")
+        logger.info(f"wrote {output}")
 
 
 if __name__ == "__main__":

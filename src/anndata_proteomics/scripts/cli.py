@@ -1,18 +1,21 @@
 """apb CLI dispatcher.
 
 Subcommands:
-- validate [path ...]        validate one or more TOML rules; defaults to all packaged
+- validate [path ...]        validate one or more JSON rules; defaults to all packaged
 - list                       list packaged rules
 - export-schema              regenerate parse_rule.schema.json
 - convert <data> [level]     convert a vendor file to MuData (.h5mu) or one level to AnnData (.h5ad)
-- annotate <data> <toml>     join sample annotations onto obs
-- fasta <data> <fasta...>    annotate the protein layer's var from FASTA file(s)
+- summary <path>             print a stored descriptive summary
+- annotate <data> <json>     join sample annotations onto obs
+- fasta <data> <fasta...>    annotate proteins and validate peptide identifications
 """
 
 from __future__ import annotations
 
+import json as jsonlib
 import sys
 from pathlib import Path
+from typing import Any
 
 from cyclopts import App
 from loguru import logger
@@ -21,7 +24,7 @@ from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics.converters.assemble import convert as _run_convert
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
-from anndata_proteomics.rules.loader import load_rule
+from anndata_proteomics.rules.loader import load_rule, load_rule_document
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.validate import (
     _log_and_exit_code,
@@ -34,7 +37,7 @@ app = App(name="apb", help="anndata_proteomics (APB) CLI", help_on_error=True)
 
 @app.command
 def validate(*paths: Path) -> int:
-    """Validate one or more TOML rule files.
+    """Validate one or more JSON rule files.
 
     With no paths, walks all packaged rules (same as `validate-rules`).
     """
@@ -48,11 +51,12 @@ def validate(*paths: Path) -> int:
 @app.command(name="list")
 def list_rules() -> int:
     """List packaged parsing rules: software, level, file_version, version pattern, path."""
-    for p in iter_packaged_rules():
-        rule = load_rule(p)
+    for locator in iter_packaged_rules():
+        rule = load_rule(locator)
         logger.info(
             f"{rule.software_name:14}  {rule.quantification_level:12}  "
-            f"v{rule.file_version:<3}  {rule.software_version:14}  {p}"
+            f"v{rule.file_version:<3}  {rule.software_version:14}  "
+            f"{locator.path}#{locator.level}"
         )
     return 0
 
@@ -70,7 +74,7 @@ def convert(
     level: str | None = None,
     *,
     params: Path | None = None,
-    rule_toml: Path | None = None,
+    rule_config: Path | None = None,
     software: str | None = None,
     output: Path | None = None,
 ) -> int:
@@ -81,34 +85,71 @@ def convert(
     Pass a LEVEL (ion / fragment / peptidoform / peptide / protein) to emit just that level.
 
     --params is the vendor parameter file; it supplies the software version that selects the rule
-    variant (e.g. DIA-NN v1 vs v2) and is required unless --rule-toml is given. The vendor is
+    variant (e.g. DIA-NN v1 vs v2) and is required unless --rule-config is given. The vendor is
     auto-detected from the column headers; override with --software (the rule folder slug, e.g.
-    "diann"). --rule-toml overrides rule selection entirely (single level, version-agnostic).
-    --output defaults to <stem>.h5mu (MuData) or <stem>.h5ad (single level) next to the input.
+    "diann"). --rule-config selects an explicit software-version document; LEVEL chooses one
+    section, while omitting LEVEL converts every matching section in that document.
+    --output is an extensionless basename. APB appends .h5mu for MuData or .h5ad for AnnData.
+    Without --output, the result is written next to the input using the input stem.
     """
     from anndata_proteomics.converters.pipeline import (
         _build_mudata,
+        _build_mudata_from_rules,
         _convert_level,
         _param_version,
         convertible_levels,
+        matching_rules,
         recognize_software,
+        software_slug,
     )
+
+    if output is not None and output.suffix:
+        logger.error(
+            f"--output must be an extensionless basename, got {output}; APB chooses .h5ad or .h5mu"
+        )
+        return 2
 
     df = read_table(data)
 
-    # --rule-toml: explicit single-level rule, bypasses vendor/version selection.
-    if rule_toml is not None:
-        adata = _run_convert(df, load_rule(rule_toml), params_path=params)
-        return _write_anndata(adata, output, data)
+    # --rule-config: explicit software-version document, bypassing packaged selection.
+    if rule_config is not None:
+        document = load_rule_document(rule_config)
+        if level is not None:
+            if level not in document.levels:
+                logger.error(
+                    f"{rule_config} has no level {level!r}; available: {list(document.levels)}"
+                )
+                return 1
+            adata = _run_convert(df, document.effective_rule(level), params_path=params)
+            return _write_anndata(adata, output, data)
+        rules = matching_rules(document.effective_rules(), df.columns)
+        if len(rules) >= 2:
+            md = _build_mudata_from_rules(
+                df,
+                rules,
+                params_path=params,
+                software=software_slug(document.software_name),
+            )
+            out = _output_path(output, data, ".h5mu")
+            md.write_h5mu(out)
+            _remove_stale_sibling(out, ".h5ad")
+            logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
+            return 0
+        if len(rules) == 1:
+            rule = next(iter(rules.values()))
+            adata = _run_convert(df, rule, params_path=params)
+            return _write_anndata(adata, output, data)
+        logger.error(f"no level in {rule_config} matches the columns in {data}")
+        return 1
 
     slug = software or recognize_software(df.columns)
     if slug is None:
         logger.error(
-            f"could not auto-detect the vendor for {data}; pass --software SLUG or --rule-toml PATH"
+            f"could not auto-detect the vendor for {data}; pass --software SLUG or --rule-config PATH"
         )
         return 1
     if params is None:
-        logger.error("pass --params (it gives the software version) or --rule-toml PATH")
+        logger.error("pass --params (it gives the software version) or --rule-config PATH")
         return 1
     version = _param_version(params, slug)
     logger.info(f"vendor={slug} software_version={version!r}")
@@ -120,8 +161,9 @@ def convert(
     levels = convertible_levels(slug, version, df.columns)
     if len(levels) >= 2:
         md = _build_mudata(df, slug, version, params_path=params)
-        out = output or data.with_suffix(".h5mu")
+        out = _output_path(output, data, ".h5mu")
         md.write_h5mu(out)
+        _remove_stale_sibling(out, ".h5ad")
         logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
         return 0
     if len(levels) == 1:
@@ -136,22 +178,51 @@ def convert(
 
 def _write_anndata(adata, output: Path | None, data: Path) -> int:
     """Write a single-level AnnData to .h5ad and log a one-line summary."""
-    out = output or data.with_suffix(".h5ad")
+    out = _output_path(output, data, ".h5ad")
     adata.write_h5ad(out)
+    _remove_stale_sibling(out, ".h5mu")
     logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
+    return 0
+
+
+def _output_path(output: Path | None, data: Path, suffix: str) -> Path:
+    """Resolve a result path, appending APB's chosen suffix to explicit basenames."""
+    return data.with_suffix(suffix) if output is None else Path(f"{output}{suffix}")
+
+
+def _remove_stale_sibling(output: Path, stale_suffix: str) -> None:
+    """Remove the prior alternate container type after a successful replacement."""
+    stale = output.with_suffix(stale_suffix)
+    if stale.exists():
+        stale.unlink()
+        logger.info(f"removed stale {stale}")
+
+
+@app.command(name="summary")
+def summary_cmd(
+    path: Path,
+    *,
+    modality: str | None = None,
+    json: bool = False,
+) -> int:
+    """Print APB's stored descriptive summary for a container or MuData modality."""
+    from anndata_proteomics.readers.summary import describe_path
+
+    result = describe_path(path, modality=modality)
+    print(jsonlib.dumps(result, indent=None if json else 2, sort_keys=True))
     return 0
 
 
 @app.command
 def annotate(
     data: Path,
-    annotation_toml: Path,
+    annotation_config: Path,
     output: Path | None = None,
 ) -> int:
-    """Join sample annotations from an annotation TOML onto obs and write the result.
+    """Join sample annotations from an annotation JSON document onto obs and write the result.
 
-    Reads an .h5ad/.h5mu, joins the TOML's ``obs.samples`` table onto obs by run/file
-    name (matching obs_names by default; see the TOML's ``match_on``), and writes the
+    Reads an .h5ad/.h5mu, joins the JSON ``obs.samples`` records onto obs by run/file
+    name (matching obs_names by default; see the config's ``match_on``), and writes the
     enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input
     (non-destructive); point it back at the input to update in place.
     """
@@ -160,7 +231,7 @@ def annotate(
     from anndata_proteomics.readers.result import load_converted_result
 
     obj = load_converted_result(data)
-    spec = load_annotation(annotation_toml)
+    spec = load_annotation(annotation_config)
     annotate_obs(obj, spec)
 
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
@@ -177,45 +248,113 @@ def fasta(
     data: Path,
     *fasta_files: Path,
     output: Path | None = None,
-    match_on: str = "Protein_Group",
+    match_on: str | None = None,
     is_uniprot: bool = True,
-    decoy_pattern: str = "^REV_|^rev_",
+    decoy_pattern: str | None = None,
+    contaminant_pattern: str | None = None,
     cleavage: str | None = None,
     min_length: int | None = None,
     max_length: int | None = None,
+    validate: bool = True,
+    sequence_field: str = "ProForma_peptide",
+    leading_protein_field: str | None = None,
+    backend: str = "auto",
+    il_equivalent: bool = False,
 ) -> int:
-    """Annotate the protein layer from FASTA file(s) and write the result.
+    """Annotate proteins and validate peptide identifications against FASTA.
 
-    Reads an .h5ad/.h5mu, builds the prolfquapp-style protein annotation
-    (fasta.id, fasta.header, protein_length, nr_peptides, gene_name) from
-    one or more FASTA files, and attaches it as a var-aligned DataFrame at
-    ``varm['fasta']`` of the protein layer only (a protein-level AnnData, or the
-    ``protein`` modality of a MuData). The join matches the leading accession of
-    each protein group against the FASTA proteinname. ``nr_peptides`` uses
-    the digestion enzyme stored in the object's search parameters;
-    --cleavage / --min-length / --max-length override it (needed for objects
-    converted without a parameters file). --output defaults to
-    ``<stem>.annotated<suffix>`` (non-destructive).
+    Protein-derived layers receive ``varm['fasta']``. By default, every
+    peptide-derived layer is also checked with one Aho--Corasick scan and receives
+    ``varm['fasta_validation']``; use ``--no-validate`` to disable that check.
+    MuData peptide-to-protein relationships are added to
+    ``varp['feature_mapping']`` in MuLink format. Decoy and contaminant patterns
+    are inferred from the supplied FASTA unless explicitly provided. They classify
+    records but never filter quantified features. Unmatched peptides are retained.
     """
+    from anndata_proteomics.annotation.validate_fasta import (
+        validate_peptide_modalities_against_fasta,
+    )
     from anndata_proteomics.annotation.var_fasta import annotate_var_from_fasta
+    from anndata_proteomics.fasta.anndata_io import read_fasta_config
     from anndata_proteomics.readers.result import load_converted_result
+    from anndata_proteomics.readers.summary import store_fasta_summary
 
     if not fasta_files:
         logger.error("no FASTA file given; usage: apb fasta DATA FASTA [FASTA ...]")
         return 1
 
+    sources = list(fasta_files)
     obj = load_converted_result(data)
-    annotate_var_from_fasta(
-        obj,
-        list(fasta_files),
-        match_on=match_on,
-        is_uniprot=is_uniprot,
-        decoy_pattern=decoy_pattern,
-        cleavage=cleavage,
-        min_length=min_length,
-        max_length=max_length,
+    has_protein = (
+        "protein" in obj.mod if hasattr(obj, "mod") else _quantification_level(obj) == "protein"
+    )
+    peptide_modalities = (
+        [
+            name
+            for name, target in obj.mod.items()
+            if _quantification_level(target) in {"ion", "fragment", "peptidoform", "peptide"}
+        ]
+        if hasattr(obj, "mod")
+        else (
+            [_quantification_level(obj)]
+            if _quantification_level(obj) in {"ion", "fragment", "peptidoform", "peptide"}
+            else []
+        )
     )
 
+    if has_protein:
+        annotate_var_from_fasta(
+            obj,
+            sources,
+            match_on=match_on,
+            is_uniprot=is_uniprot,
+            decoy_pattern=decoy_pattern,
+            contaminant_pattern=contaminant_pattern,
+            cleavage=cleavage,
+            min_length=min_length,
+            max_length=max_length,
+        )
+
+    if validate and peptide_modalities:
+        resolved_config = (
+            read_fasta_config(obj)
+            if has_protein and decoy_pattern is None and contaminant_pattern is None
+            else None
+        )
+        validation_kwargs = {
+            "sequence_field": sequence_field,
+            "backend": backend,
+            "leading_protein_field": leading_protein_field,
+            "protein_match_on": match_on,
+            "il_equivalent": il_equivalent,
+            "is_uniprot": is_uniprot,
+        }
+        if resolved_config is not None:
+            validation_kwargs["fasta_config"] = resolved_config
+        else:
+            validation_kwargs["decoy_pattern"] = decoy_pattern
+            validation_kwargs["contaminant_pattern"] = contaminant_pattern
+        results = validate_peptide_modalities_against_fasta(
+            obj,
+            sources,
+            **validation_kwargs,
+        )
+        for name, result in results.items():
+            logger.info(
+                "{}: {}/{} peptide-derived features occur in FASTA",
+                name,
+                result.n_matched_features,
+                result.n_features,
+            )
+
+    if not has_protein and (not validate or not peptide_modalities):
+        logger.error(
+            "input has no protein layer to annotate and no enabled peptide-derived "
+            "layer to validate"
+        )
+        return 1
+
+    store_fasta_summary(obj)
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
     if hasattr(obj, "mod"):
         obj.write_h5mu(out)
@@ -223,6 +362,11 @@ def fasta(
         obj.write_h5ad(out)
     logger.info(f"wrote {out}")
     return 0
+
+
+def _quantification_level(obj: Any) -> str | None:
+    """Return APB's stored quantification level for one AnnData-like object."""
+    return (obj.uns.get("anndata_proteomics") or {}).get("quantification_level")
 
 
 def main() -> int:

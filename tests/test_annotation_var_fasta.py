@@ -205,13 +205,25 @@ def test_zero_match_raises() -> None:
         annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
 
 
-def test_partial_match_warns_and_leaves_nan(capsys: pytest.CaptureFixture[str]) -> None:
+def test_partial_match_warns_and_roundtrips_nullable_flags(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
     adata = _protein_adata(["P03018", "NOSUCH"])
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
     assert "1/2 var rows had no matching" in capsys.readouterr().err
     fa = adata.varm["fasta"]
     assert fa.loc["P03018", "gene_name"] == "uvrD"
     assert pd.isna(fa.loc["NOSUCH", "gene_name"])
+    assert str(fa["is_decoy"].dtype) == "boolean"
+    assert isinstance(fa["fasta.id"].dtype, pd.CategoricalDtype)
+    assert pd.isna(fa.loc["NOSUCH", "is_decoy"])
+
+    path = tmp_path / "partial.h5ad"
+    adata.write_h5ad(path)
+    restored = ad.read_h5ad(path).varm["fasta"]
+    assert not restored.loc["P03018", "is_decoy"]
+    assert pd.isna(restored.loc["NOSUCH", "is_decoy"])
 
 
 def test_rerun_varm_collision_raises() -> None:
@@ -224,7 +236,22 @@ def test_rerun_varm_collision_raises() -> None:
 def test_unknown_match_on_column_raises() -> None:
     adata = _protein_adata(["P03018"], with_group_column=False)
     with pytest.raises(ValueError, match="match_on column 'Protein_Group' not found"):
-        annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
+        annotate_var_from_fasta(
+            adata,
+            FASTA,
+            match_on="Protein_Group",
+            cleavage="Trypsin",
+        )
+
+
+def test_decoy_quantification_is_retained_and_annotated() -> None:
+    adata = _protein_adata(["REV_Q13515"])
+    before = adata.X.copy()
+    annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
+    assert adata.n_vars == 1
+    np.testing.assert_array_equal(adata.X, before)
+    assert bool(adata.varm["fasta"].loc["REV_Q13515", "is_decoy"])
+    assert adata.varm["fasta"].loc["REV_Q13515", "fasta.id"] == "REV_sp|Q13515|BFSP2_HUMAN"
 
 
 # --- provenance --------------------------------------------------------------
@@ -269,3 +296,73 @@ def test_cli_fasta_requires_a_fasta_file(tmp_path: Path) -> None:
     data_path = tmp_path / "proteins.h5ad"
     adata.write_h5ad(data_path)
     assert fasta_cmd(data_path) == 1
+
+
+def test_cli_fasta_validates_all_mudata_layers_by_default(tmp_path: Path) -> None:
+    protein = _protein_adata(["prt:P03018"], with_group_column=False)
+    ion = ad.AnnData(
+        X=np.ones((2, 1)),
+        obs=pd.DataFrame(index=["run1", "run2"]),
+        var=pd.DataFrame(
+            {
+                "ProForma_peptide": ["MDVSY"],
+                "Protein_Group": ["P03018"],
+            },
+            index=["ion:MDVSY"],
+        ),
+    )
+    ion.uns["anndata_proteomics"] = {"quantification_level": "ion"}
+    with mudata.set_options(pull_on_update=False):
+        mdata = MuData({"ion": ion, "protein": protein}, axis=0)
+    data_path = tmp_path / "levels.h5mu"
+    output_path = tmp_path / "levels.fasta.h5mu"
+    fasta_path = tmp_path / "db.fasta"
+    mdata.write_h5mu(data_path)
+    fasta_path.write_text(FASTA)
+
+    assert fasta_cmd(data_path, fasta_path, output=output_path, cleavage="Trypsin") == 0
+
+    with mudata.set_options(pull_on_update=False):
+        restored = mudata.read_h5mu(output_path)
+    assert "fasta" in restored.mod["protein"].varm
+    assert (
+        restored.mod["ion"].varm["fasta_validation"].loc["ion:MDVSY", "peptide_in_leading_protein"]
+    )
+    assert restored.varp["feature_mapping"].nnz == 1
+
+
+def test_cli_fasta_no_validate_only_annotates_proteins(tmp_path: Path) -> None:
+    protein = _protein_adata(["prt:P03018"], with_group_column=False)
+    ion = ad.AnnData(
+        X=np.ones((2, 1)),
+        obs=pd.DataFrame(index=["run1", "run2"]),
+        var=pd.DataFrame(
+            {"ProForma_peptide": ["MDVSY"]},
+            index=["ion:MDVSY"],
+        ),
+    )
+    ion.uns["anndata_proteomics"] = {"quantification_level": "ion"}
+    with mudata.set_options(pull_on_update=False):
+        mdata = MuData({"ion": ion, "protein": protein}, axis=0)
+    data_path = tmp_path / "levels.h5mu"
+    output_path = tmp_path / "levels.no-validation.h5mu"
+    fasta_path = tmp_path / "db.fasta"
+    mdata.write_h5mu(data_path)
+    fasta_path.write_text(FASTA)
+
+    assert (
+        fasta_cmd(
+            data_path,
+            fasta_path,
+            output=output_path,
+            cleavage="Trypsin",
+            validate=False,
+        )
+        == 0
+    )
+
+    with mudata.set_options(pull_on_update=False):
+        restored = mudata.read_h5mu(output_path)
+    assert "fasta" in restored.mod["protein"].varm
+    assert "fasta_validation" not in restored.mod["ion"].varm
+    assert "feature_mapping" not in restored.varp

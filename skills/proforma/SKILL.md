@@ -1,6 +1,6 @@
 ---
 name: proforma
-description: Use when working in APB on ProForma peptide, peptidoform, ion, or fragment identifiers; vendor modified-sequence normalization; parsing-rule TOML modifications or fragments blocks; Unimod token mapping; or code under anndata_proteomics/modifications.
+description: Use when working in APB on ProForma peptide, peptidoform, ion, or fragment identifiers; vendor modified-sequence normalization; parsing-rule JSON modifications or fragments objects; Unimod token mapping; or code under anndata_proteomics/modifications.
 ---
 
 # ProForma
@@ -9,7 +9,7 @@ description: Use when working in APB on ProForma peptide, peptidoform, ion, or f
 
 Use this skill in APB when adding, fixing, or reviewing ProForma-related behavior:
 vendor modified-sequence columns, peptidoform and ion identifiers, fragment feature
-keys, `[modifications]` TOML blocks, `[fragments]` TOML blocks, and Unimod registry
+keys, `modifications` JSON objects, `fragments` JSON objects, and Unimod registry
 mappings.
 
 APB currently implements a small, practical ProForma normalization subset. Do not
@@ -20,12 +20,12 @@ silently widen it into a general ProForma parser or add a new public API surface
 Before editing ProForma behavior, read the local source of truth:
 
 - `AGENTS.md` for APB-specific rules.
-- `docs/toml_schema.md`, especially "Var-axis naming convention", "Modifications",
+- `docs/json_schema.md`, especially "Columns", "Modification normalization",
   and "Fragments".
 - `src/anndata_proteomics/rules/schema.py` for schema invariants.
 - `src/anndata_proteomics/modifications/apply_rules.py` for token extraction,
   token-position handling, unknown-token policy, and mapping behavior.
-- `src/anndata_proteomics/modifications/pipeline.py` for TOML-to-runtime conversion.
+- `src/anndata_proteomics/modifications/pipeline.py` for config-to-runtime conversion.
 - `src/anndata_proteomics/modifications/proforma.py` for final rendering.
 - `src/anndata_proteomics/modifications/unimod_registry.toml` before adding a
   new accession to a parsing rule.
@@ -92,10 +92,10 @@ When adding or fixing vendor modified-sequence conversion:
 
 1. Start from real vendor examples and identify the exact source column containing
    modification tokens.
-2. If the vendor has shared base TOML inheritance, put shared `[modifications]`
-   blocks in the vendor base file. Put only level-specific behavior in leaf rules.
-3. Keep vendor columns under `[columns.var.select]`. Put APB-derived columns under
-   `[[columns.var.compute]]`; never select `proforma_sequence` or
+2. Put a shared `modifications` object in the software-version document's `base`.
+   Put only level-specific behavior under `levels.<level>`.
+3. Keep vendor columns under `columns.var.select`. Put APB-derived columns in the
+   `columns.var.compute` array; never select `proforma_sequence` or
    `stripped_sequence` as if they came from the input table.
 4. Use only `parser = "token_regex"` unless the runtime implementation in
    `modifications/` is deliberately extended.
@@ -103,42 +103,50 @@ When adding or fixing vendor modified-sequence conversion:
 6. Set `token_position` from the real syntax, then verify the runtime behavior in
    `apply_rules.py`. The schema has several literals, but implementation details
    live in the runtime parser.
-7. Map each vendor token to an accession with `[[modifications.map]]`. Canonical
+7. Map each vendor token to an accession in the `modifications.map` array. Canonical
    name, target, position, and mass delta come from `unimod_registry.toml`, not from
-   per-vendor TOML.
+   per-vendor JSON.
 8. Add missing accessions to `unimod_registry.toml` before referencing them.
 9. Add or update packaged-rule tests with concrete vendor input and expected
    ProForma output.
 
-Minimal TOML shape:
+Minimal JSON shape:
 
-```toml
-[[columns.var.compute]]
-name = "ProForma_peptidoform"
-from = ["Modified_Sequence"]
-how = "proforma_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_peptide"
-from = ["Modified_Sequence"]
-how = "stripped_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_ion"
-from = ["ProForma_peptidoform", "Precursor_Charge"]
-how = "proforma_ion"
-
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\(([^()]*)\\)"
-token_position = "after_residue"
-unknown_policy = "preserve"
-output_column = "proforma_sequence"
-
-[[modifications.map]]
-token = "UniMod:35"
-accession = "UNIMOD:35"
+```json
+{
+  "columns": {
+    "var": {
+      "compute": [
+        {
+          "name": "ProForma_peptidoform",
+          "from": ["Modified_Sequence"],
+          "how": "proforma_sequence"
+        },
+        {
+          "name": "ProForma_peptide",
+          "from": ["Modified_Sequence"],
+          "how": "stripped_sequence"
+        },
+        {
+          "name": "ProForma_ion",
+          "from": ["ProForma_peptidoform", "Precursor_Charge"],
+          "how": "proforma_ion"
+        }
+      ]
+    }
+  },
+  "modifications": {
+    "source_column": "Modified.Sequence",
+    "parser": "token_regex",
+    "token_pattern": "\\(([^()]*)\\)",
+    "token_position": "after_residue",
+    "unknown_policy": "preserve",
+    "output_column": "proforma_sequence",
+    "map": [
+      {"token": "UniMod:35", "accession": "UNIMOD:35"}
+    ]
+  }
+}
 ```
 
 ## Fragment Workflow
@@ -149,16 +157,16 @@ For fragment-level conversion:
 - Use `axis.var_keys = ["ProForma_fragment"]`.
 - Compute `ProForma_peptidoform`, then intermediate `ProForma_ion`, then
   `ProForma_fragment`.
-- Add a `[fragments]` block only when the vendor packs fragment values in parallel
+- Add a `fragments` object only when the vendor packs fragment values in parallel
   delimiter-separated columns that must be exploded before conversion.
-- Use `[fragments].label_output` as the second source for
+- Use `fragments.label_output` as the second source for
   `how = "proforma_fragment"`.
 - Remember that `ProForma_ion` is an intermediate at fragment level and should not be
   the var key there.
 
 ## Guardrails
 
-- Fix the root cause in the upstream APB file: schema, TOML, registry, parser, or
+- Fix the root cause in the upstream APB file: schema, JSON rule, registry, parser, or
   renderer. Do not add wrapper normalization, try/except fallbacks, or skip logic
   unless the user explicitly asks for a temporary workaround.
 - Keep column names and compute names exactly consistent with `schema.py`.

@@ -17,15 +17,16 @@ keywords = ["proteomics", "anndata", "mass-spectrometry", "diann", "maxquant"]
 dependencies = [
     "pandas",
     "numpy",
+    "scipy",
     "anndata",
     "mudata",
     "pyarrow",
     "requests",
     "beautifulsoup4",
-    "toml",
     "cyclopts",
     "pydantic>=2",
     "loguru",
+    "prozor>=0.1.0",
 ]
 
 [project.scripts]
@@ -40,12 +41,23 @@ dev = [
     "ruff",
     "jsonschema>=4",
     "pre-commit",
+    # Exercise Prozor's optional Rust backend in APB's integration tests.
+    "prozor[fast]>=0.1.0",
+]
+# Optional faster Aho-Corasick backend supplied by Prozor.
+fast = [
+    "prozor[fast]>=0.1.0",
 ]
 
 [dependency-groups]
 docs = [
     "mkdocs-material>=9.5",
 ]
+
+[tool.uv.sources]
+# Reproducible source until Prozor is released on a package index. Built APB
+# distributions retain the portable registry requirement (`prozor>=0.1.0`).
+prozor = { git = "https://github.com/anndata-omics-bridge/prozor.git", rev = "0cf5875ac7730fab68d30fac411553ff580df883" }
 
 [tool.black]
 line-length = 100

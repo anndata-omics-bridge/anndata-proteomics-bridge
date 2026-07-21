@@ -1,4 +1,6 @@
-# TODO: documentation update and reconciliation, 29 June
+# ARCHIVED: documentation update and reconciliation, 29 June
+
+Status: completed by commit `2636a8f`; archived 2026-07-20.
 
 ## Current cleanup decision
 

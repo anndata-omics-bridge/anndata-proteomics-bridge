@@ -28,15 +28,15 @@ The failure is raised in
   whose **`software_version` field (a regex)** matches the parsed version
   ([`_software_version_matches` = `re.search(rule.software_version, version)`](../src/anndata_proteomics/rules/loader.py#L121-L126)).
 - Packaged rules pin that regex **narrowly**. E.g.
-  [`parsing_rules/fragpipe/parse_fragpipe_ion_1.toml`](../src/anndata_proteomics/parsing_rules/fragpipe/parse_fragpipe_ion_1.toml)
+  [`parsing_rules/fragpipe/rules.json`](../src/anndata_proteomics/parsing_rules/fragpipe/rules.json), level `ion`
   has `software_version = "^22\\.1-build02$"` — so `22.0` and `23.0` don't match → **no rule covers**.
 - If a rule *is* selected but the file's columns don't fit, `select_rule` raises **"file columns don't
   match the rule …"** (no silent fallback).
 
 So each gap is fixed by either **widening the `software_version` regex** of an existing rule (when the
-columns are unchanged across that version) **or adding a new rule variant** (a `parse_<vendor>_<level>_2.toml`,
+columns are unchanged across that version) **or adding a new rule variant** (a `parse_<vendor>_<level>_2.json`,
 or a version subfolder like DIA-NN's `diann/v1`, `diann/v2`) when the columns changed. See
-[docs/toml_schema.md](../docs/toml_schema.md) and the base/leaf convention in [AGENTS.md](../AGENTS.md).
+[docs/json_schema.md](../docs/json_schema.md) and the base/leaf convention in [AGENTS.md](../AGENTS.md).
 
 ---
 
@@ -44,8 +44,8 @@ or a version subfolder like DIA-NN's `diann/v1`, `diann/v2`) when the columns ch
 
 | Vendor / level | Version(s) reported | Count | Packaged rule today | Likely action |
 |----------------|---------------------|-------|---------------------|---------------|
-| **FragPipe / ion** | `22.0`, `23.0` | 3 | `parse_fragpipe_ion_1.toml` pinned `^22\.1-build02$` | verify columns for 22.0/23.0 vs the rule → widen the regex if unchanged, else add a `_2` variant |
-| **PEAKS / ion** | `13 20250515`, `13 20250520` | 5 | `parse_peaks_ion_1.toml` | same: check PEAKS 13 columns vs the rule → widen / add variant |
+| **FragPipe / ion** | `22.0`, `23.0` | 3 | `fragpipe/rules.json` pinned `^22\.1-build02$` | verify columns for 22.0/23.0 vs the rule → widen the regex if unchanged, else add a version document |
+| **PEAKS / ion** | `13 20250515`, `13 20250520` | 5 | `peaks/rules.json` | same: check PEAKS 13 columns vs the rule → widen or add a version document |
 | **PEAKS / ion** | `None` — "file columns don't match … version None" | 1 | — | version couldn't be parsed from `--params`; **investigate the param file** (parse gap) *and/or* the columns |
 
 Representative inputs (paths relative to `apb/`):
@@ -74,17 +74,17 @@ apb convert "$D/input_file.tsv" --software fragpipe --level ion \
 # → ValueError: fragpipe ion: no rule covers software version '23.0'
 ```
 To see the columns you're matching against: `head -1 "$D/input_file.tsv"` and compare with the
-`[columns.*.select]` in the current `parse_fragpipe_ion_1.toml`.
+`columns.*.select` in the `ion` level of the current `fragpipe/rules.json`.
 
 ---
 
 ## Suggested approach
 
 1. For each (vendor, version): read the version's header columns and diff against the existing rule's
-   `[columns.*.select]` / `[axis]`.
+   `columns.*.select` / `axis`.
 2. **Columns unchanged** → widen the rule's `software_version` regex to also match the new version
    (e.g. `^(22\.|23\.)` or a broader pattern). Keep it a regex; prefer an explicit set over `.*`.
-3. **Columns changed** → add a new variant rule (`parse_<vendor>_<level>_2.toml`, or a version
+3. **Columns changed** → add a new variant rule (`parse_<vendor>_<level>_2.json`, or a version
    subfolder) with the new columns and a `software_version` regex for the new range; keep the old
    variant for the old version.
 4. For the **PEAKS "version None"** case: check whether the param parser fails to extract a PEAKS

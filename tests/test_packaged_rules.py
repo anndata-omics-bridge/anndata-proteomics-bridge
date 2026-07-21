@@ -1,53 +1,42 @@
-"""Verify every packaged parse_*.toml validates and matches its filename.
-
-Rules are loaded through ``load_rule`` (not raw ``tomllib``) so that DIA-NN/Spectronaut leaves
-are merged onto their vendor base file before validation — a stripped leaf is an incomplete
-ParseRule on its own.
-"""
+"""Verify packaged software-version documents and every effective level."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.loader import load_rule, load_rule_document
+from anndata_proteomics.rules.registry import iter_packaged_documents, iter_packaged_rules
 from anndata_proteomics.rules.validate import validate_all_packaged
 
 
-def test_all_packaged_rules_validate() -> None:
+def test_all_packaged_documents_validate() -> None:
     results = validate_all_packaged()
-    failed = [r for r in results if not r.ok]
-    assert not failed, "\n".join(f"{r.path}: {r.error}" for r in failed)
+    failed = [result for result in results if not result.ok]
+    assert not failed, "\n".join(f"{result.path}: {result.error}" for result in failed)
 
 
 def test_at_least_one_long_and_one_wide_rule() -> None:
-    rules = [load_rule(p) for p in iter_packaged_rules()]
-    shapes = {r.input_shape for r in rules}
-    assert "long" in shapes, f"no long rule found: {shapes}"
-    assert "wide" in shapes, f"no wide rule found: {shapes}"
+    shapes = {load_rule(locator).input_shape for locator in iter_packaged_rules()}
+    assert shapes == {"long", "wide"}
 
 
-def test_all_packaged_rules_declare_software_version() -> None:
-    for path in iter_packaged_rules():
-        rule = load_rule(path)
-        assert rule.software_version, f"{path} missing software_version"
+def test_all_documents_declare_software_version() -> None:
+    for path in iter_packaged_documents():
+        assert load_rule_document(path).software_version
 
 
 @pytest.mark.parametrize(
-    "toml_path",
+    "locator",
     list(iter_packaged_rules()),
-    ids=lambda p: f"{p.parent.name}/{p.name}",
+    ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_filename_quant_level_matches_toml(toml_path: Path) -> None:
-    # parse_<software>_<level>.toml (version-foldered) or parse_<software>_<level>_<n>.toml (flat).
-    parts = toml_path.stem.split("_")
-    if parts[-1].isdigit():  # drop a trailing flat-file version token
-        parts = parts[:-1]
-    filename_level = parts[-1]
-    rule = load_rule(toml_path)
-    assert rule.quantification_level == filename_level, (
-        f"{toml_path.name}: filename says level={filename_level!r} "
-        f"but TOML has quantification_level={rule.quantification_level!r}"
-    )
+def test_locator_level_matches_effective_rule(locator) -> None:
+    assert load_rule(locator).quantification_level == locator.level
+
+
+def test_documents_use_uniform_base_and_levels_shape() -> None:
+    for path in iter_packaged_documents():
+        source = path.read_text(encoding="utf-8")
+        assert '"base"' in source
+        assert '"levels"' in source
+        assert '"$extends"' not in source

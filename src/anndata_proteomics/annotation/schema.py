@@ -1,23 +1,27 @@
-"""Pydantic models for the annotation TOML schema.
+"""Pydantic models for the annotation JSON schema.
 
-An annotation TOML attaches an external table to an AnnData/MuData axis. This schema
+An annotation JSON document attaches an external table to an AnnData/MuData axis. This schema
 covers the ``obs`` (sample) axis. Feature annotation for the protein layer is not
-TOML-driven: it is built from FASTA file(s) and stored under ``varm['fasta']`` by
+configuration-driven: it is built from FASTA file(s) and stored under ``varm['fasta']`` by
 :func:`anndata_proteomics.annotation.var_fasta.annotate_var_from_fasta` (the ``apb fasta``
-CLI), so there is no ``[var]`` block here.
+CLI), so there is no ``var`` object here.
 
 Example::
 
-    schema_version = "0.1"
-
-    [obs]
-    match_on  = "index"      # "index" => obs_names; else the name of an obs column to join on
-    key_field = "raw_file"   # the field within each record that holds the join value
-
-    [[obs.samples]]
-    raw_file    = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01"
-    sample_name = "Condition_A_Sample_Alpha_01"
-    condition   = "A"
+    {
+      "schema_version": "0.1",
+      "obs": {
+        "match_on": "index",
+        "key_field": "raw_file",
+        "samples": [
+          {
+            "raw_file": "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01",
+            "sample_name": "Condition_A_Sample_Alpha_01",
+            "condition": "A"
+          }
+        ]
+      }
+    }
 """
 
 from __future__ import annotations

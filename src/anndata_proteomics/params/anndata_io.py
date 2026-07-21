@@ -7,7 +7,7 @@ heterogeneous nested dicts, so JSON is the wire format).
 API layer: ``read_search_parameters`` returns a validated
 :class:`Parameters` instance; ``write_search_parameters`` round-trips one
 back. This mirrors how :class:`ParseRule` is the typed handle for the
-TOML side.
+configuration side.
 """
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 The TOML data file (``unimod_registry.toml``, sibling of this module) is
 the single source of truth for ``name``, ``target``, ``position`` and
 ``mass_delta`` of each supported modification. Per-tool parsing-rule
-TOMLs reference modifications by accession only; the runtime resolves
+Parsing rules reference modifications by accession only; the runtime resolves
 them via this registry, raising an error if the accession is unknown.
 """
 
@@ -63,5 +63,5 @@ def resolve(accession: str) -> UnimodEntry:
     except KeyError:
         raise KeyError(
             f"accession {accession!r} not found in unimod_registry.toml; "
-            f"add it there before referencing it from a parsing-rule TOML"
+            f"add it there before referencing it from a parsing rule"
         ) from None

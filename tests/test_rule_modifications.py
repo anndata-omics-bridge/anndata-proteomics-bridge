@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import tomllib
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -10,117 +10,100 @@ from pydantic import ValidationError
 from anndata_proteomics.rules.schema import ParseRule
 
 
-BASE = """
-schema_version = "0.1"
-file_version = "1"
-software_name = "DIA-NN"
-software_version = "1.9.1"
-input_shape = "long"
-quantification_level = "ion"
-
-[axis]
-obs_keys = ["Run"]
-var_keys = ["Modified_Sequence", "Precursor_Charge"]
-x_layer = "Precursor_Normalised"
-
-[axis.duplicates]
-mode = "error"
-
-[columns.obs.select]
-Run = "Run"
-
-[columns.var.select]
-Modified_Sequence = "Modified.Sequence"
-Precursor_Charge = "Precursor.Charge"
-
-[[layers]]
-name = "Precursor_Normalised"
-source = "Precursor.Normalised"
-"""
+BASE: dict[str, Any] = {
+    "schema_version": "0.1",
+    "file_version": "1",
+    "software_name": "DIA-NN",
+    "software_version": "1.9.1",
+    "input_shape": "long",
+    "quantification_level": "ion",
+    "axis": {
+        "obs_keys": ["Run"],
+        "var_keys": ["Modified_Sequence", "Precursor_Charge"],
+        "x_layer": "Precursor_Normalised",
+        "duplicates": {"mode": "error"},
+    },
+    "columns": {
+        "obs": {"select": {"Run": "Run"}},
+        "var": {
+            "select": {
+                "Modified_Sequence": "Modified.Sequence",
+                "Precursor_Charge": "Precursor.Charge",
+            }
+        },
+    },
+    "layers": [{"name": "Precursor_Normalised", "source": "Precursor.Normalised"}],
+}
 
 
-def _parse(toml: str) -> ParseRule:
-    return ParseRule(**tomllib.loads(toml))
+def _parse(modifications: dict[str, Any] | None = None) -> ParseRule:
+    document = {**BASE}
+    if modifications is not None:
+        document["modifications"] = modifications
+    return ParseRule.model_validate(document)
 
 
 def test_rule_without_modifications_still_validates():
-    rule = _parse(BASE)
+    rule = _parse()
     assert rule.modifications is None
 
 
 def test_rule_with_token_regex_modifications():
-    extra = """
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\\\(([^()]*)\\\\)"
-token_position = "after_residue"
-unknown_policy = "preserve"
-
-[[modifications.map]]
-token = "UniMod:35"
-accession = "UNIMOD:35"
-"""
-    rule = _parse(BASE + extra)
+    extra = {
+        "source_column": "Modified.Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\(([^()]*)\)",
+        "token_position": "after_residue",
+        "unknown_policy": "preserve",
+        "map": [{"token": "UniMod:35", "accession": "UNIMOD:35"}],
+    }
+    rule = _parse(extra)
     assert rule.modifications is not None
     assert rule.modifications.parser == "token_regex"
     assert rule.modifications.map[0].accession == "UNIMOD:35"
 
 
 def test_token_regex_requires_token_pattern():
-    extra = """
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-
-[[modifications.map]]
-token = "ox"
-accession = "UNIMOD:35"
-"""
+    extra = {
+        "source_column": "Modified.Sequence",
+        "parser": "token_regex",
+        "map": [{"token": "ox", "accession": "UNIMOD:35"}],
+    }
     with pytest.raises(ValidationError, match="token_pattern"):
-        _parse(BASE + extra)
+        _parse(extra)
 
 
 def test_token_regex_requires_map_entries():
-    extra = """
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\\\[([^]]+)\\\\]"
-"""
+    extra = {
+        "source_column": "Modified.Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\[([^]]+)\]",
+    }
     with pytest.raises(ValidationError, match="map"):
-        _parse(BASE + extra)
+        _parse(extra)
 
 
 def test_unknown_parser_mode_rejected():
     # already_proforma / separate_mod_column were removed; parser must be the token_regex literal.
-    extra = """
-[modifications]
-source_column = "ProForma"
-parser = "already_proforma"
-token_pattern = "x"
-
-[[modifications.map]]
-token = "x"
-accession = "UNIMOD:35"
-"""
+    extra = {
+        "source_column": "ProForma",
+        "parser": "already_proforma",
+        "token_pattern": "x",
+        "map": [{"token": "x", "accession": "UNIMOD:35"}],
+    }
     # The only invalid field is `parser`; the error must be about the token_regex literal,
     # proving the discriminated union is gone (not a generic extra-key rejection).
     with pytest.raises(ValidationError, match="token_regex"):
-        _parse(BASE + extra)
+        _parse(extra)
 
 
 def test_modifications_extra_keys_forbidden():
-    extra = """
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\\\[([^]]+)\\\\]"
-weird_field = true
-
-[[modifications.map]]
-token = "ox"
-accession = "UNIMOD:35"
-"""
+    extra = {
+        "source_column": "Modified.Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\[([^]]+)\]",
+        "weird_field": True,
+        "map": [{"token": "ox", "accession": "UNIMOD:35"}],
+    }
     with pytest.raises(ValidationError):
-        _parse(BASE + extra)
+        _parse(extra)

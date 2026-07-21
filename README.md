@@ -1,13 +1,13 @@
 # anndata-proteomics (APB)
 
-Convert proteomics quantification output into **AnnData / MuData** using declarative TOML parsing rules.
+Convert proteomics quantification output into **AnnData / MuData** using declarative JSON rules.
 
 **Documentation:** <https://anndata-omics-bridge.github.io/anndata-proteomics-bridge/>
 
-- **Declarative, not bespoke.** Every vendor × quantification-level is a small TOML rule shipped inside the package — adding or fixing a converter means editing a `.toml`, not writing tool-specific Python.
+- **Declarative, not bespoke.** Every vendor × quantification-level is a small JSON rule shipped inside the package — adding or fixing a converter means editing a `.json`, not writing tool-specific Python.
 - **One file → a multi-level MuData.** A single vendor export is converted into a MuData whose modalities are the quantification levels it provides (`ion` / `fragment` / `peptidoform` / `protein`) on a shared run axis — or a single-level AnnData when you ask for one level.
 - **Standardised content.** Peptide modifications are normalised to **ProForma**; a per-vendor parser reads the vendor **parameter file** (enzyme, FDR, tolerances, …) into one typed record under `uns['search_parameters']`.
-- **Enrichable.** Join sample metadata onto `obs` (`apb annotate`) and attach FASTA-derived protein annotation — theoretical (enzyme-aware) peptide counts, gene names, protein length — onto the protein modality's `varm['fasta']` (`apb fasta`).
+- **Enrichable and validated.** Join sample metadata onto `obs` (`apb annotate`); `apb fasta` adds protein annotation and automatically checks every peptide-derived feature against the supplied FASTA with Aho--Corasick.
 - **Interoperable.** Writes plain `.h5ad` / `.h5mu`, readable from Python (`anndata` / `mudata` / `scanpy`) and R (`anndataR`).
 
 > **New to AnnData?**  It's the standard container for an annotated data matrix — observations (`obs`, here MS runs) × variables (`var`, here peptides/proteins), with multiple measurement `layers`, dimensionality-reduction slots (`obsm`/`varm`), and free-form metadata (`uns`). **MuData** bundles several AnnData objects as *modalities*. See [anndata.readthedocs.io](https://anndata.readthedocs.io) and [mudata.readthedocs.io](https://mudata.readthedocs.io).
@@ -81,168 +81,158 @@ apb convert report.tsv ion     --params report.log.txt
 apb convert report.tsv protein --params report.log.txt
 ```
 
-The parameter file gives the **software version**, which selects the rule variant (e.g. DIA-NN `v1` vs `v2`); the data columns must then match that rule. The vendor is auto-detected from the column headers — override with `--software <slug>` (the rule-folder slug, e.g. `diann`). Pass `--rule-toml my_rule.toml` to override rule selection entirely (single level, version-agnostic; `--params` then optional). A vendor that exposes only one level writes a `.h5ad` even without a level argument. Output defaults to `<stem>.h5mu` (MuData) or `<stem>.h5ad` (single level) next to the input; override with `--output`.
+The parameter file gives the **software version**, which selects the matching software-version document (e.g. DIA-NN `v1` vs `v2`); the data columns must then match one or more levels in that document. The vendor is auto-detected from the column headers — override with `--software <slug>` (the rule-folder slug, e.g. `diann`). Pass `--rule-config my_rules.json` to use an external document; add `LEVEL` to select one level, or omit it to convert all matching levels. A document with one matching level writes `.h5ad`; multiple matching levels write `.h5mu`. Output defaults next to the input. `--output` accepts an extensionless basename; APB appends the suffix matching the object it produces.
 
 ### Annotate `obs` with sample metadata
 
 ```bash
-apb annotate data.h5mu annotation.toml          # writes data.annotated.h5mu
+apb annotate data.h5mu annotation.json          # writes data.annotated.h5mu
 ```
 
-Joins the records in the annotation TOML onto `obs` (the run axis, shared across MuData modalities). Each record's `key_field` is matched per `match_on` (`"index"` → `obs_names`, else an `obs` column); every other field in the record becomes an `obs` column. Example from the ProteoBench `quant_lfq_ion_DIA_AIF` module (its `module_settings.toml [[samples]]` table, translated into the APB schema — 6 runs, two conditions; trimmed here):
+Joins the records in the annotation JSON onto `obs` (the run axis, shared across MuData modalities). Each record's `key_field` is matched per `match_on` (`"index"` → `obs_names`, else an `obs` column); every other field in the record becomes an `obs` column. Example translated from a ProteoBench module's sample table:
 
-```toml
-schema_version = "0.1"
-
-[obs]
-match_on  = "index"      # match raw_file against obs_names (the run/file identifier)
-key_field = "raw_file"
-
-[[obs.samples]]
-raw_file    = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01"
-sample_name = "Condition_A_Sample_Alpha_01"
-condition   = "A"
-
-[[obs.samples]]
-raw_file    = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_02"
-sample_name = "Condition_A_Sample_Alpha_02"
-condition   = "A"
-
-[[obs.samples]]
-raw_file    = "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01"
-sample_name = "Condition_B_Sample_Alpha_01"
-condition   = "B"
-
-# … one record per run (B_02, B_03, …)
+```json
+{
+  "schema_version": "0.1",
+  "obs": {
+    "match_on": "index",
+    "key_field": "raw_file",
+    "samples": [
+      {
+        "raw_file": "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01",
+        "sample_name": "Condition_A_Sample_Alpha_01",
+        "condition": "A"
+      },
+      {
+        "raw_file": "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01",
+        "sample_name": "Condition_B_Sample_Alpha_01",
+        "condition": "B"
+      }
+    ]
+  }
+}
 ```
 
-### Annotate the protein layer from FASTA
+### Annotate and validate against FASTA
 
 ```bash
 apb fasta data.h5mu proteome.fasta              # writes data.annotated.h5mu
 apb fasta data.h5mu human.fasta crap.fasta      # multiple FASTA files
+apb fasta data.h5mu proteome.fasta --no-validate # protein annotation only
 ```
 
-Builds a prolfquapp-style protein annotation (`fasta_id`, `fasta_header`, `protein_length`, `nr_peptides`, `gene_name`) and attaches it to the protein modality's `varm['fasta']`. The join is on the leading accession of each protein group; `nr_peptides` is the **theoretical** in-silico digest count using the enzyme from `uns['search_parameters']` (override with `--cleavage`, `--min-length`, `--max-length`). Other flags: `--match-on`, `--no-is-uniprot`, `--decoy-pattern`.
+Protein layers receive a prolfquapp-style annotation in `varm['fasta']`
+(`fasta.id`, `fasta.header`, `protein_length`, `nr_peptides`, `gene_name`, and
+decoy/contaminant classification). The join uses the leading protein-group
+accession; `nr_peptides` is the **theoretical** in-silico digest count using the
+stored search enzyme (override with `--cleavage`, `--min-length`,
+`--max-length`).
+
+Validation is enabled by default for every ion, fragment, peptidoform, or
+peptide modality. `varm['fasta_validation']` reports whether the peptide occurs,
+the total number of occurrence sites, the number and IDs of distinct matching
+proteins, whether the reported leading protein exists, and whether the peptide
+occurs in that leading protein. Unmatched features and their quantifications are
+never removed. In MuData, representable peptide-feature → protein-feature edges
+are added to the MuLink-compatible `varp['feature_mapping']` sparse matrix.
+
+Decoy and contaminant patterns are inferred from raw FASTA IDs and persisted in
+`uns['anndata_proteomics']['fasta_config']`; `--decoy-pattern` and
+`--contaminant-pattern` override inference. Classification never filters
+quantified rows or FASTA records.
 
 ### Inspect / maintain rules
 
 ```bash
 apb list                      # list packaged parsing rules
-apb validate                  # validate all packaged rules (or: apb validate my_rule.toml)
-apb export-schema             # regenerate parse_rule.schema.json from the pydantic models
+apb validate                  # validate all packaged rules (or: apb validate my_rule.json)
+apb export-schema             # regenerate source-document and effective-rule JSON Schemas
 ```
 
-## Adding a new conversion (TOML)
+## Adding a new conversion (JSON)
 
-A parsing rule is a TOML file under `src/anndata_proteomics/parsing_rules/<vendor>/parse_<software>_<level>.toml` (version-specific rules go in a `v1/`, `v2/`, … subfolder). It declares the table shape, which columns become `obs` / `var`, and which columns become measurement `layers`. The full schema is in [docs/toml_schema.md](docs/toml_schema.md); validate your draft with `apb validate path/to/rule.toml`.
+A parsing-rule document is `rules.json` under `src/anndata_proteomics/parsing_rules/<vendor>/` (version-specific documents go in a `v1/`, `v2/`, … subfolder). One document covers one existing software-version group and contains a shared `base` plus a `levels` object. The full schema is in [docs/json_schema.md](docs/json_schema.md); validate your draft with `apb validate path/to/rules.json`.
 
-Every rule opens with the same header: `schema_version`, `software_name`, `software_version` (a regex matched against the version from the parameter file — the `v*/` folder is chosen from this), `input_shape`, and `quantification_level`. (`file_version` is the rule's own revision, independent of the software version.)
+Every document opens with `schema_version`, `file_version`, `software_name`, and `software_version` (a regex matched against the version from the parameter file). The keys under `levels` define the quantification levels; level fragments do not repeat that field.
 
 **Minimal long rule** (one row per run × feature):
 
-```toml
-schema_version = "0.1"
-file_version   = "1"
-software_name  = "MyTool"
-software_version = "^1\\..*"        # regex matched against the parsed software version
-input_shape    = "long"
-quantification_level = "ion"        # ion | fragment | peptidoform | protein
-
-[axis]
-obs_keys = ["Run"]                  # column(s) identifying a run    → obs index
-var_keys = ["Precursor_Id"]         # column(s) identifying a feature → var index
-x_layer  = "Intensity"             # which layer becomes X
-
-[axis.duplicates]
-mode = "error"                      # what to do if (run, feature) repeats
-
-[columns.obs.select]                # rename input columns → obs
-Run = "R.FileName"
-
-[columns.var.select]               # rename input columns → var
-Precursor_Id      = "PEP.Id"
-Stripped_Sequence = "PEP.StrippedSequence"
-
-[[layers]]                          # one matrix per measurement column
-name   = "Intensity"
-source = "PEP.Quantity"
+```json
+{
+  "schema_version": "0.1",
+  "file_version": "1",
+  "software_name": "MyTool",
+  "software_version": "^1\\..*",
+  "base": {
+    "input_shape": "long",
+    "axis": {"obs_keys": ["Run"], "duplicates": {"mode": "error"}},
+    "columns": {"obs": {"select": {"Run": "R.FileName"}}}
+  },
+  "levels": {
+    "ion": {
+      "axis": {"var_keys": ["Precursor_Id"], "x_layer": "Intensity"},
+      "columns": {"var": {"select": {"Precursor_Id": "PEP.Id"}}},
+      "layers": [{"name": "Intensity", "source": "PEP.Quantity"}]
+    }
+  }
+}
 ```
 
 **Minimal wide rule** (samples as columns, one row per feature):
 
-```toml
-schema_version = "0.1"
-file_version   = "1"
-software_name  = "MyTool"
-software_version = "^22\\..*"
-input_shape    = "wide"
-quantification_level = "ion"
-
-[axis]
-obs_keys = ["sample"]
-var_keys = ["Precursor_Id"]
-x_layer  = "Intensity"
-
-[axis.duplicates]
-mode = "error"
-
-[columns.obs.select]
-sample = "<sample>"                 # the <sample> token = names captured from the layer headers
-
-[columns.var.select]
-Precursor_Id = "Peptide"
-Charge       = "Charge"
-
-[[layers]]
-name   = "Intensity"
-source = "^(?P<sample>.+) Intensity$"   # regex over column headers; (?P<sample>) captures the run name
+```json
+{
+  "schema_version": "0.1",
+  "file_version": "1",
+  "software_name": "MyTool",
+  "software_version": "^22\\..*",
+  "base": {
+    "input_shape": "wide",
+    "axis": {"obs_keys": ["sample"], "duplicates": {"mode": "error"}},
+    "columns": {"obs": {"select": {"sample": "<sample>"}}}
+  },
+  "levels": {
+    "ion": {
+      "axis": {"var_keys": ["Precursor_Id"], "x_layer": "Intensity"},
+      "columns": {"var": {"select": {"Precursor_Id": "Peptide", "Charge": "Charge"}}},
+      "layers": [{"name": "Intensity", "source": "^(?P<sample>.+) Intensity$"}]
+    }
+  }
+}
 ```
 
-Two further blocks — `[[columns.var.compute]]` (ProForma derivation) and `[modifications]` (vendor mod-token mapping) — appear on most shipped rules and get their own section just below. Layers can also be factor-encoded (`encoding_mode = "factor"` with a `categories` map; e.g. FragPipe's `Match Type`).
+Two further objects — `columns.var.compute` (ProForma derivation) and `modifications` (vendor mod-token mapping) — appear on most shipped rules and get their own section just below. Layers can also be factor-encoded (`encoding_mode = "factor"` with a `categories` map; e.g. FragPipe's `Match Type`).
 
-`apb` discovers the file automatically — no registry edits. A test enforces that the filename's level token matches the in-TOML `quantification_level`.
+`apb` discovers `rules.json` automatically — no registry edits. The source and every effective level are validated by Pydantic.
 
-**Vendor base files.** For a vendor with several level rules (DIA-NN, Spectronaut), the blocks its levels share — `[modifications]`, the run-axis keys, common scalars — live in a **base file** `<vendor>/<vendor>.toml` that every leaf inherits automatically at load time (convention, no `extends` key; see [docs/toml_schema.md](docs/toml_schema.md)). A new leaf for such a vendor declares only its level-specific content; single-format vendors stay one self-contained file.
+**Base and levels.** Shared objects live in the document's `base`; level-specific axis, columns, layers, and fragment behavior live under `levels.<level>`. APB deep-merges each level over the base before effective-rule validation. There are no inheritance paths or external base files.
 
 ## ProForma sequences & modifications
 
-Most shipped rules standardise sequence identifiers and peptide modifications so that features are comparable across vendors (protein-level rules, which have no peptide sequence, do not). Two TOML blocks do this.
+Most shipped rules standardise sequence identifiers and peptide modifications so that features are comparable across vendors (protein-level rules, which have no peptide sequence, do not). Two JSON fields do this.
 
-**Computed columns** — `[[columns.var.compute]]` derives standard `var` columns from selected ones. The `how` recipes are: `proforma_sequence` (vendor modified sequence → [ProForma 2.0](https://github.com/HUPO-PSI/ProForma)), `stripped_sequence` (sequence with modifications removed), and `proforma_ion` (peptidoform + charge → a precursor-ion id). These become the `var_keys` / `x_layer` targets.
+**Computed columns** — `columns.var.compute` derives standard `var` columns from selected ones. The `how` recipes are: `proforma_sequence` (vendor modified sequence → [ProForma 2.0](https://github.com/HUPO-PSI/ProForma)), `stripped_sequence` (sequence with modifications removed), and `proforma_ion` (peptidoform + charge → a precursor-ion id). These become the `var_keys` / `x_layer` targets.
 
-```toml
-[[columns.var.compute]]
-name = "ProForma_peptidoform"
-from = ["Modified_Sequence"]
-how  = "proforma_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_peptide"
-from = ["Modified_Sequence"]
-how  = "stripped_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_ion"
-from = ["ProForma_peptidoform", "Precursor_Charge"]
-how  = "proforma_ion"
+```json
+"compute": [
+  {"name": "ProForma_peptidoform", "from": ["Modified_Sequence"], "how": "proforma_sequence"},
+  {"name": "ProForma_peptide", "from": ["Modified_Sequence"], "how": "stripped_sequence"},
+  {"name": "ProForma_ion", "from": ["ProForma_peptidoform", "Precursor_Charge"], "how": "proforma_ion"}
+]
 ```
 
-**Modification mapping** — `[modifications]` turns a vendor's modified-sequence column into a normalised ProForma string by mapping each vendor mod token to a UNIMOD accession. `parser = "token_regex"` extracts tokens with `token_pattern`; each `[[modifications.map]]` maps one token; `unknown_policy` decides what happens to unmapped tokens (`preserve` keeps them verbatim).
+**Modification mapping** — `modifications` turns a vendor's modified-sequence column into a normalised ProForma string by mapping each vendor mod token to a UNIMOD accession. `parser = "token_regex"` extracts tokens with `token_pattern`; each `map` item maps one token; `unknown_policy` decides what happens to unmapped tokens (`preserve` keeps them verbatim).
 
-```toml
-# DIA-NN: mods look like AAC(UniMod:4)DEM(UniMod:35)K
-[modifications]
-source_column  = "Modified.Sequence"
-parser         = "token_regex"
-token_pattern  = "\\(([^()]*)\\)"
-token_position = "after_residue"
-unknown_policy = "preserve"
-output_column  = "proforma_sequence"
-
-[[modifications.map]]
-token     = "UniMod:35"     # vendor token
-accession = "UNIMOD:35"     # → oxidation
+```json
+"modifications": {
+  "source_column": "Modified.Sequence",
+  "parser": "token_regex",
+  "token_pattern": "\\(([^()]*)\\)",
+  "token_position": "after_residue",
+  "unknown_policy": "preserve",
+  "output_column": "proforma_sequence",
+  "map": [{"token": "UniMod:35", "accession": "UNIMOD:35"}]
+}
 ```
 
 Vendors that encode modifications as **mass deltas** rather than UniMod names use the same mechanism with a different pattern and map keys — e.g. FragPipe writes `M[15.9949]`, so `token_pattern = "\\[([^\\]]+)\\]"` and `token = "15.9949"` → `accession = "UNIMOD:35"`.
@@ -253,8 +243,10 @@ APB is a pure library plus the `apb` CLI. It ships no GUI.
 
 ## Limitations & next steps
 
-- Conversion coverage is one rule per vendor/level at the versions listed above; other versions may parse but are untested.
-- Protein-level annotation (`apb fasta`) targets a protein AnnData or the `protein` modality of a MuData; other inputs are rejected.
+- Conversion coverage is one software-version document per existing version group, with the levels listed above; other versions may parse but are untested.
+- MuLink relationships can only target protein features already present in a
+  MuData. Full FASTA match IDs remain in `varm['fasta_validation']` even when no
+  corresponding protein feature exists.
 - Per-tool `uns['<app_name>']['column_roles']` writeback (the tool-specific view ADR) is not yet populated — only `uns['anndata_proteomics']` is written.
 
 ## Documentation
@@ -267,6 +259,6 @@ Browse the generated documentation site:
 Source pages:
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module map, public API, data flow
-- [docs/toml_schema.md](docs/toml_schema.md) — TOML parsing-rule schema spec
+- [docs/json_schema.md](docs/json_schema.md) — JSON parsing-rule schema spec
 - [docs/parameter_parsers.md](docs/parameter_parsers.md) — vendor parameter-file parsers
 - [docs/parsing_architecture.md](docs/parsing_architecture.md) — subsystem UML / diagrams

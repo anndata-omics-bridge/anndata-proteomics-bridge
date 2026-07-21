@@ -6,11 +6,12 @@ Replicates the data-extraction half of prolfquapp's
   fasta.id, fasta.header, proteinname, gene_name (optional),
   protein_length, nr_peptides, sequence (optional)
 
-Decoy records matching ``decoy_pattern`` are filtered out before
-downstream columns are computed; the ``gene_name`` column is added only
+Decoy and contaminant records are retained and classified.  FASTA annotation
+must never remove quantified features merely because a search engine reported
+a decoy or contaminant identification.  The ``gene_name`` column is added only
 when more than one record produces a UniProt-style match — matching
-prolfquapp's gating rule so non-UniProt fastas don't end up with an
-all-empty column.
+prolfquapp's gating rule so non-UniProt FASTAs don't end up with an all-empty
+column.
 """
 
 from __future__ import annotations
@@ -23,11 +24,15 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
+from anndata_proteomics.fasta.config import (
+    FastaConfig,
+    ResolvedFastaConfig,
+    matches_any,
+)
 from anndata_proteomics.fasta.parser import FastaSource, iter_fasta
 
 _GN_RE = re.compile(r" GN=(\S+) PE=")
 _UNIPROT_MIDDLE_RE = re.compile(r".+\|(.+)\|.*")
-_DEFAULT_DECOY_PATTERN = r"^REV_|^rev_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +141,14 @@ def _parse_header_id(header: str) -> tuple[str, str]:
 
 
 def _uniprot_proteinname(fasta_id: str) -> str:
+    """Return the accession while preserving a prefix before ``sp|``/``tr|``.
+
+    A decoy such as ``REV_sp|P12345|NAME`` must remain ``REV_P12345``;
+    collapsing it to ``P12345`` would make it indistinguishable from its target.
+    """
+    match = re.match(r"^(.*?)(?:sp|tr)\|([^|]+)\|", fasta_id)
+    if match:
+        return f"{match.group(1)}{match.group(2)}"
     match = _UNIPROT_MIDDLE_RE.match(fasta_id)
     return match.group(1) if match else fasta_id
 
@@ -143,7 +156,9 @@ def _uniprot_proteinname(fasta_id: str) -> str:
 def fasta_to_dataframe(
     sources: FastaSource | Iterable[FastaSource],
     *,
-    decoy_pattern: str = _DEFAULT_DECOY_PATTERN,
+    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
+    decoy_pattern: str | None = None,
+    contaminant_pattern: str | None = None,
     is_uniprot: bool = True,
     cleavage: str | CleavageRule | None = None,
     min_length: int = 7,
@@ -153,25 +168,72 @@ def fasta_to_dataframe(
     """Read one or more FASTA inputs into a protein-annotation DataFrame.
 
     *cleavage* selects the protease rule for ``nr_peptides`` (an enzyme
-    name, a :class:`CleavageRule`, or ``None`` for trypsin).
+    name, a :class:`CleavageRule`, or ``None`` for trypsin).  Decoy and
+    contaminant patterns classify records; they never filter them.  ``None``
+    infers patterns from conservative candidates, while ``""`` explicitly
+    disables that classification.
     """
-    records: dict[str, tuple[str, str]] = {}
+    frame, _ = _fasta_to_dataframe_with_config(
+        sources,
+        fasta_config=fasta_config,
+        decoy_pattern=decoy_pattern,
+        contaminant_pattern=contaminant_pattern,
+        is_uniprot=is_uniprot,
+        cleavage=cleavage,
+        min_length=min_length,
+        max_length=max_length,
+        include_sequence=include_sequence,
+    )
+    return frame
+
+
+def _fasta_to_dataframe_with_config(
+    sources: FastaSource | Iterable[FastaSource],
+    *,
+    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
+    decoy_pattern: str | None = None,
+    contaminant_pattern: str | None = None,
+    is_uniprot: bool = True,
+    cleavage: str | CleavageRule | None = None,
+    min_length: int = 7,
+    max_length: int = 30,
+    include_sequence: bool = False,
+) -> tuple[pd.DataFrame, ResolvedFastaConfig]:
+    """Build the annotation frame and return its resolved ID configuration."""
+    if fasta_config is not None and (decoy_pattern is not None or contaminant_pattern is not None):
+        raise ValueError("pass either fasta_config or decoy_pattern/contaminant_pattern, not both")
+    records: list[tuple[str, str, str]] = []
     for source in _iter_sources(sources):
         for record in iter_fasta(source):
             fasta_id, fasta_header = _parse_header_id(record.header)
-            if fasta_id not in records:
-                records[fasta_id] = (fasta_header, record.sequence)
+            records.append((fasta_id, fasta_header, record.sequence))
+
+    resolved = (
+        fasta_config
+        if isinstance(fasta_config, ResolvedFastaConfig)
+        else _resolve_config(
+            (fasta_id for fasta_id, _, _ in records),
+            config=fasta_config,
+            decoy_pattern=decoy_pattern,
+            contaminant_pattern=contaminant_pattern,
+        )
+    )
 
     if not records:
-        return _empty_frame(include_sequence=include_sequence)
+        return _empty_frame(include_sequence=include_sequence), resolved
 
     frame = pd.DataFrame(
         [
-            {"fasta.id": fid, "fasta.header": hdr, "sequence": seq}
-            for fid, (hdr, seq) in records.items()
+            {"fasta.id": fasta_id, "fasta.header": header, "sequence": sequence}
+            for fasta_id, header, sequence in records
         ]
     )
-    frame = _drop_decoys(frame, decoy_pattern)
+    frame["is_decoy"] = frame["fasta.id"].map(
+        lambda value: matches_any(value, resolved.decoy.patterns)
+    )
+    frame["is_contaminant"] = frame["fasta.id"].map(
+        lambda value: matches_any(value, resolved.contaminant.patterns)
+    )
     frame = _add_annotation_columns(
         frame,
         is_uniprot=is_uniprot,
@@ -183,20 +245,34 @@ def fasta_to_dataframe(
     if not include_sequence:
         frame = frame.drop(columns=["sequence"])
 
-    return frame
+    return frame, resolved
 
 
-def _drop_decoys(frame: pd.DataFrame, decoy_pattern: str) -> pd.DataFrame:
-    """Drop decoy rows matching *decoy_pattern*, warning on a suspiciously low hit rate."""
-    if not decoy_pattern:
-        return frame
-    decoy_match = frame["fasta.id"].str.contains(decoy_pattern, regex=True)
-    if 0 < decoy_match.mean() < 0.1:
-        logger.warning(
-            f"decoy pattern {decoy_pattern!r} matched only "
-            f"{100 * decoy_match.mean():.1f}% of records"
-        )
-    return frame.loc[~decoy_match].reset_index(drop=True)
+def _resolve_config(
+    fasta_ids: Iterable[str],
+    *,
+    config: FastaConfig | None,
+    decoy_pattern: str | None,
+    contaminant_pattern: str | None,
+) -> ResolvedFastaConfig:
+    """Resolve inferred or explicitly supplied FASTA identifier patterns."""
+    from anndata_proteomics.fasta.config import FastaConfigAccumulator
+
+    input_config = config or FastaConfig(
+        decoy_patterns=_single_pattern(decoy_pattern),
+        contaminant_patterns=_single_pattern(contaminant_pattern),
+    )
+    accumulator = FastaConfigAccumulator(input_config)
+    for fasta_id in fasta_ids:
+        accumulator.observe(fasta_id)
+    return accumulator.resolve()
+
+
+def _single_pattern(pattern: str | None) -> tuple[str, ...] | None:
+    """Convert a CLI-style optional regex to the typed configuration form."""
+    if pattern is None:
+        return None
+    return (pattern,) if pattern else ()
 
 
 def _add_annotation_columns(
@@ -237,10 +313,44 @@ def _iter_sources(
     yield from sources
 
 
+def materialize_sources(
+    sources: FastaSource | Iterable[FastaSource],
+) -> list[FastaSource]:
+    """Materialize source iterables once so scanning cannot erase provenance."""
+    return list(_iter_sources(sources))
+
+
+def describe_sources(sources: FastaSource | Iterable[FastaSource]) -> list[str]:
+    """Human-readable list of FASTA sources, for provenance.
+
+    Paths are recorded as strings; inline FASTA text (the parser's string-content
+    path) as ``<inline-fasta>``; open streams as ``<stream>``. Shared by both FASTA
+    annotators so the same input is described identically everywhere.
+    """
+    single = isinstance(sources, str | Path) or hasattr(sources, "read")
+    items = [sources] if single else list(sources)
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, Path):
+            out.append(str(item))
+        elif isinstance(item, str):
+            out.append("<inline-fasta>" if is_inline_fasta(item) else item)
+        else:
+            out.append("<stream>")
+    return out
+
+
+def is_inline_fasta(text: str) -> bool:
+    """True when *text* is FASTA content rather than a path (matches the parser)."""
+    return "\n" in text or text.lstrip().startswith(">")
+
+
 def _empty_frame(*, include_sequence: bool) -> pd.DataFrame:
     columns = [
         "fasta.id",
         "fasta.header",
+        "is_decoy",
+        "is_contaminant",
         "proteinname",
         "protein_length",
         "nr_peptides",

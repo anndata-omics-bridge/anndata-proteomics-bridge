@@ -14,7 +14,7 @@ from anndata_proteomics.rules.schema import TokenRegexModifications
 
 
 def _to_runtime_rule(mods: TokenRegexModifications) -> ModificationRule:
-    """Convert the validated TOML model into the runtime dataclass.
+    """Convert the validated rule model into the runtime dataclass.
 
     Fills ``name``, ``target``, ``position``, ``mass_delta`` from the bundled
     Unimod registry; raises ``KeyError`` if any entry references an

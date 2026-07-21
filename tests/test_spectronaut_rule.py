@@ -1,4 +1,4 @@
-"""Spectronaut TOML semantics: report-backed levels and correct layer placement."""
+"""Spectronaut JSON-rule semantics: report-backed levels and correct layer placement."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ import pytest
 from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.rules.loader import load_packaged_rule
-from anndata_proteomics.rules.registry import resolve_rule_path
+from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_locator
 from anndata_proteomics.rules.schema import ParseRule
 
 # Cached Spectronaut datasets come from the catalog-free ``spectronaut_datasets`` fixture
@@ -64,11 +63,11 @@ def _feature_invariance(df: pd.DataFrame, rule: ParseRule) -> tuple[pd.Series, p
 
 
 def test_spectronaut_has_report_backed_ion_protein_and_fragment_rules() -> None:
-    assert resolve_rule_path("spectronaut", "ion") is not None
-    assert resolve_rule_path("spectronaut", "protein") is not None
-    assert resolve_rule_path("spectronaut", "fragment") is not None
-    assert resolve_rule_path("spectronaut", "peptidoform") is None
-    assert resolve_rule_path("spectronaut", "peptide") is None
+    assert resolve_rule_locator("spectronaut", "ion", None) is not None
+    assert resolve_rule_locator("spectronaut", "protein", None) is not None
+    assert resolve_rule_locator("spectronaut", "fragment", None) is not None
+    assert resolve_rule_locator("spectronaut", "peptidoform", None) is None
+    assert resolve_rule_locator("spectronaut", "peptide", None) is None
 
 
 def test_spectronaut_rule_matches_cached_common_headers(spectronaut_datasets) -> None:
@@ -96,7 +95,7 @@ def test_spectronaut_catalog_offers_mudata(spectronaut_datasets) -> None:
 
 @pytest.mark.parametrize("level", ["ion", "protein"])
 def test_spectronaut_conversion_matches_declared_columns(level: str, spectronaut_datasets) -> None:
-    """Conformance: the converted AnnData realizes exactly what the TOML declares — every
+    """Conformance: the converted AnnData realizes exactly what the JSON rule declares — every
     selected/computed var and obs column is present, and the layer set is precisely the declared
     one (no stray, no missing). The expectations are read from the rule, not hardcoded."""
     if not spectronaut_datasets:
@@ -122,9 +121,9 @@ def test_spectronaut_conversion_matches_declared_columns(level: str, spectronaut
 @pytest.mark.parametrize("level", ["ion", "protein"])
 def test_spectronaut_declared_layout_matches_data(level: str, spectronaut_datasets) -> None:
     """Placement correctness: a layer is an obs x var matrix, so a column belongs in [[layers]]
-    only if it varies across samples for the same feature. This checks the TOML's split against
+    only if it varies across samples for the same feature. This checks the rule's split against
     the real multi-sample report (the dimensionality test), which is what conformance alone cannot
-    do — deriving the truth from the same TOML would let a misplacement pass unnoticed."""
+    do — deriving the truth from the same rule would let a misplacement pass unnoticed."""
     if not spectronaut_datasets:
         return
     rule = load_packaged_rule("spectronaut", level)

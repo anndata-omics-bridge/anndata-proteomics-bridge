@@ -39,7 +39,7 @@ flowchart TD
 |---|---|
 | `params/` | Vendor parameter-file → typed `Parameters`. |
 | `modifications/` | Vendor modified-sequence → ProForma + modification models. |
-| `rules/` | The TOML parsing-rule schema (`ParseRule`) + its loader/registry. |
+| `rules/` | The JSON parsing-rule schema (`ParseRule`) + its loader/registry. |
 | `readers/` | Read a tabular quant file → `DataFrame`. |
 | `converters/` | `DataFrame` + `ParseRule` → `AnnData`. |
 
@@ -185,18 +185,19 @@ classDiagram
 
 ---
 
-## `rules/` — TOML Parsing-Rule Schema
+## `rules/` — JSON Parsing-Rule Schema
 
-**Defines and loads the TOML parsing-rule schema** that tells the converters how to turn a
+**Defines and loads the JSON parsing-rule schema** that tells the converters how to turn a
 vendor table into AnnData. A leaf subpackage (imports no other subpackage).
 
-- `schema.py` — the pydantic `ParseRule` (axis keys, column select/compute, layers, optional
-  modifications section) with cross-field validation.
-- `loader.py` — parse + validate a TOML file.
-- `registry.py` — find packaged rules by `(software, level, version)`.
-- `validate.py` — validate rule files.
+- `schema.py` — Pydantic `ParseRuleDocument` source documents and merged `ParseRule`
+  effective rules, with cross-field validation.
+- `loader.py` — parse one self-contained software-version document, merge its base
+  with a selected level, and validate every effective rule.
+- `registry.py` — find packaged document-level locators by `(software, level, version)`.
+- `validate.py` — validate complete rule documents and all their levels.
 
-**Figure:** the TOML schema model. `ParseRule` owns axis definitions, column
+**Figure:** the JSON schema model. `ParseRule` owns axis definitions, column
 selection/computation, layers, optional modification rules, and optional
 fragment handling.
 
@@ -359,7 +360,7 @@ sequenceDiagram
     V-->>Caller: Parameters
 ```
 
-### B. Rule TOML + table → `AnnData` (+ optional params)
+### B. Rule JSON + table → `AnnData` (+ optional params)
 
 **Figure:** table conversion sequence. A loaded rule and read table flow through
 the converter; optional parameter files are attached to `uns`.
@@ -375,7 +376,7 @@ sequenceDiagram
     participant LW as converters.long/wide
     participant P as params
 
-    Caller->>Loader: load_rule(toml_path)
+    Caller->>Loader: load_rule(rule_path)
     Loader-->>Caller: ParseRule
     Caller->>Reader: read_table(path)
     Reader-->>Caller: DataFrame

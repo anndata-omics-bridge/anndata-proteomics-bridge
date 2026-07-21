@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -13,68 +13,63 @@ from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.rules.schema import ParseRule
 
 
-RULE_TOML = """
-schema_version = "0.1"
-file_version = "1"
-software_name = "Sage"
-software_version = "1.0"
-input_shape = "long"
-quantification_level = "ion"
-
-[axis]
-obs_keys = ["Run"]
-var_keys = ["ProForma_ion"]
-x_layer = "Intensity"
-
-[axis.duplicates]
-mode = "error"
-
-[columns.obs.select]
-Run = "Run"
-
-[columns.var.select]
-Vendor_Sequence = "Modified.Sequence"
-Precursor_Charge = "Precursor.Charge"
-
-[[columns.var.compute]]
-name = "ProForma_peptidoform"
-from = ["Vendor_Sequence"]
-how = "proforma_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_peptide"
-from = ["Vendor_Sequence"]
-how = "stripped_sequence"
-
-[[columns.var.compute]]
-name = "ProForma_ion"
-from = ["ProForma_peptidoform", "Precursor_Charge"]
-how = "proforma_ion"
-
-[[layers]]
-name = "Intensity"
-source = "Intensity"
-
-[modifications]
-source_column = "Modified.Sequence"
-parser = "token_regex"
-token_pattern = "\\\\[([^]]+)\\\\]"
-token_position = "after_residue"
-unknown_policy = "preserve"
-output_column = "proforma_sequence"
-
-[[modifications.map]]
-token = "15.9949"
-accession = "UNIMOD:35"
-
-[[modifications.map]]
-token = "57.0215"
-accession = "UNIMOD:4"
-"""
+RULE: dict[str, Any] = {
+    "schema_version": "0.1",
+    "file_version": "1",
+    "software_name": "Sage",
+    "software_version": "1.0",
+    "input_shape": "long",
+    "quantification_level": "ion",
+    "axis": {
+        "obs_keys": ["Run"],
+        "var_keys": ["ProForma_ion"],
+        "x_layer": "Intensity",
+        "duplicates": {"mode": "error"},
+    },
+    "columns": {
+        "obs": {"select": {"Run": "Run"}},
+        "var": {
+            "select": {
+                "Vendor_Sequence": "Modified.Sequence",
+                "Precursor_Charge": "Precursor.Charge",
+            },
+            "compute": [
+                {
+                    "name": "ProForma_peptidoform",
+                    "from": ["Vendor_Sequence"],
+                    "how": "proforma_sequence",
+                },
+                {
+                    "name": "ProForma_peptide",
+                    "from": ["Vendor_Sequence"],
+                    "how": "stripped_sequence",
+                },
+                {
+                    "name": "ProForma_ion",
+                    "from": ["ProForma_peptidoform", "Precursor_Charge"],
+                    "how": "proforma_ion",
+                },
+            ],
+        },
+    },
+    "layers": [{"name": "Intensity", "source": "Intensity"}],
+    "modifications": {
+        "source_column": "Modified.Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\[([^]]+)\]",
+        "token_position": "after_residue",
+        "unknown_policy": "preserve",
+        "output_column": "proforma_sequence",
+        "map": [
+            {"token": "15.9949", "accession": "UNIMOD:35"},
+            {"token": "57.0215", "accession": "UNIMOD:4"},
+        ],
+    },
+}
 
 
 def _make_rule() -> ParseRule:
-    return ParseRule(**tomllib.loads(RULE_TOML))
+    return ParseRule.model_validate(RULE)
 
 
 def _make_df() -> pd.DataFrame:
@@ -150,8 +145,7 @@ def test_convert_with_params_path_attaches_search_parameters(tmp_path):
 
 
 def test_convert_with_params_path_for_unknown_software_keeps_path_only(tmp_path):
-    rule_toml = RULE_TOML.replace('software_name = "Sage"', 'software_name = "UnknownTool"')
-    rule = ParseRule(**tomllib.loads(rule_toml))
+    rule = ParseRule.model_validate({**RULE, "software_name": "UnknownTool"})
     fake = tmp_path / "fake_params.txt"
     fake.write_text("dummy")
     adata = convert(_make_df(), rule, params_path=fake)

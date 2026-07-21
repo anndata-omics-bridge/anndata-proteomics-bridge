@@ -1,4 +1,4 @@
-"""End-to-end: read → convert → AnnData for every packaged TOML.
+"""End-to-end: read → convert → AnnData for every packaged JSON rule.
 
 Conversion uses the explicit parametrized rule rather than ``recognize()``: a vendor
 can ship several quantification levels that all read the same file (DIA-NN's report.tsv
@@ -11,8 +11,6 @@ Skips when the test_data_download cache (gitignored) is absent.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from anndata_proteomics.converters.assemble import convert
@@ -24,12 +22,12 @@ from anndata_proteomics.test_data import find_test_data
 
 
 @pytest.mark.parametrize(
-    "toml_path",
+    "locator",
     list(iter_packaged_rules()),
-    ids=lambda p: f"{p.parent.name}/{p.name}",
+    ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_end_to_end_conversion(toml_path: Path) -> None:
-    rule = load_rule(toml_path)
+def test_end_to_end_conversion(locator) -> None:
+    rule = load_rule(locator)
     if rule.fragments is not None:
         # The fragment level explodes the packed fragment lists ~12x; converting a full
         # report.tsv pivots millions of rows and peaks at many GB. Covered on a small
@@ -44,7 +42,7 @@ def test_end_to_end_conversion(toml_path: Path) -> None:
     if not matches(list(df.columns), rule):
         # DIA-NN report schemas vary by version/config; the one cached file may not carry
         # every level's columns. That is "wrong variant for this level", not a failure.
-        pytest.skip(f"cached {rule.software_name} file lacks columns for {toml_path.name}")
+        pytest.skip(f"cached {rule.software_name} file lacks columns for {locator.level}")
     adata = convert(df, rule)
     assert adata.shape[0] > 0, f"{rule.software_name}: empty obs axis"
     assert adata.shape[1] > 0, f"{rule.software_name}: empty var axis"

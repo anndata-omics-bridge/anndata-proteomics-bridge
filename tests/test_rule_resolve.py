@@ -11,8 +11,11 @@ from __future__ import annotations
 from anndata_proteomics.converters.recognize import _expected_long_columns
 import pytest
 
-from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_for_version
-from anndata_proteomics.rules.registry import resolve_rule_path
+from anndata_proteomics.rules.loader import (
+    load_packaged_rule,
+    resolve_rule_for_version,
+    resolve_rule_locator,
+)
 from anndata_proteomics.converters import pipeline as ui
 
 _V19 = "1.9.2"
@@ -35,31 +38,30 @@ def _diann_headers(version: str) -> set[str]:
     return cols
 
 
-def test_resolve_path_picks_version_folder() -> None:
-    assert resolve_rule_path("diann", "protein", _V19).parent.name == "v1"
-    assert resolve_rule_path("diann", "protein", _V23).parent.name == "v2"
-    assert resolve_rule_path("diann", "fragment", _V19).parent.name == "v1"
-    assert resolve_rule_path("diann", "fragment", _V23) is None  # no fragment for 2.x
-    # version-agnostic levels live at the vendor root
-    assert resolve_rule_path("diann", "ion", _V19).parent.name == "diann"
-    assert resolve_rule_path("diann", "ion", _V23).parent.name == "diann"
+def test_resolve_locator_picks_version_document() -> None:
+    assert resolve_rule_locator("diann", "protein", _V19).path.parent.name == "v1"
+    assert resolve_rule_locator("diann", "protein", _V23).path.parent.name == "v2"
+    assert resolve_rule_locator("diann", "fragment", _V19).path.parent.name == "v1"
+    assert resolve_rule_locator("diann", "fragment", _V23) is None
+    assert resolve_rule_locator("diann", "ion", _V19).path.parent.name == "v1"
+    assert resolve_rule_locator("diann", "ion", _V23).path.parent.name == "v2"
 
 
 def test_rule_software_version_regex_must_match_params_version() -> None:
-    assert resolve_rule_for_version("diann", "ion", _V19).software_version == "^[12]\\..*"
+    assert resolve_rule_for_version("diann", "ion", _V19).software_version == "^1\\..*"
     assert resolve_rule_for_version("diann", "ion", "3.0.0") is None
     assert resolve_rule_for_version("diann", "protein", "1.9.2").software_version == "^1\\..*"
     assert (
         resolve_rule_for_version("diann", "protein", "2.3.0 Academia ").software_version
         == "^2\\..*"
     )
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(ValueError, match="no packaged rule"):
         load_packaged_rule("diann", "ion", "3.0.0")
 
 
 def test_resolve_flat_vendor_and_unknown() -> None:
-    assert resolve_rule_path("maxquant", "ion", None).name == "parse_maxquant_ion_1.toml"
-    assert resolve_rule_path("nope", "ion", "1.0") is None
+    assert resolve_rule_locator("maxquant", "ion", None).path.name == "rules.json"
+    assert resolve_rule_locator("nope", "ion", "1.0") is None
 
 
 def test_protein_variants_differ_by_version() -> None:

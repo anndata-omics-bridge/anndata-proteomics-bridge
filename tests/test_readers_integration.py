@@ -1,11 +1,9 @@
-"""End-to-end: every packaged TOML reads its corresponding test_data_download file.
+"""End-to-end: every packaged JSON rule reads its corresponding test-data file.
 
 Skipped when the test_data_download cache (gitignored, regenerable) is absent.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -16,12 +14,12 @@ from anndata_proteomics.test_data import find_test_data
 
 
 @pytest.mark.parametrize(
-    "toml_path",
+    "locator",
     list(iter_packaged_rules()),
-    ids=lambda p: f"{p.parent.name}/{p.name}",
+    ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_reader_loads_test_data_for_packaged_rule(toml_path: Path) -> None:
-    rule = load_rule(toml_path)
+def test_reader_loads_test_data_for_packaged_rule(locator) -> None:
+    rule = load_rule(locator)
     data_file = find_test_data(rule.software_name)
     if data_file is None or not data_file.exists():
         pytest.skip(

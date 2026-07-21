@@ -74,19 +74,22 @@ def test_count_peptides_excludes_kr_before_proline():
     assert count_peptides("AAAKPAAR", min_length=1, max_length=100) == 1
 
 
-def test_fasta_to_dataframe_columns_and_decoy_filter():
+def test_fasta_to_dataframe_retains_and_classifies_all_records():
     df = fasta_to_dataframe(PROLFQUAPP_FIXTURE)
-    # 4 REV_ decoys removed → 7 forward records
-    assert len(df) == 7
+    assert len(df) == 11
     expected_cols = {
         "fasta.id",
         "fasta.header",
+        "is_decoy",
+        "is_contaminant",
         "proteinname",
         "gene_name",
         "protein_length",
         "nr_peptides",
     }
     assert set(df.columns) == expected_cols
+    assert int(df["is_decoy"].sum()) == 4
+    assert int(df["is_contaminant"].sum()) == 2
 
     first = df.iloc[0]
     assert first["fasta.id"] == "sp|A0A385XJL2|YGDT_ECOLI"
@@ -96,9 +99,15 @@ def test_fasta_to_dataframe_columns_and_decoy_filter():
     assert first["protein_length"] == 48
 
 
-def test_fasta_to_dataframe_keeps_decoys_when_pattern_empty():
+def test_empty_decoy_pattern_disables_classification_without_filtering():
     df = fasta_to_dataframe(PROLFQUAPP_FIXTURE, decoy_pattern="")
     assert len(df) == 11
+    assert not df["is_decoy"].any()
+
+
+def test_decoy_prefix_is_preserved_in_clean_accession():
+    df = fasta_to_dataframe(">sp|P1|TARGET target\nAAAA\n>REV_sp|P1|DECOY decoy\nAAAA\n")
+    assert df["proteinname"].tolist() == ["P1", "REV_P1"]
 
 
 def test_fasta_to_dataframe_non_uniprot_proteinname_equals_id():
@@ -120,16 +129,16 @@ def test_fasta_to_dataframe_include_sequence():
     assert df.iloc[0]["sequence"].startswith("MLSTESW")
 
 
-def test_fasta_to_dataframe_dedupes_on_fasta_id():
-    # Same fasta.id repeated → first occurrence wins, second is dropped.
+def test_fasta_to_dataframe_retains_duplicate_fasta_ids():
+    # Sequence validation must see every supplied record, even for a repeated ID.
     text = (
         ">sp|P1|A first OS=x GN=a PE=1 SV=1\nAAAA\n"
         ">sp|P2|B second OS=x GN=b PE=1 SV=1\nCCCC\n"
         ">sp|P1|A third OS=x GN=c PE=1 SV=1\nDDDD\n"
     )
     df = fasta_to_dataframe(text, include_sequence=True)
-    assert len(df) == 2
-    assert df.loc[df["fasta.id"] == "sp|P1|A", "sequence"].iat[0] == "AAAA"
+    assert len(df) == 3
+    assert df.loc[df["fasta.id"] == "sp|P1|A", "sequence"].tolist() == ["AAAA", "DDDD"]
 
 
 def test_fasta_to_dataframe_min_length_excludes_short_peptides():

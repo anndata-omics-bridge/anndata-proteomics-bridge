@@ -1,9 +1,9 @@
-"""Pydantic models for the parsing-rule TOML schema (see ../../../docs/toml_schema.md)."""
+"""Pydantic models for the effective parsing-rule JSON schema."""
 
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -100,11 +100,11 @@ class SampleNameCleanup(_Strict):
 
 
 class ModificationMapEntry(_Strict):
-    """User-facing TOML entry: a vendor token plus the Unimod accession.
+    """User-facing JSON entry: a vendor token plus the Unimod accession.
 
     ``name``, ``target``, ``position`` and ``mass_delta`` are NOT carried
     on the entry itself — they are filled at rule-load time from
-    ``modifications/unimod_registry.toml``. This keeps the per-tool TOMLs
+    ``modifications/unimod_registry.toml``. This keeps the per-tool rule files
     free of duplicated canonical data and guarantees that all tools agree
     on what e.g. ``UNIMOD:35`` means.
     """
@@ -316,3 +316,98 @@ class ParseRule(_Strict):
                 f"columns.var.compute, not select: {sorted(selected)}"
             )
         return self
+
+
+class PartialAxis(_Strict):
+    """Axis fragment that becomes complete after merging a document level with its base."""
+
+    obs_keys: list[str] | None = Field(default=None, min_length=1)
+    var_keys: list[str] | None = Field(default=None, min_length=1)
+    x_layer: str | None = None
+    duplicates: Duplicates | None = None
+
+
+class PartialColumnGroup(_Strict):
+    """Column-group fragment with presence preserved for deterministic merging."""
+
+    select: dict[str, str] | None = None
+    compute: list[ColumnCompute] | None = None
+
+
+class PartialColumns(_Strict):
+    """Partial obs/var column declarations used inside a source document."""
+
+    obs: PartialColumnGroup | None = None
+    var: PartialColumnGroup | None = None
+
+
+class RuleFragment(_Strict):
+    """Strict partial ParseRule body used by a document base or one level."""
+
+    input_shape: InputShape | None = None
+    axis: PartialAxis | None = None
+    columns: PartialColumns | None = None
+    layers: list[Layer] | None = None
+    sample_name_cleanup: SampleNameCleanup | None = None
+    modifications: Modifications | None = None
+    fragments: Fragments | None = None
+
+    def as_merge_dict(self) -> dict[str, Any]:
+        """Return only fields explicitly present in this fragment."""
+        return self.model_dump(by_alias=True, exclude_unset=True, mode="json")
+
+
+class ParseRuleDocument(_Strict):
+    """One self-contained software-version document with shared and level rules."""
+
+    schema_version: str
+    file_version: str
+    software_name: str
+    software_version: str
+    base: RuleFragment
+    levels: dict[QuantificationLevel, RuleFragment] = Field(min_length=1)
+
+    def effective_rule(self, level: QuantificationLevel) -> ParseRule:
+        """Merge and validate one level as the effective converter contract."""
+        if level not in self.levels:
+            raise KeyError(level)
+        body = _merge_rule_dicts(
+            self.base.as_merge_dict(),
+            self.levels[level].as_merge_dict(),
+        )
+        return ParseRule.model_validate(
+            {
+                "schema_version": self.schema_version,
+                "file_version": self.file_version,
+                "software_name": self.software_name,
+                "software_version": self.software_version,
+                "quantification_level": level,
+                **body,
+            }
+        )
+
+    def effective_rules(self) -> dict[QuantificationLevel, ParseRule]:
+        """Validate and return every effective level in stable source order."""
+        return {level: self.effective_rule(level) for level in self.levels}
+
+
+def _is_array_of_objects(value: list[Any]) -> bool:
+    """Return whether a JSON array contains rule objects rather than scalar values."""
+    return bool(value) and all(isinstance(item, dict) for item in value)
+
+
+def _merge_rule_dicts(base: dict[str, Any], level: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge a level onto its same-document base using APB's rule semantics."""
+    merged = dict(base)
+    for key, level_value in level.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(level_value, dict):
+            merged[key] = _merge_rule_dicts(base_value, level_value)
+        elif isinstance(base_value, list) and isinstance(level_value, list):
+            if _is_array_of_objects(base_value) or _is_array_of_objects(level_value):
+                merged[key] = base_value + level_value
+            else:
+                merged[key] = level_value
+        else:
+            merged[key] = level_value
+    return merged

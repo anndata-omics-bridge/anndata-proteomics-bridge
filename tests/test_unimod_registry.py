@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import tomllib
-
 import pytest
 from pydantic import ValidationError
 
@@ -16,38 +14,34 @@ from anndata_proteomics.modifications.unimod_registry import (
 from anndata_proteomics.rules.schema import ParseRule
 
 
-BASE = """
-schema_version = "0.1"
-file_version = "1"
-software_name = "T"
-software_version = "1.0"
-input_shape = "long"
-quantification_level = "ion"
-
-[axis]
-obs_keys = ["Run"]
-var_keys = ["ProForma_peptidoform", "Charge"]
-x_layer = "Intensity"
-
-[axis.duplicates]
-mode = "error"
-
-[columns.obs.select]
-Run = "Run"
-
-[columns.var.select]
-Modified_Sequence = "Modified Sequence"
-Charge = "Charge"
-
-[[columns.var.compute]]
-name = "ProForma_peptidoform"
-from = ["Modified_Sequence"]
-how = "proforma_sequence"
-
-[[layers]]
-name = "Intensity"
-source = "Intensity"
-"""
+BASE = {
+    "schema_version": "0.1",
+    "file_version": "1",
+    "software_name": "T",
+    "software_version": "1.0",
+    "input_shape": "long",
+    "quantification_level": "ion",
+    "axis": {
+        "obs_keys": ["Run"],
+        "var_keys": ["ProForma_peptidoform", "Charge"],
+        "x_layer": "Intensity",
+        "duplicates": {"mode": "error"},
+    },
+    "columns": {
+        "obs": {"select": {"Run": "Run"}},
+        "var": {
+            "select": {"Modified_Sequence": "Modified Sequence", "Charge": "Charge"},
+            "compute": [
+                {
+                    "name": "ProForma_peptidoform",
+                    "from": ["Modified_Sequence"],
+                    "how": "proforma_sequence",
+                }
+            ],
+        },
+    },
+    "layers": [{"name": "Intensity", "source": "Intensity"}],
+}
 
 
 def test_registry_loads_with_required_accessions():
@@ -137,21 +131,14 @@ def test_registry_entry_extras_forbidden():
 
 
 def test_runtime_rule_resolves_canonical_fields_from_accession():
-    rule_toml = (
-        BASE
-        + """
-[modifications]
-source_column = "Modified Sequence"
-parser = "token_regex"
-token_pattern = "\\\\[([^\\\\]]+)\\\\]"
-token_position = "after_residue"
-
-[[modifications.map]]
-token = "15.9949"
-accession = "UNIMOD:35"
-"""
-    )
-    rule = ParseRule(**tomllib.loads(rule_toml))
+    modifications = {
+        "source_column": "Modified Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\[([^\]]+)\]",
+        "token_position": "after_residue",
+        "map": [{"token": "15.9949", "accession": "UNIMOD:35"}],
+    }
+    rule = ParseRule.model_validate({**BASE, "modifications": modifications})
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
     assert runtime.entries[0].target == ["M"]
@@ -160,19 +147,12 @@ accession = "UNIMOD:35"
 
 
 def test_runtime_rule_errors_on_unknown_accession():
-    rule_toml = (
-        BASE
-        + """
-[modifications]
-source_column = "Modified Sequence"
-parser = "token_regex"
-token_pattern = "\\\\[([^\\\\]]+)\\\\]"
-
-[[modifications.map]]
-token = "nope"
-accession = "UNIMOD:99999"
-"""
-    )
-    rule = ParseRule(**tomllib.loads(rule_toml))
+    modifications = {
+        "source_column": "Modified Sequence",
+        "parser": "token_regex",
+        "token_pattern": r"\[([^\]]+)\]",
+        "map": [{"token": "nope", "accession": "UNIMOD:99999"}],
+    }
+    rule = ParseRule.model_validate({**BASE, "modifications": modifications})
     with pytest.raises(KeyError, match="UNIMOD:99999"):
         _to_runtime_rule(rule.modifications)

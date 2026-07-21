@@ -26,9 +26,9 @@ Do **not** design or implement here. This note records scope + where to look.
 - APB **already** has a `required` flag — but **only on layers**:
   `apb/src/anndata_proteomics/rules/schema.py` (`required: bool`, `layer_required(...)`; the
   `x_layer` is always required). The task extends this notion to **identity / `var` / `obs`
-  columns**, and adds the alias-list form to `[columns.*.select]`.
-- The column-selection surface to change: `[columns.obs.select]` / `[columns.var.select]` in the
-  parsing-rule TOMLs, the pydantic schema, and the loader/converter column resolution + `recognize`.
+  columns**, and adds the alias-list form to `columns.*.select`.
+- The column-selection surface to change: `columns.obs.select` / `columns.var.select` in the
+  parsing-rule JSON files, the pydantic schema, and the loader/converter column resolution + `recognize`.
 
 ## References — qpx (primary)
 
@@ -60,4 +60,4 @@ qpx is itself a search-engine → MuData converter and already implements exactl
 - [REVIEW_what_we_learn_from_alphapep_base.md](../../REVIEW_what_we_learn_from_alphapep_base.md) — item 2 (alias lists) and the required-columns discussion.
 - `related_work/qpx/docs/spec/schemas/` + `related_work/qpx/qpx/core/data/schema.py`, `loader.py`.
 - `related_work/alphabase/alphabase/constants/const_files/psm_reader.yaml`, `psm_reader/utils.py`.
-- APB: `src/anndata_proteomics/rules/schema.py` (existing `required`), `docs/toml_schema.md` (the `[columns.*.select]` contract).
+- APB: `src/anndata_proteomics/rules/schema.py` (existing `required`), `docs/json_schema.md` (the `columns.*.select` contract).

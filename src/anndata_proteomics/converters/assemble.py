@@ -14,6 +14,7 @@ from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.modifications.pipeline import apply_modifications
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.registry import available_software, parse_params
+from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.schema import ColumnCompute, ColumnGroup, ParseRule
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def convert(
     df
         Vendor-quant DataFrame (already loaded via ``readers``).
     rule
-        Parsed TOML rule.
+        Parsed JSON rule.
     params_path
         Optional vendor parameter file. When provided, the matching
         parameter parser (looked up by ``rule.software_name``) is invoked
@@ -103,6 +104,7 @@ def convert(
     adata = to_anndata(pieces, rule)
     if params_path is not None:
         _attach_search_parameters(adata, params_path, rule.software_name)
+    store_quantification_summary(adata)
     return adata
 
 

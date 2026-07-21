@@ -1,8 +1,9 @@
-# TODO: How does ProForma encode modifications in a peptidoform sequence?
+# ARCHIVED: How does ProForma encode modifications in a peptidoform sequence?
 
 Date: 2026-07-06
 
-Status: ACTIVE question note.
+Status: answered; archived 2026-07-20. Residual modification work is tracked by the active
+alphabase and registry-homogenization TODOs.
 
 ## Question
 

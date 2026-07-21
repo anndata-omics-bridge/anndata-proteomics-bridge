@@ -28,12 +28,12 @@ def _find_test_data(software_name: str) -> Path | None:
 
 
 @pytest.mark.parametrize(
-    "toml_path",
+    "locator",
     list(iter_packaged_rules()),
-    ids=lambda p: f"{p.parent.name}/{p.name}",
+    ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_recognize_picks_correct_rule_for_each_vendor(toml_path: Path) -> None:
-    rule = load_rule(toml_path)
+def test_recognize_picks_correct_rule_for_each_vendor(locator) -> None:
+    rule = load_rule(locator)
     data_file = _find_test_data(rule.software_name)
     if data_file is None or not data_file.exists():
         pytest.skip(f"no test data for {rule.software_name!r}")
@@ -41,7 +41,7 @@ def test_recognize_picks_correct_rule_for_each_vendor(toml_path: Path) -> None:
     if not matches(headers, rule):
         # DIA-NN report schemas vary by version/config; the cached file may not carry this
         # level's columns. That's a vendor-variant mismatch, not a recognition failure.
-        pytest.skip(f"cached {rule.software_name} file lacks columns for {toml_path.name}")
+        pytest.skip(f"cached {rule.software_name} file lacks columns for {locator.level}")
 
     # recognize() returns a rule only when exactly one packaged rule matches. Multi-level
     # vendors (DIA-NN ships ion/peptidoform/peptide/protein/fragment, all reading the same
@@ -58,7 +58,13 @@ def test_recognize_picks_correct_rule_for_each_vendor(toml_path: Path) -> None:
 
 def test_matches_long_rule_with_extra_headers_still_matches() -> None:
     # Long rules tolerate extra unrelated columns in the source file.
-    diann_rule = load_rule(next(p for p in iter_packaged_rules() if p.parent.name == "diann"))
+    diann_rule = load_rule(
+        next(
+            item
+            for item in iter_packaged_rules()
+            if item.path.parent.name == "v1" and item.level == "ion"
+        )
+    )
     headers = (
         list(diann_rule.columns.obs.select.values())
         + list(diann_rule.columns.var.select.values())
@@ -69,7 +75,13 @@ def test_matches_long_rule_with_extra_headers_still_matches() -> None:
 
 
 def test_matches_long_rule_returns_false_when_required_column_missing() -> None:
-    diann_rule = load_rule(next(p for p in iter_packaged_rules() if p.parent.name == "diann"))
+    diann_rule = load_rule(
+        next(
+            item
+            for item in iter_packaged_rules()
+            if item.path.parent.name == "v1" and item.level == "ion"
+        )
+    )
     headers = (
         list(diann_rule.columns.obs.select.values()) + list(diann_rule.columns.var.select.values())
         # deliberately drop the layers' source columns

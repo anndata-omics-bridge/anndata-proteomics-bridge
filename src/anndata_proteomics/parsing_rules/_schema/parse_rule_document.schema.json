@@ -1,40 +1,5 @@
 {
   "$defs": {
-    "Axis": {
-      "additionalProperties": false,
-      "properties": {
-        "obs_keys": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Obs Keys",
-          "type": "array"
-        },
-        "var_keys": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Var Keys",
-          "type": "array"
-        },
-        "x_layer": {
-          "title": "X Layer",
-          "type": "string"
-        },
-        "duplicates": {
-          "$ref": "#/$defs/Duplicates"
-        }
-      },
-      "required": [
-        "obs_keys",
-        "var_keys",
-        "x_layer"
-      ],
-      "title": "Axis",
-      "type": "object"
-    },
     "ColumnCompute": {
       "additionalProperties": false,
       "properties": {
@@ -67,27 +32,6 @@
         "how"
       ],
       "title": "ColumnCompute",
-      "type": "object"
-    },
-    "ColumnGroup": {
-      "additionalProperties": false,
-      "properties": {
-        "select": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Select",
-          "type": "object"
-        },
-        "compute": {
-          "items": {
-            "$ref": "#/$defs/ColumnCompute"
-          },
-          "title": "Compute",
-          "type": "array"
-        }
-      },
-      "title": "ColumnGroup",
       "type": "object"
     },
     "ColumnLabeledFragments": {
@@ -128,23 +72,6 @@
         "label_column"
       ],
       "title": "ColumnLabeledFragments",
-      "type": "object"
-    },
-    "Columns": {
-      "additionalProperties": false,
-      "properties": {
-        "obs": {
-          "$ref": "#/$defs/ColumnGroup"
-        },
-        "var": {
-          "$ref": "#/$defs/ColumnGroup"
-        }
-      },
-      "required": [
-        "obs",
-        "var"
-      ],
-      "title": "Columns",
       "type": "object"
     },
     "Duplicates": {
@@ -226,6 +153,137 @@
       "title": "ModificationMapEntry",
       "type": "object"
     },
+    "PartialAxis": {
+      "additionalProperties": false,
+      "description": "Axis fragment that becomes complete after merging a document level with its base.",
+      "properties": {
+        "obs_keys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Obs Keys"
+        },
+        "var_keys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Var Keys"
+        },
+        "x_layer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X Layer"
+        },
+        "duplicates": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duplicates"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "PartialAxis",
+      "type": "object"
+    },
+    "PartialColumnGroup": {
+      "additionalProperties": false,
+      "description": "Column-group fragment with presence preserved for deterministic merging.",
+      "properties": {
+        "select": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Select"
+        },
+        "compute": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ColumnCompute"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compute"
+        }
+      },
+      "title": "PartialColumnGroup",
+      "type": "object"
+    },
+    "PartialColumns": {
+      "additionalProperties": false,
+      "description": "Partial obs/var column declarations used inside a source document.",
+      "properties": {
+        "obs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialColumnGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "var": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialColumnGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "PartialColumns",
+      "type": "object"
+    },
     "PositionalFragments": {
       "additionalProperties": false,
       "description": "Older DIA-NN exports with no per-fragment label column.\n\nFragment labels are synthesised positionally (``frag_0``, ``frag_1``, \u2026) by\nindex within the precursor.",
@@ -259,6 +317,115 @@
         "value_columns"
       ],
       "title": "PositionalFragments",
+      "type": "object"
+    },
+    "RuleFragment": {
+      "additionalProperties": false,
+      "description": "Strict partial ParseRule body used by a document base or one level.",
+      "properties": {
+        "input_shape": {
+          "anyOf": [
+            {
+              "enum": [
+                "long",
+                "wide"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Shape"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialAxis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialColumns"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "layers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Layer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layers"
+        },
+        "sample_name_cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SampleNameCleanup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modifications": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenRegexModifications"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fragments": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "column": "#/$defs/ColumnLabeledFragments",
+                  "positional": "#/$defs/PositionalFragments"
+                },
+                "propertyName": "label_strategy"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PositionalFragments"
+                },
+                {
+                  "$ref": "#/$defs/ColumnLabeledFragments"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fragments"
+        }
+      },
+      "title": "RuleFragment",
       "type": "object"
     },
     "SampleNameCleanup": {
@@ -343,6 +510,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "One self-contained software-version document with shared and level rules.",
   "properties": {
     "schema_version": {
       "title": "Schema Version",
@@ -360,86 +528,25 @@
       "title": "Software Version",
       "type": "string"
     },
-    "input_shape": {
-      "enum": [
-        "long",
-        "wide"
-      ],
-      "title": "Input Shape",
-      "type": "string"
+    "base": {
+      "$ref": "#/$defs/RuleFragment"
     },
-    "quantification_level": {
-      "enum": [
-        "ion",
-        "peptidoform",
-        "peptide",
-        "protein",
-        "fragment"
-      ],
-      "title": "Quantification Level",
-      "type": "string"
-    },
-    "axis": {
-      "$ref": "#/$defs/Axis"
-    },
-    "columns": {
-      "$ref": "#/$defs/Columns"
-    },
-    "layers": {
-      "items": {
-        "$ref": "#/$defs/Layer"
+    "levels": {
+      "additionalProperties": {
+        "$ref": "#/$defs/RuleFragment"
       },
-      "minItems": 1,
-      "title": "Layers",
-      "type": "array"
-    },
-    "sample_name_cleanup": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/SampleNameCleanup"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "modifications": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/TokenRegexModifications"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "fragments": {
-      "anyOf": [
-        {
-          "discriminator": {
-            "mapping": {
-              "column": "#/$defs/ColumnLabeledFragments",
-              "positional": "#/$defs/PositionalFragments"
-            },
-            "propertyName": "label_strategy"
-          },
-          "oneOf": [
-            {
-              "$ref": "#/$defs/PositionalFragments"
-            },
-            {
-              "$ref": "#/$defs/ColumnLabeledFragments"
-            }
-          ]
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Fragments"
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "ion",
+          "peptidoform",
+          "peptide",
+          "protein",
+          "fragment"
+        ]
+      },
+      "title": "Levels",
+      "type": "object"
     }
   },
   "required": [
@@ -447,12 +554,9 @@
     "file_version",
     "software_name",
     "software_version",
-    "input_shape",
-    "quantification_level",
-    "axis",
-    "columns",
-    "layers"
+    "base",
+    "levels"
   ],
-  "title": "ParseRule",
+  "title": "ParseRuleDocument",
   "type": "object"
 }

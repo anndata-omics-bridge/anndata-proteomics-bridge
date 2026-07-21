@@ -21,9 +21,7 @@ CLI ``--cleavage`` flag) overrides that for objects converted without parameters
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -32,29 +30,45 @@ from loguru import logger
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.fasta.annotation import (
     CleavageRule,
-    fasta_to_dataframe,
+    _fasta_to_dataframe_with_config,
+    _uniprot_proteinname,
+    describe_sources,
+    materialize_sources,
     resolve_cleavage,
 )
+from anndata_proteomics.fasta.anndata_io import write_fasta_config
+from anndata_proteomics.fasta.config import FastaConfig, ResolvedFastaConfig
 from anndata_proteomics.fasta.parser import FastaSource
 from anndata_proteomics.params.anndata_io import read_search_parameters
 
 _MAX_REPORTED = 5
-_SCHEMA_VERSION = "0.1"
+_SCHEMA_VERSION = "0.2"
 _DEFAULT_MIN_LENGTH = 7
 _DEFAULT_MAX_LENGTH = 30
 _VARM_KEY = "fasta"  # the varm slot the annotation DataFrame is stored under
 _JOIN_KEY = "proteinname"  # the FASTA-frame column the var key is matched against
-_PRT_PREFIX_RE = re.compile(r"^prt:")
-_UNIPROT_MIDDLE_RE = re.compile(r".+\|(.+)\|.*")
+_PROTEIN_MATCH_FIELDS = (
+    "Protein_Group",
+    "PG_ProteinAccessions",
+    "PG_ProteinGroups",
+    "Leading_Razor_Protein",
+    "Protein_ID",
+    "Accession",
+    "protein_group",
+    "Proteins",
+    "Protein",
+)
 
 
 def annotate_var_from_fasta(
     obj: Any,
     fasta_sources: FastaSource | Iterable[FastaSource],
     *,
-    match_on: str = "Protein_Group",
+    match_on: str | None = None,
     is_uniprot: bool = True,
-    decoy_pattern: str = "^REV_|^rev_",
+    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
+    decoy_pattern: str | None = None,
+    contaminant_pattern: str | None = None,
     cleavage: str | CleavageRule | None = None,
     min_length: int | None = None,
     max_length: int | None = None,
@@ -64,8 +78,9 @@ def annotate_var_from_fasta(
     """Attach FASTA-derived annotation at the protein layer's ``varm['fasta']``, in place.
 
     *obj* is a protein-level AnnData or a MuData (whose ``protein`` modality is
-    annotated). *match_on* names the ``var`` column holding the protein group
-    (``"index"`` uses ``var_names``). *cleavage* / *min_length* / *max_length*
+    annotated). *match_on* names the ``var`` column holding the protein group;
+    ``None`` auto-selects a known protein-ID column and falls back to ``var_names``.
+    ``"index"`` explicitly uses ``var_names``. *cleavage* / *min_length* / *max_length*
     override the enzyme and peptide-length bounds otherwise read from the stored
     search parameters. *columns*, if given, restricts which FASTA columns are
     stored. Returns *obj*.
@@ -78,13 +93,18 @@ def annotate_var_from_fasta(
     """
     target = _resolve_protein_target(obj)
     _ensure_varm_free(target)
+    resolved_match_on = _resolve_match_on(target, match_on)
+    sources = materialize_sources(fasta_sources)
+    source_descriptions = describe_sources(sources)
 
     rule, enzyme_name, min_len, max_len = _resolve_digestion(
         target, cleavage, min_length, max_length
     )
-    ann = fasta_to_dataframe(
-        fasta_sources,
+    ann, resolved_config = _fasta_to_dataframe_with_config(
+        sources,
+        fasta_config=fasta_config,
         decoy_pattern=decoy_pattern,
+        contaminant_pattern=contaminant_pattern,
         is_uniprot=is_uniprot,
         cleavage=rule,
         min_length=min_len,
@@ -93,12 +113,12 @@ def annotate_var_from_fasta(
     )
     ann = _index_by_join_key(ann)
 
-    keys = _var_join_keys(target, match_on, is_uniprot=is_uniprot)
+    keys = _var_join_keys(target, resolved_match_on, is_uniprot=is_uniprot)
     in_table = keys.isin(ann.index)
     n_matched = int(in_table.sum())
     if n_matched == 0:
         raise ValueError(
-            f"no var rows matched any FASTA record on match_on={match_on!r} "
+            f"no var rows matched any FASTA record on match_on={resolved_match_on!r} "
             f"(leading accession of the protein group). "
             f"first var keys: {list(keys[:_MAX_REPORTED])}; "
             f"first FASTA proteinnames: {list(ann.index[:_MAX_REPORTED])}"
@@ -107,12 +127,14 @@ def annotate_var_from_fasta(
     frame = _build_varm_frame(target, keys, ann, columns)
     target.varm[_VARM_KEY] = frame
     cols_added = list(frame.columns)
+    write_fasta_config(obj, resolved_config)
 
     _warn_on_mismatch(keys, in_table, ann)
     _record_provenance(
         target,
-        fasta_sources=fasta_sources,
-        match_on=match_on,
+        fasta_sources=source_descriptions,
+        fasta_config=resolved_config,
+        match_on=resolved_match_on,
         cols_added=cols_added,
         n_matched=n_matched,
         enzyme=enzyme_name,
@@ -182,18 +204,49 @@ def _first_present(*values: int | None) -> int:
 
 
 def _index_by_join_key(ann: pd.DataFrame) -> pd.DataFrame:
-    """Index the FASTA frame by ``proteinname``, dropping duplicate keys (first wins)."""
+    """Index by accession using target, curated, then input-order precedence."""
     if _JOIN_KEY not in ann.columns:  # pragma: no cover - fasta_to_dataframe always emits it
         raise ValueError(f"FASTA frame is missing the {_JOIN_KEY!r} join column")
+    ann = ann.copy()
+    ann["_input_order"] = range(len(ann))
+    ann["_database_priority"] = ann["fasta.id"].map(_database_priority)
+    ann = ann.sort_values(
+        ["is_decoy", "_database_priority", "_input_order"],
+        kind="stable",
+    )
     duplicated = ann[_JOIN_KEY].duplicated()
     if duplicated.any():
         dups = sorted(ann[_JOIN_KEY][duplicated].unique())[:_MAX_REPORTED]
         logger.warning(
             f"{int(duplicated.sum())} duplicate {_JOIN_KEY!r} value(s) in FASTA; "
-            f"keeping first occurrence: {dups}"
+            f"using target > sp| > tr| > input order: {dups}"
         )
         ann = ann.loc[~duplicated]
-    return ann.set_index(_JOIN_KEY)
+    return (
+        ann.sort_values("_input_order", kind="stable")
+        .drop(columns=["_input_order", "_database_priority"])
+        .set_index(_JOIN_KEY)
+    )
+
+
+def _database_priority(fasta_id: str) -> int:
+    """Curated UniProt (sp) before unreviewed UniProt (tr), then other IDs."""
+    token = str(fasta_id)
+    if "sp|" in token:
+        return 0
+    if "tr|" in token:
+        return 1
+    return 2
+
+
+def _resolve_match_on(target: Any, match_on: str | None) -> str:
+    """Resolve an explicit or conventional protein identifier column."""
+    if match_on is not None:
+        return match_on
+    for candidate in _PROTEIN_MATCH_FIELDS:
+        if candidate in target.var.columns:
+            return candidate
+    return "index"
 
 
 def _var_join_keys(target: Any, match_on: str, *, is_uniprot: bool) -> pd.Index:
@@ -217,11 +270,15 @@ def _leading_accession(group_value: str, *, is_uniprot: bool) -> str:
     (for UniProt) extracts the middle ``db|ACC|NAME`` field — mirroring how
     ``fasta_to_dataframe`` derives ``proteinname``.
     """
-    token = _PRT_PREFIX_RE.sub("", str(group_value)).strip().split(";")[0].strip()
-    if is_uniprot:
-        match = _UNIPROT_MIDDLE_RE.match(token)
-        return match.group(1) if match else token
-    return token
+    token = str(group_value).removeprefix("prt:").strip().split(";")[0].strip()
+    return _uniprot_proteinname(token) if is_uniprot else token
+
+
+def _protein_group_accessions(group_value: str, *, is_uniprot: bool) -> tuple[str, ...]:
+    """All semicolon-separated accessions represented by one protein-group value."""
+    raw = str(group_value).removeprefix("prt:").strip()
+    tokens = (token.strip() for token in raw.split(";"))
+    return tuple(_uniprot_proteinname(token) if is_uniprot else token for token in tokens if token)
 
 
 def _ensure_varm_free(target: Any) -> None:
@@ -243,6 +300,12 @@ def _build_varm_frame(
     available = list(ann.columns)
     selected = [c for c in columns if c in available] if columns is not None else available
     aligned = ann.reindex(keys)[selected]  # rows in var order; unmatched keys → NaN
+    for column in ("is_decoy", "is_contaminant"):
+        if column in aligned.columns:
+            aligned[column] = aligned[column].astype("boolean")
+    for column in aligned.select_dtypes(include="object").columns:
+        if aligned[column].isna().any():
+            aligned[column] = pd.Categorical(aligned[column])
     aligned.columns = sanitize_columns(selected)
     aligned.index = pd.Index(target.var_names)  # varm is aligned to the var axis
     return aligned
@@ -263,7 +326,8 @@ def _warn_on_mismatch(keys: pd.Index, in_table: pd.Series, ann: pd.DataFrame) ->
 def _record_provenance(
     target: Any,
     *,
-    fasta_sources: FastaSource | Iterable[FastaSource],
+    fasta_sources: list[str],
+    fasta_config: ResolvedFastaConfig,
     match_on: str,
     cols_added: list[str],
     n_matched: int,
@@ -281,7 +345,8 @@ def _record_provenance(
         "schema_version": _SCHEMA_VERSION,
         "source": "fasta",
         "destination": f"varm[{_VARM_KEY!r}]",
-        "fasta_sources": _describe_sources(fasta_sources),
+        "fasta_sources": fasta_sources,
+        "fasta_config": fasta_config.model_dump(mode="json"),
         "match_on": match_on,
         "columns": list(cols_added),
         "n_var_matched": n_matched,
@@ -294,27 +359,3 @@ def _record_provenance(
     existing.append(entry)
     namespace["var_annotations_json"] = json.dumps(existing)
     target.uns["anndata_proteomics"] = namespace
-
-
-def _describe_sources(sources: FastaSource | Iterable[FastaSource]) -> list[str]:
-    """Human-readable list of FASTA sources.
-
-    Paths are recorded as strings; inline FASTA text (the parser's
-    string-content path) as ``<inline-fasta>``; open streams as ``<stream>``.
-    """
-    single = isinstance(sources, str | Path) or hasattr(sources, "read")
-    items = [sources] if single else list(sources)
-    out: list[str] = []
-    for item in items:
-        if isinstance(item, Path):
-            out.append(str(item))
-        elif isinstance(item, str):
-            out.append("<inline-fasta>" if _is_inline_fasta(item) else item)
-        else:
-            out.append("<stream>")
-    return out
-
-
-def _is_inline_fasta(text: str) -> bool:
-    """True when *text* is FASTA content rather than a path (matches the parser)."""
-    return "\n" in text or text.lstrip().startswith(">")

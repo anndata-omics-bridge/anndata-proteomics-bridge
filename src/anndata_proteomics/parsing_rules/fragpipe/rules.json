@@ -1,0 +1,127 @@
+{
+  "schema_version": "0.1",
+  "file_version": "1",
+  "software_name": "FragPipe",
+  "software_version": "^22\\.1-build02$",
+  "base": {
+    "input_shape": "wide",
+    "axis": {
+      "obs_keys": [
+        "sample"
+      ],
+      "duplicates": {
+        "mode": "error"
+      }
+    },
+    "columns": {
+      "obs": {
+        "select": {
+          "sample": "<sample>"
+        }
+      }
+    },
+    "modifications": {
+      "source_column": "Modified Sequence",
+      "parser": "token_regex",
+      "token_pattern": "\\[([^\\]]+)\\]",
+      "token_position": "after_residue",
+      "case_sensitive": false,
+      "unknown_policy": "preserve",
+      "output_column": "proforma_sequence",
+      "map": [
+        {
+          "token": "57.0215",
+          "accession": "UNIMOD:4"
+        },
+        {
+          "token": "15.9949",
+          "accession": "UNIMOD:35"
+        },
+        {
+          "token": "42.0106",
+          "accession": "UNIMOD:1"
+        },
+        {
+          "token": "-17.026548",
+          "accession": "UNIMOD:28"
+        },
+        {
+          "token": "-18.010565",
+          "accession": "UNIMOD:27"
+        }
+      ]
+    }
+  },
+  "levels": {
+    "ion": {
+      "axis": {
+        "var_keys": [
+          "ProForma_ion"
+        ],
+        "x_layer": "Intensity"
+      },
+      "columns": {
+        "var": {
+          "select": {
+            "Peptide_Sequence": "Peptide Sequence",
+            "Modified_Sequence": "Modified Sequence",
+            "Charge": "Charge",
+            "M_Z": "M/Z",
+            "Protein": "Protein",
+            "Protein_ID": "Protein ID",
+            "Gene": "Gene",
+            "Assigned_Modifications": "Assigned Modifications"
+          },
+          "compute": [
+            {
+              "name": "ProForma_peptidoform",
+              "from": [
+                "Modified_Sequence"
+              ],
+              "how": "proforma_sequence"
+            },
+            {
+              "name": "ProForma_peptide",
+              "from": [
+                "Modified_Sequence"
+              ],
+              "how": "stripped_sequence"
+            },
+            {
+              "name": "ProForma_ion",
+              "from": [
+                "ProForma_peptidoform",
+                "Charge"
+              ],
+              "how": "proforma_ion"
+            }
+          ]
+        }
+      },
+      "layers": [
+        {
+          "name": "Intensity",
+          "source": "^(?P<sample>.+) Intensity$"
+        },
+        {
+          "name": "Spectral_Count",
+          "source": "^(?P<sample>.+) Spectral Count$"
+        },
+        {
+          "name": "Apex_Retention_Time",
+          "source": "^(?P<sample>.+) Apex Retention Time$"
+        },
+        {
+          "name": "Match_Type",
+          "source": "^(?P<sample>.+) Match Type$",
+          "encoding_mode": "factor",
+          "categories": {
+            "unmatched": 0,
+            "MS/MS": 1,
+            "MBR": 2
+          }
+        }
+      ]
+    }
+  }
+}
