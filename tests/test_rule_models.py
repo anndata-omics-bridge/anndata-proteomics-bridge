@@ -128,6 +128,13 @@ def test_wide_example_validates():
     assert match_type.categories == {"unmatched": 0, "MS/MS": 1, "MBR": 2}
 
 
+def test_numeric_layer_accepts_missing_values():
+    document = copy.deepcopy(WIDE_EXAMPLE)
+    document["layers"][0]["missing_values"] = [0, -1]
+    rule = _parse(document)
+    assert rule.layers[0].missing_values == [0.0, -1.0]
+
+
 def test_long_layer_missing_source():
     bad = copy.deepcopy(LONG_EXAMPLE)
     bad["layers"][2].pop("source")
@@ -169,6 +176,13 @@ def test_factor_requires_categories():
     bad = copy.deepcopy(WIDE_EXAMPLE)
     bad["layers"][2].pop("categories")
     with pytest.raises(ValidationError, match="categories"):
+        _parse(bad)
+
+
+def test_factor_rejects_missing_values():
+    bad = copy.deepcopy(WIDE_EXAMPLE)
+    bad["layers"][2]["missing_values"] = [0]
+    with pytest.raises(ValidationError, match="only valid for numeric"):
         _parse(bad)
 
 

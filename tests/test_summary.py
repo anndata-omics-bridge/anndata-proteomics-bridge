@@ -14,8 +14,10 @@ from mudata import MuData
 
 from anndata_proteomics.readers import summary as summary_module
 from anndata_proteomics.readers.summary import (
+    _numeric_summary,
     describe,
     describe_path,
+    store_annotation_summary,
     store_fasta_summary,
     store_quantification_summary,
 )
@@ -55,8 +57,15 @@ def test_quantification_summary_has_known_missingness_and_range() -> None:
     assert quantification["software_name"] == "Synthetic"
     assert quantification["software_version"] is None
     layer = quantification["layers"]["intensity"]
-    assert layer["missingness_histogram"] == [1, 1, 0, 2]
-    assert layer["intensity"] == {"min": 0.0, "median": 1.0, "max": 5.0}
+    assert layer["missingness_histogram"] == {"0": 2, "1": 0, "2": 1, "3": 1}
+    assert layer["summary"] == {
+        "min": 0.0,
+        "first_quartile": 0.0,
+        "median": 1.0,
+        "mean": pytest.approx(11 / 7),
+        "third_quartile": 2.5,
+        "max": 5.0,
+    }
     stored = obj.uns["anndata_proteomics"]["descriptive_summary"]
     assert json.loads(stored) == result
 
@@ -74,7 +83,30 @@ def test_fasta_stage_adds_proteotypic_count_without_changing_quantification() ->
     result = describe(obj)
 
     assert result["quantification"] == before
-    assert result["fasta"] == {"proteotypic_feature_count": 2}
+    assert result["fasta"] == {
+        "feature_count": 4,
+        "matched_feature_count": 3,
+        "proteotypic_feature_count": 2,
+    }
+
+
+def test_protein_fasta_summary_counts_annotated_features() -> None:
+    obj = _adata()
+    obj.uns["anndata_proteomics"]["quantification_level"] = "protein"
+    obj.varm["fasta"] = pd.DataFrame(
+        {
+            "fasta.id": pd.Categorical(["P1", "P2", None, "P4"]),
+            "gene_name": pd.Categorical(["G1", "G2", None, "G4"]),
+        },
+        index=obj.var_names,
+    )
+
+    store_fasta_summary(obj)
+
+    assert describe(obj)["fasta"] == {
+        "feature_count": 4,
+        "annotated_feature_count": 3,
+    }
 
 
 def test_describe_does_not_recompute_stored_quantification(
@@ -99,19 +131,97 @@ def test_describe_path_round_trips_h5ad(tmp_path: Path) -> None:
 
     result = describe_path(path)
 
-    assert result["quantification"]["layers"]["intensity"]["missingness_histogram"] == [1, 1, 0, 2]
+    assert result["quantification"]["layers"]["intensity"]["missingness_histogram"] == {
+        "0": 2,
+        "1": 0,
+        "2": 1,
+        "3": 1,
+    }
+
+
+def test_describe_upgrades_v1_present_run_histogram() -> None:
+    obj = _adata()
+    obj.uns["anndata_proteomics"]["descriptive_summary"] = json.dumps(
+        {
+            "schema_version": "1",
+            "container_type": "anndata",
+            "quantification": {
+                "n_runs": 3,
+                "layers": {
+                    "intensity": {
+                        "missingness_histogram": [1, 1, 0, 2],
+                        "intensity": {"min": 0.0, "median": 1.0, "max": 5.0},
+                    }
+                },
+            },
+        }
+    )
+
+    result = describe(obj)
+
+    assert result["schema_version"] == "4"
+    layer = result["quantification"]["layers"]["intensity"]
+    assert layer["missingness_histogram"] == {
+        "0": 2,
+        "1": 0,
+        "2": 1,
+        "3": 1,
+    }
+    assert layer["summary"] == {
+        "min": 0.0,
+        "first_quartile": None,
+        "median": 1.0,
+        "mean": None,
+        "third_quartile": None,
+        "max": 5.0,
+    }
+
+
+def test_numeric_summary_matches_r_summary_quartiles() -> None:
+    assert _numeric_summary(np.arange(1.0, 7.0)) == {
+        "min": 1.0,
+        "first_quartile": 2.25,
+        "median": 3.5,
+        "mean": 3.5,
+        "third_quartile": 4.75,
+        "max": 6.0,
+    }
 
 
 def test_describe_path_targets_one_mudata_modality(tmp_path: Path) -> None:
+    peptide = _adata("pep:")
+    protein = _adata("prt:")
+    protein.uns["anndata_proteomics"]["quantification_level"] = "protein"
+    peptide.obs["condition"] = ["A", "A", "B"]
+    protein.obs["condition"] = ["A", "A", "B"]
+    peptide.varm["fasta_validation"] = pd.DataFrame(
+        {
+            "peptide_in_fasta": [True, True, False, True],
+            "fasta_matching_protein_count": [1, 2, 0, 1],
+        },
+        index=peptide.var_names,
+    )
+    protein.varm["fasta"] = pd.DataFrame(
+        {"fasta.id": pd.Categorical(["P1", "P2", None, "P4"])},
+        index=protein.var_names,
+    )
     with mudata.set_options(pull_on_update=False):
-        obj = MuData({"peptide": _adata("pep:"), "protein": _adata("prt:")}, axis=0)
+        obj = MuData({"peptide": peptide, "protein": protein}, axis=0)
+    obj.obs["condition"] = ["A", "A", "B"]
     store_quantification_summary(obj)
+    store_annotation_summary(obj, fields=["condition"], n_annotated_runs=3)
+    store_fasta_summary(obj)
     path = tmp_path / "result.h5mu"
     obj.write_h5mu(path)
 
     whole = describe_path(path)
     peptide = describe_path(path, modality="peptide")
+    protein = describe_path(path, modality="protein")
 
     assert set(whole["modalities"]) == {"peptide", "protein"}
     assert peptide["container_type"] == "anndata"
     assert peptide["quantification"]["level"] == "peptide"
+    assert peptide["annotation"]["group_counts"] == {"condition": 2}
+    assert peptide["fasta"]["matched_feature_count"] == 3
+    assert protein["annotation"]["group_counts"] == {"condition": 2}
+    assert protein["fasta"]["annotated_feature_count"] == 3

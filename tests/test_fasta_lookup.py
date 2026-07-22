@@ -7,6 +7,8 @@ prove the lookup distinguishes the two and that the
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from anndata_proteomics.fasta.annotation import fasta_to_dataframe
@@ -14,6 +16,7 @@ from anndata_proteomics.test_data import (
     DOWNLOADED_DB,
     FASTA_DIR,
     TEST_DATA_DIR,
+    find_annotation,
     find_fasta,
     find_test_data,
 )
@@ -47,6 +50,39 @@ def test_find_fasta_returns_none_for_unknown_module():
 
 def test_find_fasta_returns_none_without_arguments():
     assert find_fasta() is None
+
+
+def test_find_fasta_uses_explicit_test_data_root(tmp_path: Path) -> None:
+    expected = tmp_path / "fasta" / _HYE_NAME
+    expected.parent.mkdir()
+    expected.write_text(">protein\nPEPTIDE\n")
+
+    assert find_fasta(module="dda_qexactive", test_data_dir=tmp_path) == expected
+
+
+def test_find_annotation_uses_explicit_test_data_root(tmp_path: Path) -> None:
+    expected = tmp_path / "annotations" / "dia_aif.toml"
+    expected.parent.mkdir()
+    expected.write_text('[[samples]]\nraw_file = "run1"\n')
+
+    assert find_annotation(module="dia_aif", test_data_dir=tmp_path) == expected
+    assert find_annotation(module="unknown", test_data_dir=tmp_path) is None
+
+
+def test_find_fasta_resolves_dataset_from_explicit_test_data_root(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "json_dir" / "results-repo" / "fixture-hash"
+    dataset_dir.mkdir(parents=True)
+    input_file = dataset_dir / "input_file.tsv"
+    input_file.write_text("quantity\n1\n")
+    fasta = tmp_path / "fasta" / _HY_NAME
+    fasta.parent.mkdir()
+    fasta.write_text(">protein\nPEPTIDE\n")
+    (tmp_path / "raw_file_db_downloaded.csv").write_text(
+        "module,input_file_path,status\n"
+        "dia_singlecell,results-repo/fixture-hash/input_file.tsv,ok\n"
+    )
+
+    assert find_fasta(dataset_dir=dataset_dir, test_data_dir=tmp_path) == fasta
 
 
 def test_find_fasta_resolves_module_from_dataset_dir():

@@ -46,8 +46,8 @@ A few layout notes:
 
 - Inside one `json_dir/<repo_name>/`, the `-main` metadata folder (from `catalog`)
   and the per-`<hash>` download folders (from `download`) live side by side.
-  Re-running `catalog` for a repo **wipes that whole `<repo_name>/` folder** first
-  (including already-downloaded hash folders), so re-catalog then re-download.
+  Re-running `catalog` replaces only the `<repo_name>-main` metadata snapshot and
+  preserves already-downloaded hash folders.
 - Param files are literally named `param_0.` **plus** the extension, e.g.
   `param_0..txt`, `param_0..workflow`, `param_0..xml`, `param_0..yml` — the
   basename between the two dots is empty. [`conftest.py`](conftest.py) pairs each
@@ -110,8 +110,8 @@ Use `clean --data-dir <folder>` to remove only the known generated artifacts
 under a custom test-data root.
 
 `download` is **idempotent**: hashes already present under `json_dir/` are skipped,
-so a re-run fetches only what is missing. `catalog` is the one step that wipes and
-overwrites (per repo).
+so a re-run fetches only what is missing. `catalog` refreshes repository metadata
+without removing downloaded fixture directories.
 
 ## How to run the tests
 
@@ -141,7 +141,8 @@ suite is green on a fresh checkout.
     (`status == "ok"`) cached input for a tool, or `None` if the cache index is
     absent or the tool has no cached data. Matches the **exact** catalog
     `software_name` (e.g. `"DIA-NN"`).
-  - `find_fasta(module=... | dataset_dir=...)` — the reference FASTA for a module.
+  - `find_fasta(module=... | dataset_dir=..., test_data_dir=...)` — the reference
+    FASTA for a module, optionally resolved from an explicit cache root.
   - `find_param_file(software_name)` — a representative parameter file for a tool,
     read from the committed in-repo `tests/params/` fixtures (no external checkout).
 - [`conftest.py`](conftest.py) turns the index into fixtures. `cached_datasets`

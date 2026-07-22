@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,10 @@ from anndata_proteomics.params.anndata_io import read_search_parameters
 
 _NAMESPACE = "anndata_proteomics"
 _SUMMARY_KEY = "descriptive_summary"
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "4"
+_FASTA_ANNOTATION_KEY = "fasta"
 _FASTA_VALIDATION_KEY = "fasta_validation"
+_FASTA_MATCHED_KEY = "peptide_in_fasta"
 _FASTA_PROTEIN_COUNT = "fasta_matching_protein_count"
 
 
@@ -48,19 +51,68 @@ def store_quantification_summary(obj: Any) -> None:
     _store_quantification_summary_anndata(obj)
 
 
+def store_annotation_summary(
+    obj: Any,
+    *,
+    fields: Sequence[str],
+    n_annotated_runs: int,
+) -> None:
+    """Merge a compact sample-annotation component without recomputing conversion metrics."""
+    targets = (obj, *obj.mod.values()) if _is_mudata(obj) else (obj,)
+    for target in targets:
+        payload = _read_payload(target)
+        payload.setdefault("schema_version", _SCHEMA_VERSION)
+        payload.setdefault(
+            "container_type",
+            "mudata" if _is_mudata(target) else "anndata",
+        )
+        payload["annotation"] = {
+            "annotated_run_count": int(n_annotated_runs),
+            "fields": list(fields),
+            "group_counts": {
+                field: int(target.obs[field].nunique(dropna=True)) for field in fields
+            },
+        }
+        _write_payload(target, payload)
+
+
 def store_fasta_summary(obj: Any) -> None:
-    """Merge the FASTA-owned summary component when validation results exist."""
+    """Merge a small level-specific FASTA component into each applicable modality."""
     targets = obj.mod.values() if _is_mudata(obj) else (obj,)
     for target in targets:
-        validation = target.varm.get(_FASTA_VALIDATION_KEY)
-        if validation is None or _FASTA_PROTEIN_COUNT not in validation.columns:
+        fasta_summary = _fasta_summary(target)
+        if fasta_summary is None:
             continue
-        protein_counts = np.asarray(validation[_FASTA_PROTEIN_COUNT])
         payload = _read_payload(target)
         payload.setdefault("schema_version", _SCHEMA_VERSION)
         payload.setdefault("container_type", "anndata")
-        payload["fasta"] = {"proteotypic_feature_count": int(np.count_nonzero(protein_counts == 1))}
+        payload["fasta"] = fasta_summary
         _write_payload(target, payload)
+
+
+def _fasta_summary(target: Any) -> dict[str, int] | None:
+    validation = target.varm.get(_FASTA_VALIDATION_KEY)
+    if validation is not None and _FASTA_PROTEIN_COUNT in validation.columns:
+        protein_counts = np.asarray(validation[_FASTA_PROTEIN_COUNT])
+        matched = (
+            np.asarray(validation[_FASTA_MATCHED_KEY])
+            if _FASTA_MATCHED_KEY in validation.columns
+            else protein_counts > 0
+        )
+        return {
+            "feature_count": int(target.n_vars),
+            "matched_feature_count": int(np.count_nonzero(matched)),
+            "proteotypic_feature_count": int(np.count_nonzero(protein_counts == 1)),
+        }
+
+    annotation = target.varm.get(_FASTA_ANNOTATION_KEY)
+    if annotation is None:
+        return None
+    annotated = np.asarray(annotation.notna().any(axis=1))
+    return {
+        "feature_count": int(target.n_vars),
+        "annotated_feature_count": int(np.count_nonzero(annotated)),
+    }
 
 
 def describe(obj: Any) -> dict[str, Any]:
@@ -168,20 +220,41 @@ def _layer_summary(layer: Any, *, n_obs: int) -> dict[str, Any]:
     values = _matrix_values(layer)
     finite = np.isfinite(values)
     present_per_feature = np.count_nonzero(finite, axis=0)
-    histogram = np.bincount(present_per_feature, minlength=n_obs + 1)
+    missing_per_feature = n_obs - present_per_feature
+    histogram = np.bincount(missing_per_feature, minlength=n_obs + 1)
     observed = values[finite]
-    intensity = (
-        {"min": None, "median": None, "max": None}
-        if not observed.size
-        else {
-            "min": float(np.min(observed)),
-            "median": float(np.median(observed)),
-            "max": float(np.max(observed)),
+    return {
+        "missingness_histogram": {
+            str(missing_runs): int(feature_count)
+            for missing_runs, feature_count in enumerate(histogram)
+        },
+        "summary": _numeric_summary(observed),
+    }
+
+
+def _numeric_summary(values: np.ndarray) -> dict[str, float | None]:
+    """Return the six statistics produced by R's summary() for numeric values."""
+    if not values.size:
+        return {
+            "min": None,
+            "first_quartile": None,
+            "median": None,
+            "mean": None,
+            "third_quartile": None,
+            "max": None,
         }
+    first_quartile, median, third_quartile = np.quantile(
+        values,
+        (0.25, 0.5, 0.75),
+        method="linear",
     )
     return {
-        "missingness_histogram": histogram.astype(int).tolist(),
-        "intensity": intensity,
+        "min": float(np.min(values)),
+        "first_quartile": float(first_quartile),
+        "median": float(median),
+        "mean": float(np.mean(values)),
+        "third_quartile": float(third_quartile),
+        "max": float(np.max(values)),
     }
 
 
@@ -203,12 +276,72 @@ def _read_payload(obj: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         payload = json.loads(raw)
     elif isinstance(raw, Mapping):
-        payload = dict(raw)
+        payload = deepcopy(dict(raw))
     else:
         raise ValueError(f"invalid stored descriptive summary: {type(raw).__name__}")
     version = payload.get("schema_version")
+    if version == "1":
+        payload = _upgrade_v1_payload(payload)
+        version = payload["schema_version"]
+    if version == "2":
+        payload = _upgrade_v2_payload(payload)
+        version = payload["schema_version"]
+    if version == "3":
+        payload = _upgrade_v3_payload(payload)
+        version = payload["schema_version"]
     if version != _SCHEMA_VERSION:
         raise ValueError(f"unsupported descriptive-summary schema version: {version!r}")
+    return payload
+
+
+def _upgrade_v1_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert present-run histogram lists into missing-run count mappings."""
+    quantification = payload.get("quantification") or {}
+    n_runs = quantification.get("n_runs")
+    if isinstance(n_runs, int):
+        for layer in (quantification.get("layers") or {}).values():
+            histogram = layer.get("missingness_histogram")
+            if isinstance(histogram, list):
+                layer["missingness_histogram"] = {
+                    str(missing_runs): int(histogram[n_runs - missing_runs])
+                    for missing_runs in range(n_runs + 1)
+                }
+    payload["schema_version"] = "2"
+    return payload
+
+
+def _upgrade_v2_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rename generic numeric statistics and reserve unavailable legacy hinges."""
+    quantification = payload.get("quantification") or {}
+    for layer in (quantification.get("layers") or {}).values():
+        intensity = layer.pop("intensity", None)
+        if isinstance(intensity, Mapping):
+            layer["fivenum"] = {
+                "min": intensity.get("min"),
+                "lower_hinge": None,
+                "median": intensity.get("median"),
+                "upper_hinge": None,
+                "max": intensity.get("max"),
+            }
+    payload["schema_version"] = "3"
+    return payload
+
+
+def _upgrade_v3_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rename five-number statistics and reserve unavailable summary values."""
+    quantification = payload.get("quantification") or {}
+    for layer in (quantification.get("layers") or {}).values():
+        fivenum = layer.pop("fivenum", None)
+        if isinstance(fivenum, Mapping):
+            layer["summary"] = {
+                "min": fivenum.get("min"),
+                "first_quartile": None,
+                "median": fivenum.get("median"),
+                "mean": None,
+                "third_quartile": None,
+                "max": fivenum.get("max"),
+            }
+    payload["schema_version"] = _SCHEMA_VERSION
     return payload
 
 

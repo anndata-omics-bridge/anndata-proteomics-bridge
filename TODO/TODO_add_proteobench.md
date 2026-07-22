@@ -1,0 +1,478 @@
+# TODO: add ProteoBench scoring to APB and APB Studio
+
+> Plan only. Do not implement until this design is approved.
+
+## Goal
+
+Move the reusable quantitative ProteoBench calculations into APB under
+`src/anndata_proteomics/proteobench/`, compute them directly from converted
+AnnData/MuData objects, and expose the operation as an APB Studio pipeline stage.
+
+The first implementation covers quantitative LFQ HYE-style modules at the `ion`
+and `peptidoform` levels. It must:
+
+- compute the ProteoBench intermediate feature statistics (condition means and
+  standard deviations, CVs, observation counts, fold changes, species, epsilon,
+  and precision epsilon);
+- store the feature-aligned derived columns in `varm`;
+- compute the thresholded ProteoBench score dictionary;
+- retain ProteoBench's JSON field names and nested `results` format;
+- reproduce the checked-in/downloaded ProteoBench result JSONs and
+  `result_performance.csv` files for the same inputs;
+- use a matrix-native implementation so APB does not rebuild ProteoBench's large
+  long-form table merely to group and pivot it again.
+
+PYE/plasma metrics are the next quantitative variant because they reuse the same
+intermediate table. De-novo and entrapment scoring are separate future work and
+must not be pulled into this migration.
+
+## Ownership and dependency direction
+
+- APB owns the reusable scoring implementation, storage contract, validation,
+  and CLI.
+- APB Studio orchestrates the APB CLI and renders stored results. It must not
+  calculate proteomics metrics.
+- APB must not depend on the `proteobench` Python package. Migrate the relevant
+  formulas and test their compatibility; do not copy the ProteoBench UI,
+  submission, GitHub, plotting, or parser object hierarchy.
+- Keep `src/anndata_proteomics/proteobench/__init__.py` empty, matching the APB
+  package convention.
+
+Relevant ProteoBench source areas are:
+
+- `proteobench/score/quantscoresHYE.py` — intermediate statistics and epsilon;
+- `proteobench/datapoint/quant_datapoint.py` — accuracy, precision, CV, variance,
+  feature-count, and ROC-AUC metrics;
+- `proteobench/score/quantscoresPYE.py` and `QuantDatapointPYE` — later plasma
+  extension;
+- `proteobench/modules/quant/benchmarking.py` — orchestration semantics only.
+
+Do not migrate `ScoreBase`, `DatapointBase`, timestamp-generated IDs, repository
+append/deduplication, plotting filters, or web-interface code. If source is copied
+rather than independently adapted to APB's matrix representation, retain the
+required Apache-2.0 attribution and record the source revision.
+
+### Source baseline
+
+The ProteoBench checkout was fetched while writing this plan. The current
+checkout (`90773d2d`) is ahead 3 / behind 67 relative to
+`origin/intermediate_format_interface`; current `origin/main` is `e1b132a1`
+(v0.17.2). Before implementation, deliberately select and record one source
+revision. Golden JSON compatibility remains authoritative, including each
+fixture's recorded `proteobench_version`.
+
+## Pipeline independence
+
+`convert` is the only prerequisite. The three enrichment operations are peers:
+
+```text
+convert
+  |-- annotate      -> owns sample annotations in obs
+  |-- fasta         -> owns FASTA-derived varm/varp data
+  `-- proteobench   -> owns ProteoBench varm/uns data
+```
+
+Each operation must preserve fields written by the others and must be runnable
+before or after either of them. A command applied to an accumulating artifact
+therefore produces the same logical result for every ordering of `annotate`,
+`fasta`, and `proteobench`.
+
+Independent Studio DAG children of `convert` produce separate artifacts; they
+do not implicitly merge. If Studio needs one cumulative artifact, model that as
+an explicit composition target which chains the selected enrichments in any
+order. Do not create a hidden merge or make one enrichment a prerequisite of
+another.
+
+## Existing APB inputs
+
+The current converted `.h5ad` / `.h5mu` outputs plus the ProteoBench module TOML
+provide the complete scoring input:
+
+- the designated quantitative matrix is `X`;
+- runs are rows and quantified features are columns;
+- converted `obs` retains the source run identifier that can be matched to each
+  `[[samples]].raw_file` entry in the module TOML;
+- the quantification level and software live under
+  `uns["anndata_proteomics"]`;
+- reported protein identifiers are retained in `var`, although their current
+  column names differ by vendor;
+- the downloaded ProteoBench `module_settings.toml` contains
+  the `[[samples]]` run-to-condition design, `species_mapper`,
+  `species_expected_ratio`, `min_count_multispec`, and quantitative level.
+
+**Neither annotation nor FASTA is a scoring input.** ProteoBench gets the sample
+design from the required module TOML and scores species from reported protein
+identifiers; it never loads a FASTA. `apb proteobench` must therefore work
+directly after `convert`, must not require `obs["condition"]`, and must not inspect
+`varm["fasta"]` or `varm["fasta_validation"]`. It must produce the same scores
+when annotation and/or FASTA enrichment already exists or is added later.
+
+The canonical local test-data cache also has both compatibility oracles:
+
+- `<fixture>/result_performance.csv` for the full intermediate table;
+- `<repo>-main/<intermediate_hash>.json` for the score payload.
+
+## Required standardized input contract
+
+Do not add vendor-name branches or guess species inside the scoring functions.
+Fix the standardized conversion metadata they consume.
+
+### 1. Declare the reported-protein-ID column semantically
+
+ProteoBench's per-tool parser maps one source column to its standardized
+`Proteins` field, then applies each `species_mapper` substring to that field.
+APB currently retains the same information under different normalized names,
+for example `Protein_Ids`, `Proteins`, `PG_ProteinAccessions`, or `Accession`.
+For DIA-NN the compatible field is `Protein_Ids`, not `Protein_Group`.
+
+Declare one semantic `reported_protein_ids` role in APB's parsing-rule/storage
+contract and point it at the correct retained `var` column for every supported
+rule. The scorer resolves the role, not a vendor and not a priority list of
+guessed column names. Where a rule does not yet retain the ProteoBench source
+field (for example a tool's mapped-protein column), fix that parsing rule before
+declaring the tool scoreable.
+
+Species flags are then computed exactly as ProteoBench does: substring matching
+of the configured species flags against the reported-protein-ID string. Do not
+replace reported assignments with all theoretical peptide-to-protein matches;
+that changes multi-species filtering and the expected scores.
+
+### 2. Standardize decoy/contaminant exclusion state
+
+ProteoBench removes decoys, contaminants, and non-positive intensities before
+scoring. These decisions currently live partly in per-tool ProteoBench parser
+TOMLs. Move the needed vendor interpretation into APB's parsing-rule contract
+and expose boolean feature state to the scorer. Do not embed strings such as
+`Cont_` in the scoring algorithm and do not derive this state from FASTA.
+
+This is required for exact parity. For example, the inspected DIA-NN Astral
+fixture has 1,399 features whose `Protein_Ids` include `Cont_`; 604 otherwise
+single-species features are removed by this rule, explaining the difference
+between the APB feature count and the expected 111,675-row intermediate.
+
+### 3. Load the scoring subset of module settings as a typed APB model
+
+Add a small, strict model for:
+
+- the `[[samples]]` run identifier and condition mapping;
+- species flag to species-name mapping;
+- expected A/B ratio and optional color by species;
+- `min_count_multispec`;
+- quantitative level;
+- default cutoff and maximum observation threshold when they differ from the
+  HYE defaults.
+
+Read these fields from the same ProteoBench module TOML already used for sample
+annotation. The scorer must align converted observation identifiers with
+`[[samples]].raw_file` itself and derive its condition masks locally. Do not
+duplicate module values in APB Studio, introduce a second configuration file,
+or require `apb annotate` to copy those values into `obs` first. If compatible
+sample annotations are already present, validate them against the module TOML;
+do not use them as an alternative source of truth. Keep ordinary
+`annotation.loader` focused on writing the sample table; the ProteoBench module
+owns the scoring-specific reader.
+
+## APB storage contract
+
+Resolve exactly one target AnnData: the input itself for a standalone object, or
+the modality named by the module level for MuData.
+
+### Intermediate values
+
+Store the derived, feature-aligned table at:
+
+```python
+target.varm["proteobench"]
+```
+
+Its index must equal `target.var_names` in the same order. Use ProteoBench column
+names where they already exist:
+
+- `log_Intensity_mean_<condition>` and `log_Intensity_std_<condition>`;
+- `Intensity_mean_<condition>` and `Intensity_std_<condition>`;
+- `CV_<condition>`;
+- `log2_A_vs_B`;
+- `nr_observed`;
+- one boolean column per configured species plus `unique` and `species`;
+- `log2_expectedRatio` and `epsilon`;
+- `log2_empirical_median`, `log2_empirical_mean`,
+  `epsilon_precision_median`, and `epsilon_precision_mean`.
+
+Do not duplicate the per-run intensity matrix in `varm`; it already lives in
+`X`. Provide one internal compatibility assembler that reconstructs the legacy
+`result_performance.csv` column order from `X`, `obs`, `var`, and the stored
+derived table. Use that assembler for regression tests and the legacy
+`intermediate_hash`.
+
+### Score JSON
+
+Store the JSON-compatible score mapping at:
+
+```python
+target.uns["proteobench"]["scores"]
+```
+
+The decoded object must retain the ProteoBench score layout and names, notably:
+
+```json
+{
+  "intermediate_hash": "...",
+  "results": {
+    "1": {"median_abs_epsilon_global": 0.0, "CV_median": 0.0},
+    "2": {}
+  },
+  "median_abs_epsilon_global": 0.0,
+  "mean_abs_epsilon_global": 0.0,
+  "median_abs_epsilon_eq_species": 0.0,
+  "mean_abs_epsilon_eq_species": 0.0,
+  "median_abs_epsilon_precision_global": 0.0,
+  "mean_abs_epsilon_precision_global": 0.0,
+  "median_abs_epsilon_precision_eq_species": 0.0,
+  "mean_abs_epsilon_precision_eq_species": 0.0,
+  "nr_feature": 0
+}
+```
+
+Requirements:
+
+- threshold keys are strings, as in the repository JSONs;
+- retain exact metric spelling and case (`CV_median`, `roc_auc`, etc.);
+- top-level metrics are projections from the configured default cutoff;
+- convert NumPy/Pandas scalars to ordinary JSON-compatible values and non-finite
+  values to `None`/JSON `null`; never emit non-standard `NaN` tokens;
+- use the legacy SHA-1 over the reconstructed intermediate's `to_string()` for
+  `intermediate_hash` while compatibility is required;
+- keep submission-only metadata (`submission_comments`, dataset URL, PR state,
+  etc.) outside the core scorer. Existing APB search parameters may be merged
+  into a full submission document later without changing the score block.
+
+Record APB-side provenance and the storage schema version separately under
+`uns["anndata_proteomics"]`; do not add APB-only keys inside the compatible
+ProteoBench score document.
+
+On rerun, fail clearly if either `varm["proteobench"]` or
+`uns["proteobench"]["scores"]` is already present instead of silently
+overwriting a previous scoring run. Preserve any other entries already present
+in the `uns["proteobench"]` namespace.
+
+## Computation design
+
+### Matrix-native intermediate
+
+Port the formulas, not the long-table implementation:
+
+1. Validate the target level, unique feature names, complete one-to-one
+   alignment between converted run identifiers and `[[samples]].raw_file`,
+   required A/B conditions, the `reported_protein_ids` role, and exclusion
+   state.
+2. Read `X` as the ProteoBench intensity matrix. A valid observation is finite
+   and strictly greater than zero.
+3. For each condition, slice rows once and compute per feature with NumPy/SciPy:
+   positive count, arithmetic mean/std, mean/std of log2 intensity, and CV.
+   Match Pandas' sample standard deviation (`ddof=1`) and missing-value behavior.
+4. Compute `nr_observed` across all runs and `log2_A_vs_B` from condition log
+   means.
+5. Assign species from the reported-protein-ID strings using `species_mapper`;
+   exclude decoy/contaminant and over-`min_count_multispec` features, then retain
+   exactly one-species features for epsilon.
+6. Compute expected-ratio epsilon and per-species empirical centers/precision.
+7. Write the var-aligned derived frame once.
+
+Support dense arrays first but keep reductions chunked so peak memory is bounded.
+Use SciPy sparse reductions when `X` is sparse; do not densify the complete
+matrix. Accumulate in float64 to match ProteoBench/Pandas numerical behavior.
+
+### Aggregate scores
+
+For every threshold `1..max_nr_observed`, reproduce:
+
+- median/mean absolute epsilon globally, equally weighted by species, and per
+  species;
+- median/mean empirical log2 centers and absolute precision epsilon globally,
+  equally weighted by species, and per species;
+- `CV_median`, `CV_q75`, `CV_q90`, and `CV_q95` from the two conditions;
+- `variance_epsilon_global` using Pandas-compatible sample variance;
+- `nr_feature`;
+- absolute-fold-change `roc_auc` with the unchanged species inferred from the
+  expected ratio nearest 1:1.
+
+Avoid adding scikit-learn solely for ROC-AUC. APB already depends on SciPy; use
+`scipy.stats.rankdata(method="average")` and the equivalent Mann-Whitney/AUC
+formula, verified against the golden JSONs including tied values.
+
+PYE later adds its current spike-in error, spike-in count, human-plasma dynamic
+range, and plasma epsilon fields without changing the HYE intermediate contract.
+
+## Minimal APB implementation surface
+
+Proposed files:
+
+```text
+src/anndata_proteomics/proteobench/
+  __init__.py        # empty
+  config.py          # typed module-settings subset
+  intermediate.py    # matrix reductions + legacy-frame assembler/hash
+  metrics.py         # HYE metric dictionary; later PYE extension
+  pipeline.py        # resolve target, validate, store results
+```
+
+Expose one library operation from `pipeline.py`, tentatively:
+
+```python
+score_quantification(obj, module_settings) -> obj
+```
+
+Do not add layer/vendor override parameters in the first version. `X` and the
+standardized converted APB representation are the data contract; the module
+TOML is the experiment-design and scoring contract.
+
+Add the CLI command:
+
+```text
+apb proteobench <converted-or-enriched.h5ad|h5mu> <module-settings.toml> \
+  --output <scored.h5ad|h5mu>
+```
+
+The command loads the container, calls the library operation, and writes the same
+container type non-destructively. Extend APB's `describe()` output to return the
+stored score payload when present so consumers never need to know the HDF5
+encoding detail.
+
+## APB Studio integration
+
+Enable this only after core golden parity is green.
+
+1. Add a `proteobench` stage to `config/registry.yaml`:
+   - depends only on `convert`;
+   - uses the module TOML through a clearly named `module_settings` resource;
+     reuse/alias the existing resource path rather than copying the file;
+   - invokes `apb proteobench {input} {module_settings} --output {output}`;
+   - writes a distinct `*.proteobench.h5ad/.h5mu` artifact.
+2. Add a registry field for supported quantitative branches/levels and teach
+   target expansion to omit the stage for protein/fragment branches. Do not run
+   an unsupported command and convert the expected skip into `FAILED`.
+3. Add the matching Snakemake rule, artifact regex, failure marker, provenance
+   sidecar, and DAG/status tests. The dashboard's stage and basket columns should
+   continue to come from the registry.
+4. Let the AnnData browser show the stored ProteoBench JSON through APB's
+   `describe()` result. Studio renders only; it does not recalculate or reshape
+   metrics.
+5. Make annotation, FASTA, and ProteoBench independent children of `convert`.
+   Each stage is blocked only by its own missing resource; the other enrichment
+   targets remain runnable. Keep the current `BLOCKED` contract.
+6. If a cumulative Studio artifact is required, add an explicit composition
+   target after the independent stages are working. It must run the ordinary APB
+   commands in a declared order and rely on their order-independent storage
+   contracts, not duplicate enrichment logic or merge HDF5 internals.
+
+## Test plan
+
+### Unit tests in APB
+
+- exact condition mean/std/CV and `nr_observed` on a small hand-computed matrix;
+- zeros, negative values, infinities, NaNs, one replicate (`ddof=1`), and a
+  missing condition;
+- species assignment, no-species, multi-species, contaminant, and decoy cases;
+- epsilon and precision-center formulas for two and three species;
+- every thresholded score key and top-level default-cutoff projection;
+- ROC-AUC missing-class and tied-score cases;
+- dense/sparse equivalence;
+- `varm` index alignment when feature order is non-sorted;
+- H5AD/H5MU round-trip of both storage keys, including the nested score mapping;
+- collision guard on rerun;
+- direct scoring of a converted object with no prior annotation or FASTA;
+- equality after `annotate` and/or `fasta`, including all operation orders on a
+  small fixture;
+- clear failure for missing/duplicate/unmatched module-TOML sample rows and for
+  disagreement with already-present sample annotations;
+- CLI smoke tests and `describe()` exposure.
+
+### Golden compatibility harness
+
+Use the existing canonical cache; do not create another fixture downloader or
+copy the results repositories into APB.
+
+For a representative fixture, and then parametrically across supported
+vendors/modules:
+
+1. load the raw APB converted object (no annotation or FASTA stage required);
+2. score it with that module's downloaded TOML;
+3. compare the reconstructed legacy intermediate to
+   `<fixture>/result_performance.csv`:
+   - identical feature identifiers, row order, column order, and shape;
+   - booleans/strings exactly equal;
+   - floats with an explicitly small tolerance;
+4. compare the decoded stored score payload to the corresponding
+   `<intermediate_hash>.json`:
+   - all `results` thresholds and metric keys;
+   - top-level default-cutoff score fields;
+   - exact `nr_feature`;
+   - exact `intermediate_hash` where the reference Pandas rendering is
+     reproducible;
+5. report missing APB standardized inputs as a concrete vendor-rule gap, then fix
+   that upstream before declaring the vendor supported.
+
+Mark full-cache cases as integration tests and skip with a precise message when
+the gitignored cache is absent. Keep a small committed synthetic unit fixture so
+the core calculations always run in CI.
+
+### Performance verification
+
+On at least one large DIA-NN Astral fixture, compare the migrated implementation
+with the pinned ProteoBench implementation using the same input:
+
+- wall time;
+- peak resident memory;
+- intermediate and JSON parity.
+
+Record the command and measurements in the implementation PR/`CHANGES.md`.
+Performance work is accepted only after parity. The expected gain comes from
+condition-wise matrix reductions and avoiding the long DataFrame, repeated
+groupbys, pivot, merge, and duplicated raw-intensity columns.
+
+### APB Studio tests
+
+- target expansion adds scoring only to eligible MuData/ion/peptidoform
+  branches;
+- command rendering reuses the module TOML and consumes the `convert`-stage
+  output;
+- missing module settings yields `BLOCKED`, not `FAILED`, without blocking
+  annotation or FASTA targets;
+- annotation, FASTA, and scoring targets are independent, and scoring results
+  are identical for every enrichment order;
+- scoring output, log, failure marker, provenance, baskets, clean behavior, and
+  run snapshot round-trip;
+- stored scores appear in the selected-container detail view.
+
+## Implementation order
+
+- [ ] Approve the storage keys, HYE-first scope, and score-only JSON boundary.
+- [ ] Pin the ProteoBench source revision and record attribution obligations.
+- [ ] Add golden tests that initially fail against one DIA-NN fixture.
+- [ ] Add the reported-protein-ID role and decoy/contaminant state to the APB
+      parsing contract.
+- [ ] Implement typed module settings.
+- [ ] Implement the vectorized HYE intermediate and legacy assembler/hash.
+- [ ] Implement aggregate HYE scores and JSON serialization.
+- [ ] Add AnnData/MuData storage, CLI, provenance, summary, and round-trip tests.
+- [ ] Expand golden parity across each APB-supported quantitative vendor.
+- [ ] Benchmark and optimize only while retaining parity.
+- [ ] Add the registry-driven APB Studio stage and UI rendering.
+- [ ] Update `docs/ARCHITECTURE.md`, README/CLI docs, and `CHANGES.md` in both
+      touched repositories.
+- [ ] Add PYE/plasma as a follow-up using the same intermediate contract.
+
+## Done when
+
+- one `apb proteobench` command turns a converted APB object plus its required
+  module TOML into a scored object with aligned `varm["proteobench"]` and a
+  compatible JSON mapping at `uns["proteobench"]["scores"]`;
+- the command has no annotation or FASTA precondition and returns the same
+  scores for every ordering of optional annotation and FASTA enrichment;
+- the representative golden intermediate and score JSON match, followed by all
+  vendors declared supported;
+- APB Studio runs the stage only on eligible branches and displays its stored
+  scores;
+- APB and APB Studio tests and Ruff checks pass;
+- no metric implementation, vendor switch, second module map, or duplicate
+  fixture downloader has been added to APB Studio.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -102,3 +103,16 @@ def test_convert_long_happy_path() -> None:
     assert list(pieces.obs.columns) == ["Run", "Condition"]
     assert pieces.var.shape[0] == 2
     assert "Score" in pieces.layers
+
+
+def test_convert_long_replaces_declared_numeric_missing_values() -> None:
+    df = _df_without_score()
+    df.loc[1, "Intensity"] = 0.0
+    document = _build_long_rule().model_dump(by_alias=True)
+    document["layers"][0]["missing_values"] = [0]
+
+    intensity = convert_long(df, ParseRule.model_validate(document)).layers["Intensity"]
+    assert intensity[0, 0] == 10.0
+    assert np.isnan(intensity[0, 1])
+    assert intensity[1, 0] == 30.0
+    assert intensity[1, 1] == 40.0

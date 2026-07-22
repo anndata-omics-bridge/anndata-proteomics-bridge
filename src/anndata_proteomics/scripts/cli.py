@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json as jsonlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from cyclopts import App
@@ -81,8 +83,8 @@ def convert(
     """Convert a vendor file to a multi-level MuData (.h5mu) or one level to an AnnData (.h5ad).
 
     With no LEVEL, every quantification level the file/version provides is wrapped into a MuData
-    (.h5mu) on a shared run axis; a vendor that exposes a single level yields a .h5ad instead.
-    Pass a LEVEL (ion / fragment / peptidoform / peptide / protein) to emit just that level.
+    (.h5mu) on a shared run axis, including a one-modality MuData for single-level vendors.
+    Pass a LEVEL (ion / fragment / peptidoform / peptide / protein) to emit an AnnData (.h5ad).
 
     --params is the vendor parameter file; it supplies the software version that selects the rule
     variant (e.g. DIA-NN v1 vs v2) and is required unless --rule-config is given. The vendor is
@@ -123,7 +125,7 @@ def convert(
             adata = _run_convert(df, document.effective_rule(level), params_path=params)
             return _write_anndata(adata, output, data)
         rules = matching_rules(document.effective_rules(), df.columns)
-        if len(rules) >= 2:
+        if rules:
             md = _build_mudata_from_rules(
                 df,
                 rules,
@@ -131,14 +133,10 @@ def convert(
                 software=software_slug(document.software_name),
             )
             out = _output_path(output, data, ".h5mu")
-            md.write_h5mu(out)
+            _write_atomically(out, md.write_h5mu)
             _remove_stale_sibling(out, ".h5ad")
             logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
             return 0
-        if len(rules) == 1:
-            rule = next(iter(rules.values()))
-            adata = _run_convert(df, rule, params_path=params)
-            return _write_anndata(adata, output, data)
         logger.error(f"no level in {rule_config} matches the columns in {data}")
         return 1
 
@@ -159,16 +157,13 @@ def convert(
         return _write_anndata(adata, output, data)
 
     levels = convertible_levels(slug, version, df.columns)
-    if len(levels) >= 2:
+    if levels:
         md = _build_mudata(df, slug, version, params_path=params)
         out = _output_path(output, data, ".h5mu")
-        md.write_h5mu(out)
+        _write_atomically(out, md.write_h5mu)
         _remove_stale_sibling(out, ".h5ad")
         logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
         return 0
-    if len(levels) == 1:
-        adata = _convert_level(df, slug, levels[0], version, params_path=params)
-        return _write_anndata(adata, output, data)
     logger.error(
         f"no quantification level resolves for {slug} at software version {version!r}; "
         "check --params / --software"
@@ -179,7 +174,7 @@ def convert(
 def _write_anndata(adata, output: Path | None, data: Path) -> int:
     """Write a single-level AnnData to .h5ad and log a one-line summary."""
     out = _output_path(output, data, ".h5ad")
-    adata.write_h5ad(out)
+    _write_atomically(out, adata.write_h5ad)
     _remove_stale_sibling(out, ".h5mu")
     logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
     return 0
@@ -188,6 +183,14 @@ def _write_anndata(adata, output: Path | None, data: Path) -> int:
 def _output_path(output: Path | None, data: Path, suffix: str) -> Path:
     """Resolve a result path, appending APB's chosen suffix to explicit basenames."""
     return data.with_suffix(suffix) if output is None else Path(f"{output}{suffix}")
+
+
+def _write_atomically(output: Path, writer: Callable[[Path], None]) -> None:
+    """Write beside the destination and replace it only after a complete write."""
+    with TemporaryDirectory(dir=output.parent, prefix=f".{output.name}.") as folder:
+        temporary = Path(folder) / output.name
+        writer(temporary)
+        temporary.replace(output)
 
 
 def _remove_stale_sibling(output: Path, stale_suffix: str) -> None:
@@ -216,23 +219,22 @@ def summary_cmd(
 @app.command
 def annotate(
     data: Path,
-    annotation_config: Path,
+    annotations: Path,
     output: Path | None = None,
 ) -> int:
-    """Join sample annotations from an annotation JSON document onto obs and write the result.
+    """Join a sample-annotation table onto obs and write the result.
 
-    Reads an .h5ad/.h5mu, joins the JSON ``obs.samples`` records onto obs by run/file
-    name (matching obs_names by default; see the config's ``match_on``), and writes the
-    enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input
-    (non-destructive); point it back at the input to update in place.
+    Reads ProteoBench ``module_settings.toml`` directly, as well as APB annotation TOML,
+    CSV, and TSV tables. Joins sample records onto obs by run/file name and writes the
+    enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input.
     """
     from anndata_proteomics.annotation.apply import annotate_obs
     from anndata_proteomics.annotation.loader import load_annotation
     from anndata_proteomics.readers.result import load_converted_result
 
     obj = load_converted_result(data)
-    spec = load_annotation(annotation_config)
-    annotate_obs(obj, spec)
+    annotation = load_annotation(annotations)
+    annotate_obs(obj, annotation)
 
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
     if hasattr(obj, "mod"):

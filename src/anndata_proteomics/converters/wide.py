@@ -11,6 +11,7 @@ import pandas as pd
 from anndata_proteomics.converters._axis import build_axis_frame
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
+from anndata_proteomics.converters.numeric import coerce_numeric
 from anndata_proteomics.rules.schema import Layer, ParseRule
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,7 @@ def _gather_layer_matrix(
         if layer.encoding_mode == "factor":
             series = encode_factor(series, layer.categories)
         else:
-            # Coerce sentinels like "-" / empty strings to NaN so they fit the float matrix.
-            series = pd.to_numeric(series, errors="coerce")
+            series = coerce_numeric(series, layer.missing_values)
         matrix[i, :] = series.values[:n_var]
     return matrix
 

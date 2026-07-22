@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import tempfile
 import zipfile
 from contextlib import chdir
 from pathlib import Path
@@ -20,6 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 from cyclopts import App
 
+from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.test_data import TEST_DATA_DIR
 
 
@@ -101,6 +103,21 @@ FASTA_URLS = (
     "https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HYE.zip",
     "https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HY.zip",
 )
+
+_PROTEOBENCH_SETTINGS_ROOT = (
+    "https://raw.githubusercontent.com/Proteobench/ProteoBench/intermediate_format_interface/"
+    "proteobench/io/parsing/io_parse_settings/Quant/lfq"
+)
+ANNOTATION_URLS = {
+    "dda_qexactive": f"{_PROTEOBENCH_SETTINGS_ROOT}/DDA/ion/QExactive/module_settings.toml",
+    "dda_astral": f"{_PROTEOBENCH_SETTINGS_ROOT}/DDA/ion/Astral/module_settings.toml",
+    "dda_peptidoform": f"{_PROTEOBENCH_SETTINGS_ROOT}/DDA/peptidoform/module_settings.toml",
+    "dia_aif": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/AIF/module_settings.toml",
+    "dia_astral": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/Astral/module_settings.toml",
+    "dia_diapasef": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/diaPASEF/module_settings.toml",
+    "dia_zenotof": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/ZenoTOF/module_settings.toml",
+    "dia_singlecell": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/lowinput/module_settings.toml",
+}
 
 
 def _extract_zip(zip_file: zipfile.ZipFile, output_directory: Path) -> None:
@@ -204,23 +221,35 @@ def get_raw_data(
 def _download_module_jsons(repo_url: str, json_dir_root: Path) -> Path:
     """Download JSONs for one repo into `{json_dir_root}/{repo_name}/{repo_name}-main/`.
 
-    Wipes any pre-existing `{json_dir_root}/{repo_name}` first so the download is
-    authoritative. Returns the folder containing the *.json files.
+    Replaces only the repository metadata snapshot. Downloaded submission directories
+    beside it are preserved. Returns the folder containing the ``*.json`` files.
     """
     repo_name = repo_url.split("/")[-5]
+    json_dir_root = json_dir_root.resolve()
     target_parent = json_dir_root / repo_name
     target_json_dir = target_parent / f"{repo_name}-main"
 
-    if target_parent.exists():
-        shutil.rmtree(target_parent)
-
     json_dir_root.mkdir(parents=True, exist_ok=True)
-    with chdir(json_dir_root):
-        extracted_dir = get_merged_json(repo_url=repo_url)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{repo_name}-metadata-", dir=json_dir_root
+    ) as temporary:
+        staging_root = Path(temporary)
+        with chdir(staging_root):
+            extracted_dir = staging_root / get_merged_json(repo_url=repo_url)
 
-    extracted_dir = json_dir_root / extracted_dir
-    if extracted_dir != target_json_dir:
-        extracted_dir.rename(target_json_dir)
+        if not extracted_dir.is_dir():
+            raise RuntimeError(f"Expected extracted folder not found: {extracted_dir}")
+
+        target_parent.mkdir(parents=True, exist_ok=True)
+        previous_json_dir = staging_root / "previous-metadata"
+        if target_json_dir.exists():
+            target_json_dir.replace(previous_json_dir)
+        try:
+            extracted_dir.replace(target_json_dir)
+        except BaseException:
+            if previous_json_dir.exists() and not target_json_dir.exists():
+                previous_json_dir.replace(target_json_dir)
+            raise
 
     if not target_json_dir.is_dir():
         raise RuntimeError(f"Expected extracted folder not found: {target_json_dir}")
@@ -477,6 +506,29 @@ def fasta(*, fasta_dir: Path = TEST_DATA_DIR / "fasta") -> None:
 
 
 @app.command
+def annotations(
+    *,
+    annotation_dir: Path = TEST_DATA_DIR / "annotations",
+) -> None:
+    """Download ProteoBench module TOMLs containing observation annotations."""
+    annotation_dir = annotation_dir.resolve()
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    for module, url in ANNOTATION_URLS.items():
+        print(f"Downloading {module}: {url}")
+        response = requests.get(url)
+        response.raise_for_status()
+        destination = annotation_dir / f"{module}.toml"
+        temporary = annotation_dir / f".{module}.download.toml"
+        temporary.write_bytes(response.content)
+        try:
+            load_annotation(temporary)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    print(f"Downloaded {len(ANNOTATION_URLS)} module annotations to {annotation_dir}")
+
+
+@app.command
 def clean(*, data_dir: Path = TEST_DATA_DIR) -> None:
     """Remove generated test-data artifacts from one explicit data directory.
 
@@ -494,7 +546,11 @@ def clean_generated_data(test_data_dir: Path) -> list[Path]:
     test_data_dir = test_data_dir.expanduser().resolve()
     if test_data_dir in {Path(test_data_dir.anchor), Path.home().resolve()}:
         raise ValueError("Refusing to clean the filesystem or home root.")
-    targets = [test_data_dir / "json_dir", test_data_dir / "fasta"]
+    targets = [
+        test_data_dir / "json_dir",
+        test_data_dir / "fasta",
+        test_data_dir / "annotations",
+    ]
     targets.extend(test_data_dir / name for name in GENERATED_CSV_NAMES)
     removed = []
     for path in targets:

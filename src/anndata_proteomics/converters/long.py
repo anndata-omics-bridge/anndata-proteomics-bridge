@@ -17,6 +17,7 @@ import pandas as pd
 from anndata_proteomics.converters._axis import build_axis_frame, build_index
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
+from anndata_proteomics.converters.numeric import coerce_numeric
 from anndata_proteomics.rules.schema import ParseRule
 
 logger = logging.getLogger(__name__)
@@ -101,9 +102,7 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
         if layer.encoding_mode == "factor":
             values = encode_factor(values, layer.categories)
         else:
-            # Vendors sometimes use sentinels like "-" for missing in otherwise-numeric
-            # columns; coerce so they become NaN rather than blowing up the scatter.
-            values = pd.to_numeric(values, errors="coerce")
+            values = coerce_numeric(values, layer.missing_values)
 
         layers[layer.name] = _build_matrix(
             obs_codes,

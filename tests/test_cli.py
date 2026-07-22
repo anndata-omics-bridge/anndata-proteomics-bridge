@@ -19,11 +19,37 @@ import pytest
 
 from anndata_proteomics.rules.registry import find_rule, packaged_rules_root
 from anndata_proteomics.scripts.cli import (
+    _write_atomically,
     convert,
     export_schema_cmd,
     list_rules,
     validate,
 )
+
+
+def test_atomic_write_preserves_existing_output_after_failure(tmp_path: Path) -> None:
+    output = tmp_path / "result.h5mu"
+    output.write_text("complete")
+
+    def fail_after_partial_write(path: Path) -> None:
+        path.write_text("partial")
+        raise RuntimeError("write failed")
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        _write_atomically(output, fail_after_partial_write)
+
+    assert output.read_text() == "complete"
+    assert list(tmp_path.iterdir()) == [output]
+
+
+def test_atomic_write_replaces_output_after_success(tmp_path: Path) -> None:
+    output = tmp_path / "result.h5ad"
+    output.write_text("old")
+
+    _write_atomically(output, lambda path: path.write_text("new"))
+
+    assert output.read_text() == "new"
+    assert list(tmp_path.iterdir()) == [output]
 
 
 def _tiny_rule_document() -> dict:
@@ -134,7 +160,7 @@ def test_convert_with_explicit_rule_config_writes_h5ad(
     output = output_base.with_suffix(".h5ad")
     stale = output_base.with_suffix(".h5mu")
     stale.write_text("stale")
-    rc = convert(data_path, rule_config=rule_path, output=output_base)
+    rc = convert(data_path, "ion", rule_config=rule_path, output=output_base)
     err = capsys.readouterr().err
     assert rc == 0
     assert output.exists()
@@ -175,6 +201,30 @@ def test_convert_with_multilevel_rule_config_writes_h5mu(tmp_path: Path) -> None
     output = output_base.with_suffix(".h5mu")
     assert output.exists()
     assert list(mudata.read_h5mu(output).mod) == ["ion", "protein"]
+
+
+def test_convert_with_single_level_rule_config_writes_one_modality_h5mu(
+    tmp_path: Path,
+) -> None:
+    import mudata
+    import pandas as pd
+
+    data_path = tmp_path / "tiny.tsv"
+    pd.DataFrame(
+        {
+            "Run": ["S1"],
+            "Sequence": ["P1"],
+            "Charge": [2],
+            "Intensity": [10.0],
+        }
+    ).to_csv(data_path, sep="\t", index=False)
+    rule_path = tmp_path / "rules.json"
+    rule_path.write_text(json.dumps(_tiny_rule_document()))
+
+    rc = convert(data_path, rule_config=rule_path, output=tmp_path / "out")
+
+    assert rc == 0
+    assert list(mudata.read_h5mu(tmp_path / "out.h5mu").mod) == ["ion"]
 
 
 def test_convert_rejects_output_extension(

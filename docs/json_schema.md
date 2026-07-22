@@ -155,6 +155,7 @@ A layer is one reported measurement varying over `obs × var`:
   "name": "FG_Quantity",
   "source": "FG.Quantity",
   "encoding_mode": "numeric",
+  "missing_values": [0],
   "required": false
 }
 ```
@@ -164,6 +165,9 @@ A layer is one reported measurement varying over `obs × var`:
   named `(?P<sample>...)` group.
 - `encoding_mode` defaults to `numeric`. String-valued matrix data uses `factor`
   with a non-empty `categories` map.
+- `missing_values` lists numeric vendor sentinels that APB replaces with `NaN`
+  before matrix assembly. It is layer-specific and must not include valid zeros or
+  factor category codes.
 - `required` defaults to false, but `axis.x_layer` is always required.
 
 Store a value as a layer only when it varies by sample for the same feature.
@@ -236,8 +240,9 @@ The registry discovers vendor-root `rules.json` and `v*/rules.json`. The require
 not an additional fallback rule; a version mismatch is an error.
 
 `apb convert data.tsv LEVEL --rule-config rules.json` selects one level from an
-external document. Without `LEVEL`, APB converts every level whose required columns
-match the data and writes AnnData for one match or MuData for multiple matches.
+external document and writes AnnData. Without `LEVEL`, APB converts every level whose
+required columns match the data and always writes MuData, including when only one
+level matches.
 
 ## Adding a vendor, version, or level
 

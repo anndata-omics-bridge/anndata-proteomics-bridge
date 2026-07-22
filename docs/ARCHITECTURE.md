@@ -107,7 +107,7 @@ The CLI subcommands are:
 | `apb list` | List packaged rules and their metadata. |
 | `apb export-schema` | Regenerate the source-document and effective-rule schemas. |
 | `apb convert <data> [level] --params <param-file>` | Convert vendor data to `.h5mu` or a selected `.h5ad` level. |
-| `apb annotate <data> <annotation.json>` | Join external sample metadata onto `obs`. |
+| `apb annotate <data> <annotations.toml/csv/tsv>` | Join external sample metadata onto `obs`. |
 | `apb fasta <data> <proteome.fasta>` | Annotate proteins and, by default, validate every peptide-derived modality against FASTA. |
 
 ## Search Parameters

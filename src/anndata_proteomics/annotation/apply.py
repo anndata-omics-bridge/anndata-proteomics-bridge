@@ -1,10 +1,4 @@
-"""Apply an AnnotationSpec to an AnnData/MuData object (obs axis).
-
-The join is keyed on the run/file identifier: each ``obs.samples`` record is matched against
-``obs_names`` (default) or a named ``obs`` column, and the record's remaining fields are added
-as ``obs`` columns. For a MuData the obs axis is shared, so every modality is annotated
-(the global ``mdata.obs`` and each ``mdata.mod[m].obs``).
-"""
+"""Join an external sample-annotation table onto the ``obs`` axis."""
 
 from __future__ import annotations
 
@@ -15,41 +9,51 @@ import pandas as pd
 from loguru import logger
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
-from anndata_proteomics.annotation.schema import AnnotationSpec, ObsAnnotation
+from anndata_proteomics.annotation.loader import AnnotationTable
+from anndata_proteomics.readers.summary import store_annotation_summary
 
 _MAX_REPORTED = 5
 
 
-def annotate_obs(obj: Any, spec: AnnotationSpec) -> Any:
-    """Join ``spec.obs.samples`` onto ``obj``'s obs axis, in place. Returns ``obj``.
+def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
+    """Join sample annotations onto ``obj``'s ``obs`` axis in place.
 
-    Raises ValueError if no obs row matches any record (a wrong axis/key is almost always
-    a misconfiguration). Partial mismatches are logged as warnings, not raised.
+    Raises ``ValueError`` if no observation matches any annotation record.
+    Partial mismatches are logged as warnings.
     """
-    ann = _build_annotation_frame(spec.obs)
-    match_on = spec.obs.match_on
+    frame = _build_annotation_frame(annotation)
+    match_on = annotation.match_on
 
     holders = [obj]
-    if hasattr(obj, "mod"):  # MuData: shared obs axis — annotate global obs and every modality
+    if hasattr(obj, "mod"):
         holders += [obj.mod[name] for name in obj.mod]
 
     primary_keys = _obs_keys(obj, match_on)
-    in_table = primary_keys.isin(ann.index)
+    in_table = primary_keys.isin(frame.index)
     n_matched = int(in_table.sum())
     if n_matched == 0:
         raise ValueError(
             f"no obs rows matched any annotation record on match_on={match_on!r} "
-            f"(key_field={spec.obs.key_field!r}). "
+            f"(key_field={annotation.key_field!r}). "
             f"first obs keys: {list(primary_keys[:_MAX_REPORTED])}; "
-            f"first record keys: {list(ann.index[:_MAX_REPORTED])}"
+            f"first record keys: {list(frame.index[:_MAX_REPORTED])}"
         )
 
     cols_added: list[str] = []
     for holder in holders:
-        cols_added = _join_obs_frame(holder.obs, _obs_keys(holder, match_on), ann)
+        cols_added = _join_obs_frame(
+            holder.obs,
+            _obs_keys(holder, match_on),
+            frame,
+        )
 
-    _warn_on_mismatch(primary_keys, in_table, ann)
-    _record_provenance(obj, spec, cols_added, n_matched)
+    _warn_on_mismatch(primary_keys, in_table, frame)
+    _record_provenance(obj, annotation, cols_added, n_matched)
+    store_annotation_summary(
+        obj,
+        fields=cols_added,
+        n_annotated_runs=n_matched,
+    )
     logger.info(
         f"annotated obs: +{len(cols_added)} column(s) {cols_added}, "
         f"{n_matched}/{len(primary_keys)} rows matched"
@@ -57,21 +61,21 @@ def annotate_obs(obj: Any, spec: AnnotationSpec) -> Any:
     return obj
 
 
-def _build_annotation_frame(obs_spec: ObsAnnotation) -> pd.DataFrame:
-    """Records → DataFrame indexed by the (string) join value, with sanitised obs columns."""
-    ann = pd.DataFrame(list(obs_spec.samples))
-    key = obs_spec.key_field
-    ann[key] = ann[key].astype(str)
-    if ann[key].duplicated().any():
-        dups = sorted(ann[key][ann[key].duplicated()].unique())
-        raise ValueError(f"duplicate {key!r} values in obs.samples: {dups}")
-    ann = ann.set_index(key)
-    ann.columns = sanitize_columns(list(ann.columns))
-    return ann
+def _build_annotation_frame(annotation: AnnotationTable) -> pd.DataFrame:
+    """Index annotation rows by their string join value and sanitize columns."""
+    frame = annotation.samples.copy()
+    key = annotation.key_field
+    frame[key] = frame[key].astype(str)
+    if frame[key].duplicated().any():
+        duplicates = sorted(frame[key][frame[key].duplicated()].unique())
+        raise ValueError(f"duplicate {key!r} values in annotation table: {duplicates}")
+    frame = frame.set_index(key)
+    frame.columns = sanitize_columns(list(frame.columns))
+    return frame
 
 
 def _obs_keys(holder: Any, match_on: str) -> pd.Index:
-    """The string join keys for ``holder``'s obs axis."""
+    """Return string join keys for one object's observation axis."""
     if match_on == "index":
         return pd.Index(holder.obs_names, dtype="object").astype(str)
     obs = holder.obs
@@ -82,23 +86,31 @@ def _obs_keys(holder: Any, match_on: str) -> pd.Index:
     return pd.Index(obs[match_on].astype(str))
 
 
-def _join_obs_frame(obs: pd.DataFrame, keys: pd.Index, ann: pd.DataFrame) -> list[str]:
-    """Assign each annotation column onto ``obs`` (in place), aligned by ``keys``."""
-    overlap = [c for c in ann.columns if c in obs.columns]
+def _join_obs_frame(
+    obs: pd.DataFrame,
+    keys: pd.Index,
+    annotation: pd.DataFrame,
+) -> list[str]:
+    """Assign annotation columns onto ``obs`` aligned by join keys."""
+    overlap = [column for column in annotation.columns if column in obs.columns]
     if overlap:
         raise ValueError(f"annotation columns already present in obs: {overlap}")
-    aligned = ann.reindex(keys)  # rows in obs order; unmatched keys → NaN
-    for col in ann.columns:
-        obs[col] = aligned[col].to_numpy()
-    return list(ann.columns)
+    aligned = annotation.reindex(keys)
+    for column in annotation.columns:
+        obs[column] = aligned[column].to_numpy()
+    return list(annotation.columns)
 
 
-def _warn_on_mismatch(keys: pd.Index, in_table: pd.Series, ann: pd.DataFrame) -> None:
+def _warn_on_mismatch(
+    keys: pd.Index,
+    in_table: pd.Series,
+    annotation: pd.DataFrame,
+) -> None:
     n_unmatched = int((~in_table).sum())
     if n_unmatched:
         logger.warning(f"{n_unmatched}/{len(keys)} obs rows had no matching annotation record")
     key_set = set(keys)
-    records_unmatched = [k for k in ann.index if k not in key_set]
+    records_unmatched = [key for key in annotation.index if key not in key_set]
     if records_unmatched:
         shown = records_unmatched[:_MAX_REPORTED]
         tail = " …" if len(records_unmatched) > _MAX_REPORTED else ""
@@ -108,16 +120,19 @@ def _warn_on_mismatch(keys: pd.Index, in_table: pd.Series, ann: pd.DataFrame) ->
 
 
 def _record_provenance(
-    obj: Any, spec: AnnotationSpec, cols_added: list[str], n_matched: int
+    obj: Any,
+    annotation: AnnotationTable,
+    cols_added: list[str],
+    n_matched: int,
 ) -> None:
-    """Append a provenance entry under ``uns['anndata_proteomics']['obs_annotations_json']``.
-
-    Stored as a JSON string (mirroring ``rule_json`` in assemble.py) so h5py can serialise it.
-    """
+    """Append lightweight annotation provenance under APB's ``uns`` namespace."""
     entry = {
-        "schema_version": spec.schema_version,
-        "match_on": spec.obs.match_on,
-        "key_field": spec.obs.key_field,
+        "source": str(annotation.source) if annotation.source else None,
+        "source_format": annotation.source.suffix.lower().lstrip(".")
+        if annotation.source
+        else None,
+        "match_on": annotation.match_on,
+        "key_field": annotation.key_field,
         "obs_columns_added": list(cols_added),
         "n_obs_matched": n_matched,
     }

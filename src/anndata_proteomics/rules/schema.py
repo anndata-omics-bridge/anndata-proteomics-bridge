@@ -84,13 +84,18 @@ class Layer(_Strict):
     source: str
     encoding_mode: EncodingMode = "numeric"
     categories: dict[str, int] = Field(default_factory=dict)
+    missing_values: list[float] = Field(default_factory=list)
     required: bool = False
 
     @model_validator(mode="after")
-    def _factor_requires_categories(self) -> Layer:
+    def _validate_encoding(self) -> Layer:
         if self.encoding_mode == "factor" and not self.categories:
             raise ValueError(
                 f"Layer {self.name!r}: encoding_mode='factor' requires non-empty 'categories'."
+            )
+        if self.encoding_mode == "factor" and self.missing_values:
+            raise ValueError(
+                f"Layer {self.name!r}: 'missing_values' is only valid for numeric layers."
             )
         return self
 

@@ -104,10 +104,10 @@ def convertible_levels(slug: str, version: str | None, headers: Iterable[str]) -
 
 
 def available_targets(slug: str, version: str | None, headers: Iterable[str]) -> list[str]:
-    """Convertible levels for this file/version, plus ``"mudata"`` when at least two resolve."""
+    """Convertible levels plus the all-level MuData target when any level resolves."""
     levels = convertible_levels(slug, version, headers)
     targets = list(levels)
-    if len(levels) >= 2:
+    if levels:
         targets.append(MUDATA)
     return targets
 
@@ -167,11 +167,8 @@ def _build_mudata(
     skipped = [level for level in LEVELS if level not in resolvable]
     if skipped:
         log(f"skipping levels not provided by software version {version!r}: {skipped}")
-    if len(resolvable) < 2:
-        raise ValueError(
-            f"{slug}: fewer than two levels resolve for software version {version!r} "
-            f"(resolved: {sorted(resolvable)}) — nothing to wrap in a MuData"
-        )
+    if not resolvable:
+        raise ValueError(f"{slug}: no level resolves for software version {version!r}")
 
     rules = {
         level: select_rule(slug, level, version, df.columns)
@@ -199,8 +196,8 @@ def _build_mudata_from_rules(
     import mudata
     from mudata import MuData
 
-    if len(rules) < 2:
-        raise ValueError(f"fewer than two levels supplied: {sorted(rules)}")
+    if not rules:
+        raise ValueError("no levels supplied")
     mods = {}
     for level in LEVELS:
         if level not in rules:

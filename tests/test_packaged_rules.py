@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from anndata_proteomics.rules.loader import load_rule, load_rule_document
+from anndata_proteomics.rules.loader import load_packaged_rule, load_rule, load_rule_document
 from anndata_proteomics.rules.registry import iter_packaged_documents, iter_packaged_rules
 from anndata_proteomics.rules.validate import validate_all_packaged
 
@@ -40,3 +40,11 @@ def test_documents_use_uniform_base_and_levels_shape() -> None:
         assert '"base"' in source
         assert '"levels"' in source
         assert '"$extends"' not in source
+
+
+def test_fragpipe_intensity_declares_zero_as_missing() -> None:
+    rule = load_packaged_rule("fragpipe", "ion", "22.1-build02")
+    by_name = {layer.name: layer for layer in rule.layers}
+    assert by_name["Intensity"].missing_values == [0.0]
+    assert by_name["Spectral_Count"].missing_values == []
+    assert by_name["Match_Type"].missing_values == []

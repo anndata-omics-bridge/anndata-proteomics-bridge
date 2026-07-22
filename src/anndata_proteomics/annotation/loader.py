@@ -1,37 +1,88 @@
-"""Load and validate an annotation JSON document into an AnnotationSpec."""
+"""Load external observation-annotation tables without a schema model."""
 
 from __future__ import annotations
 
-import json
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import ValidationError
+import pandas as pd
 
-from anndata_proteomics.annotation.schema import AnnotationSpec
-
-
-def parse_annotation(text: str, *, path: Path | str = "<memory>") -> AnnotationSpec:
-    """Parse and validate an annotation JSON document from text."""
-    source = Path(path)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        exc.add_note(f"in {source}")
-        raise
-    try:
-        return AnnotationSpec.model_validate(data)
-    except ValidationError as exc:
-        exc.add_note(f"in {source}")
-        raise
+ANNOTATION_SUFFIXES = frozenset({".csv", ".toml", ".tsv"})
 
 
-def load_annotation(path: Path | str) -> AnnotationSpec:
-    """Load a JSON file and validate it as an AnnotationSpec.
+@dataclass(slots=True)
+class AnnotationTable:
+    """A sample table plus the two fields needed to join it onto ``obs``."""
 
-    Raises FileNotFoundError if the path doesn't exist. On pydantic validation failure the
-    file path is attached as an exception note (same pattern as ``rules.loader.load_rule``).
+    samples: pd.DataFrame
+    match_on: str = "index"
+    key_field: str = "raw_file"
+    source: Path | None = None
+
+
+def load_annotation(path: Path | str) -> AnnotationTable:
+    """Load a ProteoBench TOML or a delimited sample-annotation table.
+
+    ProteoBench ``module_settings.toml`` files expose their table as top-level
+    ``[[samples]]`` records. APB's earlier annotation-only TOMLs used
+    ``[[obs.samples]]`` and may additionally set ``obs.match_on`` and
+    ``obs.key_field``; both TOML shapes remain readable. CSV and TSV inputs use
+    the conventional ``raw_file`` join column and match it against ``obs_names``.
     """
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(p)
-    return parse_annotation(p.read_text(encoding="utf-8"), path=p)
+    source = Path(path).expanduser()
+    if not source.exists():
+        raise FileNotFoundError(source)
+    if not source.is_file():
+        raise ValueError(f"Annotation path is not a file: {source}")
+
+    suffix = source.suffix.lower()
+    if suffix == ".toml":
+        annotation = _load_toml(source)
+    elif suffix in {".csv", ".tsv"}:
+        separator = "," if suffix == ".csv" else "\t"
+        annotation = AnnotationTable(
+            samples=pd.read_csv(source, sep=separator),
+            source=source.resolve(),
+        )
+    else:
+        supported = ", ".join(sorted(ANNOTATION_SUFFIXES))
+        raise ValueError(
+            f"Unsupported annotation format {suffix or '<none>'!r}; expected {supported}"
+        )
+
+    _validate_annotation_table(annotation)
+    return annotation
+
+
+def _load_toml(source: Path) -> AnnotationTable:
+    document = tomllib.loads(source.read_text(encoding="utf-8"))
+    obs = document.get("obs")
+    if isinstance(obs, dict) and "samples" in obs:
+        samples = obs["samples"]
+        match_on = str(obs.get("match_on", "index"))
+        key_field = str(obs.get("key_field", "raw_file"))
+    else:
+        samples = document.get("samples")
+        match_on = "index"
+        key_field = "raw_file"
+    if not isinstance(samples, list) or not samples:
+        raise ValueError(f"Annotation TOML has no [[samples]] or [[obs.samples]] records: {source}")
+    if not all(isinstance(record, dict) for record in samples):
+        raise ValueError(f"Annotation TOML samples must be tables: {source}")
+    return AnnotationTable(
+        samples=pd.DataFrame(samples),
+        match_on=match_on,
+        key_field=key_field,
+        source=source.resolve(),
+    )
+
+
+def _validate_annotation_table(annotation: AnnotationTable) -> None:
+    if annotation.samples.empty:
+        raise ValueError("Annotation table must contain at least one sample row.")
+    if annotation.key_field not in annotation.samples.columns:
+        raise ValueError(
+            f"Annotation table is missing key field {annotation.key_field!r}; "
+            f"present columns: {list(annotation.samples.columns)}"
+        )

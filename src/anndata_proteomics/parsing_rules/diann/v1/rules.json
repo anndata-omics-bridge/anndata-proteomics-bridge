@@ -136,6 +136,13 @@
               "how": "proforma_sequence"
             },
             {
+              "name": "ProForma_peptide",
+              "from": [
+                "Modified_Sequence"
+              ],
+              "how": "stripped_sequence"
+            },
+            {
               "name": "ProForma_ion",
               "from": [
                 "ProForma_peptidoform",

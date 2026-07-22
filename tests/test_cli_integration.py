@@ -118,7 +118,15 @@ def test_cli_convert_with_rule_config_writes_h5ad(tmp_path: Path) -> None:
     rule = find_rule("wombat", "peptidoform").path
     out_base = tmp_path / "wombat"
     out = out_base.with_suffix(".h5ad")
-    r = _run("convert", str(data_file), "--rule-config", str(rule), "--output", str(out_base))
+    r = _run(
+        "convert",
+        str(data_file),
+        "peptidoform",
+        "--rule-config",
+        str(rule),
+        "--output",
+        str(out_base),
+    )
     assert r.returncode == 0, r.stderr
     assert out.exists()
     assert "wrote" in r.stderr

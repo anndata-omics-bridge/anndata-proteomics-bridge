@@ -52,6 +52,16 @@ def test_fragment_keys_are_positional(diann_full_subset) -> None:
     assert all(name.count("/") >= 2 and "/frag_" in name for name in sample)
 
 
+def test_fragment_preserves_peptide_hierarchy(diann_full_subset) -> None:
+    adata = _convert(diann_full_subset, "fragment")
+    assert {
+        "ProForma_peptide",
+        "ProForma_peptidoform",
+        "ProForma_ion",
+        "ProForma_fragment",
+    } <= set(adata.var.columns)
+
+
 def test_protein_quant_is_kept_not_summed(diann_full_subset) -> None:
     """PG.MaxLFQ is pre-aggregated and repeated per (Run, Protein.Group); keep_first must
     take that value, not the sum over the precursor rows."""

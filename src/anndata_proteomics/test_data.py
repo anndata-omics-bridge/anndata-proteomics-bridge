@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEST_DATA_DIR = REPO_ROOT / "test_data_download"
 DOWNLOADED_DB = TEST_DATA_DIR / "raw_file_db_downloaded.csv"
 FASTA_DIR = TEST_DATA_DIR / "fasta"
+ANNOTATION_DIR = TEST_DATA_DIR / "annotations"
 
 # Which ProteoBench FASTA pairs with each module. Each module ships a single
 # species mix; see ProteoBench's per-module docs under
@@ -30,6 +31,17 @@ _MODULE_FASTA: dict[str, str] = {
     # zip is misleadingly named *_DDAQuantification_noecoli.fasta — that's
     # the HY mix.
     "dia_singlecell": "ProteoBenchFASTA_DDAQuantification_noecoli.fasta",
+}
+
+_MODULE_ANNOTATION: dict[str, str] = {
+    "dda_qexactive": "dda_qexactive.toml",
+    "dda_astral": "dda_astral.toml",
+    "dda_peptidoform": "dda_peptidoform.toml",
+    "dia_aif": "dia_aif.toml",
+    "dia_astral": "dia_astral.toml",
+    "dia_diapasef": "dia_diapasef.toml",
+    "dia_zenotof": "dia_zenotof.toml",
+    "dia_singlecell": "dia_singlecell.toml",
 }
 
 # A representative parameter file per tool, committed in-repo under tests/params/
@@ -64,38 +76,60 @@ def find_test_data(software_name: str) -> Path | None:
     return None
 
 
-def find_fasta(*, dataset_dir: Path | None = None, module: str | None = None) -> Path | None:
+def find_fasta(
+    *,
+    dataset_dir: Path | None = None,
+    module: str | None = None,
+    test_data_dir: Path = TEST_DATA_DIR,
+) -> Path | None:
     """Return the cached ProteoBench FASTA for a module, or None if missing.
 
     Pass either ``module`` (the ProteoBench module key as it appears in
     the ``module`` column of ``raw_file_db_downloaded.csv`` — e.g.
     ``"dia_singlecell"``) or ``dataset_dir`` (a path inside the cached
     ``test_data_download/json_dir/...`` tree; the module is read from
-    the index). When both are given, ``module`` wins.
+    the index). ``test_data_dir`` selects an explicit cache root. When both
+    ``module`` and ``dataset_dir`` are given, ``module`` wins.
 
     Returns the absolute path to the unzipped FASTA, or ``None`` when
     the FASTA cache has not been downloaded yet
     (``apb-testdata fasta``).
     """
+    test_data_dir = test_data_dir.expanduser().resolve()
     if module is None and dataset_dir is not None:
-        module = _module_for_dataset(dataset_dir)
+        module = _module_for_dataset(dataset_dir, test_data_dir=test_data_dir)
     if module is None:
         return None
     fasta_name = _MODULE_FASTA.get(module)
     if fasta_name is None:
         return None
-    path = FASTA_DIR / fasta_name
+    path = test_data_dir / "fasta" / fasta_name
     return path if path.exists() else None
 
 
-def _module_for_dataset(dataset_dir: Path) -> str | None:
+def find_annotation(
+    *,
+    module: str,
+    test_data_dir: Path = TEST_DATA_DIR,
+) -> Path | None:
+    """Return the downloaded ProteoBench module annotation TOML, if available."""
+    filename = _MODULE_ANNOTATION.get(module)
+    if filename is None:
+        return None
+    path = test_data_dir.expanduser().resolve() / "annotations" / filename
+    return path if path.is_file() else None
+
+
+def _module_for_dataset(dataset_dir: Path, *, test_data_dir: Path = TEST_DATA_DIR) -> str | None:
     """Look up the ``module`` column for a cached dataset path."""
-    if not DOWNLOADED_DB.exists():
+    test_data_dir = test_data_dir.expanduser().resolve()
+    downloaded_db = test_data_dir / "raw_file_db_downloaded.csv"
+    if not downloaded_db.exists():
         return None
     target = str(dataset_dir.resolve())
-    with open(DOWNLOADED_DB) as f:
+    with open(downloaded_db) as f:
         for row in csv.DictReader(f):
-            cached = TEST_DATA_DIR / "json_dir" / row["input_file_path"]
+            cached = test_data_dir / "json_dir" / row["input_file_path"]
             if str(cached.resolve()) == target or str(cached.parent.resolve()) == target:
                 return row.get("module")
     return None

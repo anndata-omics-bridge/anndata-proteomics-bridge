@@ -1,7 +1,16 @@
 # Changes
 
+- 2026-07-22: Preserve `ProForma_peptide` on DIA-NN v1 fragment outputs so fragment and
+  multi-modality FASTA validation use the complete peptide hierarchy.
+- 2026-07-22: Read ProteoBench module annotation TOMLs directly, allow CSV/TSV observation
+  tables without Pydantic modelling, and add managed module-annotation downloads to
+  `apb-testdata`.
+- 2026-07-22: Preserve downloaded fixture directories during `apb-testdata catalog` refreshes and
+  allow FASTA lookup from an explicit test-data root for APB Studio.
+- 2026-07-22: Add compact cumulative sample-annotation and level-specific FASTA components
+  to stored descriptive summaries.
 - 2026-07-21: Add stage-owned descriptive summaries, the `apb summary` command, and type-derived conversion output suffixes.
-- 2026-07-21: Make JSON the canonical parsing-rule and annotation format, consolidate each
+- 2026-07-21: Make JSON the canonical parsing-rule format, consolidate each
   software-version family into one `base`/`levels` document, and make `--rule-config`
   document-aware.
 - 2026-07-21: Add typed FASTA configuration, peptide-to-protein validation, and

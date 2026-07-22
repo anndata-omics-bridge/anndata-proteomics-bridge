@@ -18,7 +18,7 @@ parsing rules. The package is a library plus the `apb` CLI; it ships no GUI.
 apb list
 apb validate
 apb convert report.tsv --params report.log.txt
-apb annotate data.h5mu annotation.json
+apb annotate data.h5mu module_settings.toml
 apb fasta data.h5mu proteome.fasta
 ```
 

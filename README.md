@@ -61,6 +61,7 @@ integration tests. Build it with the dedicated CLI:
 apb-testdata catalog
 apb-testdata select
 apb-testdata download
+apb-testdata annotations
 apb-testdata fasta
 ```
 
@@ -81,36 +82,30 @@ apb convert report.tsv ion     --params report.log.txt
 apb convert report.tsv protein --params report.log.txt
 ```
 
-The parameter file gives the **software version**, which selects the matching software-version document (e.g. DIA-NN `v1` vs `v2`); the data columns must then match one or more levels in that document. The vendor is auto-detected from the column headers — override with `--software <slug>` (the rule-folder slug, e.g. `diann`). Pass `--rule-config my_rules.json` to use an external document; add `LEVEL` to select one level, or omit it to convert all matching levels. A document with one matching level writes `.h5ad`; multiple matching levels write `.h5mu`. Output defaults next to the input. `--output` accepts an extensionless basename; APB appends the suffix matching the object it produces.
+The parameter file gives the **software version**, which selects the matching software-version document (e.g. DIA-NN `v1` vs `v2`); the data columns must then match one or more levels in that document. The vendor is auto-detected from the column headers — override with `--software <slug>` (the rule-folder slug, e.g. `diann`). Pass `--rule-config my_rules.json` to use an external document; add `LEVEL` to write that level as `.h5ad`, or omit it to write all matching levels as `.h5mu` (including a one-modality MuData for single-level vendors). Output defaults next to the input. `--output` accepts an extensionless basename; APB appends the suffix matching the object it produces.
 
 ### Annotate `obs` with sample metadata
 
 ```bash
-apb annotate data.h5mu annotation.json          # writes data.annotated.h5mu
+apb annotate data.h5mu module_settings.toml     # writes data.annotated.h5mu
 ```
 
-Joins the records in the annotation JSON onto `obs` (the run axis, shared across MuData modalities). Each record's `key_field` is matched per `match_on` (`"index"` → `obs_names`, else an `obs` column); every other field in the record becomes an `obs` column. Example translated from a ProteoBench module's sample table:
+Joins a ProteoBench module's top-level `[[samples]]` records onto `obs` (the run axis,
+shared across MuData modalities). APB also reads annotation-only TOML using
+`[[obs.samples]]`, plus CSV and TSV sample tables. The `raw_file` field is matched against
+`obs_names` by default; every other field becomes an `obs` column. Annotation tables are
+loaded directly and are not Pydantic models.
 
-```json
-{
-  "schema_version": "0.1",
-  "obs": {
-    "match_on": "index",
-    "key_field": "raw_file",
-    "samples": [
-      {
-        "raw_file": "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01",
-        "sample_name": "Condition_A_Sample_Alpha_01",
-        "condition": "A"
-      },
-      {
-        "raw_file": "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01",
-        "sample_name": "Condition_B_Sample_Alpha_01",
-        "condition": "B"
-      }
-    ]
-  }
-}
+```toml
+[[samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01"
+sample_name = "Condition_A_Sample_Alpha_01"
+condition = "A"
+
+[[samples]]
+raw_file = "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01"
+sample_name = "Condition_B_Sample_Alpha_01"
+condition = "B"
 ```
 
 ### Annotate and validate against FASTA

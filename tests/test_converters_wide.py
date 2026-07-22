@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from anndata_proteomics.converters.wide import convert_wide
@@ -114,3 +115,51 @@ def test_convert_wide_factor_layer() -> None:
     assert type_layer[0, 1] == 2
     assert type_layer[1, 0] == 1
     assert type_layer[1, 1] == 0
+
+
+def test_convert_wide_replaces_declared_numeric_missing_values() -> None:
+    df = pd.DataFrame(
+        {
+            "Modified Sequence": ["PEP1", "PEP2"],
+            "Charge": [2, 2],
+            "S1 Intensity": [0.0, 20.0],
+            "S2 Intensity": [11.0, 0.0],
+        }
+    )
+    rule = ParseRule.model_validate(
+        {
+            "schema_version": "0.1",
+            "file_version": "1",
+            "software_name": "Synthetic",
+            "software_version": "1.0",
+            "input_shape": "wide",
+            "quantification_level": "ion",
+            "axis": {
+                "obs_keys": ["sample"],
+                "var_keys": ["Modified Sequence", "Charge"],
+                "x_layer": "Intensity",
+            },
+            "columns": {
+                "obs": {"select": {"sample": "<sample>"}},
+                "var": {
+                    "select": {
+                        "Modified Sequence": "Modified Sequence",
+                        "Charge": "Charge",
+                    }
+                },
+            },
+            "layers": [
+                {
+                    "name": "Intensity",
+                    "source": "^(?P<sample>S\\d+) Intensity$",
+                    "missing_values": [0],
+                }
+            ],
+        }
+    )
+
+    intensity = convert_wide(df, rule).layers["Intensity"]
+    assert np.isnan(intensity[0, 0])
+    assert intensity[0, 1] == 20.0
+    assert intensity[1, 0] == 11.0
+    assert np.isnan(intensity[1, 1])

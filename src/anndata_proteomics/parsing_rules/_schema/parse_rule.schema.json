@@ -193,6 +193,13 @@
           "title": "Categories",
           "type": "object"
         },
+        "missing_values": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Missing Values",
+          "type": "array"
+        },
         "required": {
           "default": false,
           "title": "Required",

@@ -21,6 +21,7 @@ from anndata_proteomics.annotation.var_fasta import annotate_var_from_fasta
 from anndata_proteomics.fasta.annotation import count_peptides
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.readers.summary import describe
 from anndata_proteomics.scripts.cli import fasta as fasta_cmd
 
 # A few forward UniProt records (lifted from prolfquapp's fixture) + one contaminant
@@ -289,6 +290,10 @@ def test_cli_fasta_writes_annotated_file(tmp_path: Path) -> None:
 
     rt = ad.read_h5ad(out)
     assert rt.varm["fasta"].loc["P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
+    assert describe(rt)["fasta"] == {
+        "feature_count": 2,
+        "annotated_feature_count": 2,
+    }
 
 
 def test_cli_fasta_requires_a_fasta_file(tmp_path: Path) -> None:

@@ -1,1 +1,1 @@
-"""Join external annotation JSON records onto AnnData/MuData axes."""
+"""Join external sample tables onto AnnData/MuData axes."""
