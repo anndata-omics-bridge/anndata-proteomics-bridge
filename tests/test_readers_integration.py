@@ -9,7 +9,7 @@ import pytest
 
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.registry import RuleLocator, iter_packaged_rules
 from anndata_proteomics.test_data import find_test_data
 
 
@@ -18,7 +18,7 @@ from anndata_proteomics.test_data import find_test_data
     list(iter_packaged_rules()),
     ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_reader_loads_test_data_for_packaged_rule(locator) -> None:
+def test_reader_loads_test_data_for_packaged_rule(locator: RuleLocator) -> None:
     rule = load_rule(locator)
     data_file = find_test_data(rule.software_name)
     if data_file is None or not data_file.exists():

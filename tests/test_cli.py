@@ -46,14 +46,40 @@ def test_atomic_write_replaces_output_after_success(tmp_path: Path) -> None:
     output = tmp_path / "result.h5ad"
     output.write_text("old")
 
-    _write_atomically(output, lambda path: path.write_text("new"))
+    def write_new(path: Path) -> None:
+        path.write_text("new")
+
+    _write_atomically(output, write_new)
 
     assert output.read_text() == "new"
     assert list(tmp_path.iterdir()) == [output]
 
 
-def _tiny_rule_document() -> dict:
+def _tiny_rule_document(*, include_protein: bool = False) -> dict[str, object]:
     """Return a minimal self-contained long-format document for CLI tests."""
+    levels: dict[str, object] = {
+        "ion": {
+            "axis": {
+                "var_keys": ["Sequence", "Charge"],
+                "x_layer": "Intensity",
+            },
+            "columns": {
+                "var": {
+                    "select": {
+                        "Sequence": "Sequence",
+                        "Charge": "Charge",
+                    }
+                }
+            },
+            "layers": [{"name": "Intensity", "source": "Intensity"}],
+        }
+    }
+    if include_protein:
+        levels["protein"] = {
+            "axis": {"var_keys": ["Sequence"], "x_layer": "Intensity"},
+            "columns": {"var": {"select": {"Sequence": "Sequence"}}},
+            "layers": [{"name": "Intensity", "source": "Intensity"}],
+        }
     return {
         "schema_version": "0.1",
         "file_version": "1",
@@ -64,16 +90,7 @@ def _tiny_rule_document() -> dict:
             "axis": {"obs_keys": ["Run"], "duplicates": {"mode": "error"}},
             "columns": {"obs": {"select": {"Run": "Run"}}},
         },
-        "levels": {
-            "ion": {
-                "axis": {
-                    "var_keys": ["Sequence", "Charge"],
-                    "x_layer": "Intensity",
-                },
-                "columns": {"var": {"select": {"Sequence": "Sequence", "Charge": "Charge"}}},
-                "layers": [{"name": "Intensity", "source": "Intensity"}],
-            }
-        },
+        "levels": levels,
     }
 
 
@@ -185,12 +202,7 @@ def test_convert_with_multilevel_rule_config_writes_h5mu(tmp_path: Path) -> None
             "Intensity": [10.0, 20.0],
         }
     ).to_csv(data_path, sep="\t", index=False)
-    document = _tiny_rule_document()
-    document["levels"]["protein"] = {
-        "axis": {"var_keys": ["Sequence"], "x_layer": "Intensity"},
-        "columns": {"var": {"select": {"Sequence": "Sequence"}}},
-        "layers": [{"name": "Intensity", "source": "Intensity"}],
-    }
+    document = _tiny_rule_document(include_protein=True)
     rule_path = tmp_path / "rules.json"
     rule_path.write_text(json.dumps(document))
 

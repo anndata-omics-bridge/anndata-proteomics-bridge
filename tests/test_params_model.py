@@ -22,7 +22,7 @@ def test_construct_empty_has_all_none():
 
 def test_extra_fields_are_rejected():
     with pytest.raises(ValidationError):
-        Parameters(software_name="Sage", vendor_specific_thing=42)
+        Parameters.model_validate({"software_name": "Sage", "vendor_specific_thing": 42})
 
 
 def test_to_series_roundtrip():
@@ -86,6 +86,7 @@ def test_parameters_reject_invalid_range_ordering():
 
 def test_mass_tolerance_normalises_signed_range_to_half_width():
     parsed = MassTolerance.parse("[-20 ppm, 20 ppm]")
+    assert parsed is not None
     assert parsed.mode == "absolute"
     assert parsed.value == 20.0
     assert parsed.unit == "ppm"
@@ -97,9 +98,12 @@ def test_mass_tolerance_rejects_asymmetric_range():
 
 
 def test_mass_tolerance_accepts_only_ppm_or_da_units():
-    assert MassTolerance.parse("20 ppm").unit == "ppm"
-    assert MassTolerance.parse("0.5 Da").unit == "Da"
-    assert MassTolerance.parse("20 Th").unit == "Da"
+    ppm = MassTolerance.parse("20 ppm")
+    daltons = MassTolerance.parse("0.5 Da")
+    thomsons = MassTolerance.parse("20 Th")
+    assert ppm is not None and ppm.unit == "ppm"
+    assert daltons is not None and daltons.unit == "Da"
+    assert thomsons is not None and thomsons.unit == "Da"
     with pytest.raises(ValidationError):
         MassTolerance(mode="absolute", value=20)
     with pytest.raises(ValueError):

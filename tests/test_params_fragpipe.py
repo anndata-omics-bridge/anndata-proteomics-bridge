@@ -30,14 +30,14 @@ def _expected(name: str) -> Parameters:
     return Parameters.from_series(df.iloc[:, 0])
 
 
-def _normalize(v):
-    if v is None or v == "" or (isinstance(v, float) and math.isnan(v)):
+def _normalize(value: object) -> object:
+    if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):
         return None
-    return v
+    return value
 
 
 @pytest.mark.parametrize("workflow_name", CASES)
-def test_fragpipe_matches_proteobench(workflow_name):
+def test_fragpipe_matches_proteobench(workflow_name: str):
     workflow = PROTEOBENCH_PARAMS / workflow_name
     expected_csv = PROTEOBENCH_PARAMS / f"{Path(workflow_name).stem}_extracted_params.csv"
     if not workflow.exists() or not expected_csv.exists():

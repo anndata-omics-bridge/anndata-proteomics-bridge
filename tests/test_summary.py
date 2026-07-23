@@ -115,7 +115,7 @@ def test_describe_does_not_recompute_stored_quantification(
     obj = _adata()
     store_quantification_summary(obj)
 
-    def fail_if_called(_obj: object) -> dict:
+    def fail_if_called(_obj: object) -> dict[str, object]:
         raise AssertionError("stored quantification should be read without matrix access")
 
     monkeypatch.setattr(summary_module, "_quantification_summary", fail_if_called)

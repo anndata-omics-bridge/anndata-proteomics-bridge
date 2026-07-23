@@ -15,7 +15,11 @@ import jsonschema
 import pytest
 
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules, packaged_rules_root
+from anndata_proteomics.rules.registry import (
+    RuleLocator,
+    iter_packaged_rules,
+    packaged_rules_root,
+)
 
 
 SCHEMA_PATH = packaged_rules_root() / "_schema" / "parse_rule.schema.json"
@@ -42,8 +46,12 @@ _VALID_LONG = {
 }
 
 
-def _load_schema() -> dict:
+def _load_schema() -> dict[str, object]:
     return json.loads(SCHEMA_PATH.read_text())
+
+
+def _locator_id(locator: RuleLocator) -> str:
+    return f"{locator.path.parent.name}/{locator.level}"
 
 
 def test_exported_schema_is_valid_draft_2020_12() -> None:
@@ -54,9 +62,9 @@ def test_exported_schema_is_valid_draft_2020_12() -> None:
 @pytest.mark.parametrize(
     "locator",
     list(iter_packaged_rules()),
-    ids=lambda item: f"{item.path.parent.name}/{item.level}",
+    ids=_locator_id,
 )
-def test_packaged_rule_passes_json_schema(locator) -> None:
+def test_packaged_rule_passes_json_schema(locator: RuleLocator) -> None:
     """Every effective document level must validate against the JSON Schema."""
     data = load_rule(locator).model_dump(by_alias=True, mode="json")
     jsonschema.validate(instance=data, schema=_load_schema())

@@ -9,9 +9,23 @@ from typing import IO, Union
 from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
-_Source = Union[str, Path, IO]
+_Source = Union[str, Path, IO[bytes], IO[str]]
 # A parsed TOML mapping, or the first line of the version-text file.
 _Loaded = dict[str, object] | str
+
+
+def _mapping(value: object, field: str) -> dict[str, object]:
+    """Validate a required TOML table."""
+    if not isinstance(value, dict):
+        raise TypeError(f"MetaMorpheus {field} must be a table")
+    return value
+
+
+def _text(value: object, field: str) -> str:
+    """Validate a required TOML text value."""
+    if not isinstance(value, str):
+        raise TypeError(f"MetaMorpheus {field} must be text")
+    return value
 
 
 def _format_tolerance(tolerance: str) -> MassTolerance:
@@ -70,7 +84,7 @@ def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict[str, object]
         loaded = _try_load(source)
         if isinstance(loaded, dict):
             settings = loaded
-        elif isinstance(loaded, str):
+        else:
             version_line = loaded
 
     if version_line is None or settings is None:
@@ -93,29 +107,40 @@ def extract_params(file_a: _Source, file_b: _Source) -> Parameters:
     Mirrors ``proteobench.io.params.metamorpheus.extract_params``.
     """
     version_line, settings = _load_pair(file_a, file_b)
-    common = settings["CommonParameters"]
-    search = settings["SearchParameters"]
-    digestion = common["DigestionParams"]
-    precursor = common["PrecursorDeconvolutionParameters"]
+    common = _mapping(settings["CommonParameters"], "CommonParameters")
+    search = _mapping(settings["SearchParameters"], "SearchParameters")
+    digestion = _mapping(common["DigestionParams"], "DigestionParams")
+    precursor = _mapping(
+        common["PrecursorDeconvolutionParameters"],
+        "PrecursorDeconvolutionParameters",
+    )
 
-    return Parameters(
-        software_name="MetaMorpheus",
-        software_version=version_line.split()[2],
-        search_engine="MetaMorpheus",
-        enzyme=digestion["Protease"],
-        allowed_miscleavages=digestion["MaxMissedCleavages"],
-        fixed_mods=_parse_modifications(common["ListOfModsFixed"]),
-        variable_mods=_parse_modifications(common["ListOfModsVariable"]),
-        precursor_mass_tolerance=_format_tolerance(common["PrecursorMassTolerance"]),
-        fragment_mass_tolerance=_format_tolerance(common["ProductMassTolerance"]),
-        min_peptide_length=digestion["MinPeptideLength"],
-        max_peptide_length=digestion["MaxPeptideLength"],
-        max_mods=digestion["MaxModsForPeptide"],
-        min_precursor_charge=precursor["MinAssumedChargeState"],
-        max_precursor_charge=precursor["MaxAssumedChargeState"],
-        enable_match_between_runs=bool(search["MatchBetweenRuns"]),
-        quantification_method="FlashLFQ",
-        protein_inference="Parsimony" if search.get("DoParsimony") else None,
-        abundance_normalization_ions=bool(search.get("Normalize")),
-        ident_fdr_psm=str(common["QValueThreshold"]),
+    return Parameters.model_validate(
+        {
+            "software_name": "MetaMorpheus",
+            "software_version": version_line.split()[2],
+            "search_engine": "MetaMorpheus",
+            "enzyme": digestion["Protease"],
+            "allowed_miscleavages": digestion["MaxMissedCleavages"],
+            "fixed_mods": _parse_modifications(_text(common["ListOfModsFixed"], "ListOfModsFixed")),
+            "variable_mods": _parse_modifications(
+                _text(common["ListOfModsVariable"], "ListOfModsVariable")
+            ),
+            "precursor_mass_tolerance": _format_tolerance(
+                _text(common["PrecursorMassTolerance"], "PrecursorMassTolerance")
+            ),
+            "fragment_mass_tolerance": _format_tolerance(
+                _text(common["ProductMassTolerance"], "ProductMassTolerance")
+            ),
+            "min_peptide_length": digestion["MinPeptideLength"],
+            "max_peptide_length": digestion["MaxPeptideLength"],
+            "max_mods": digestion["MaxModsForPeptide"],
+            "min_precursor_charge": precursor["MinAssumedChargeState"],
+            "max_precursor_charge": precursor["MaxAssumedChargeState"],
+            "enable_match_between_runs": bool(search["MatchBetweenRuns"]),
+            "quantification_method": "FlashLFQ",
+            "protein_inference": "Parsimony" if search.get("DoParsimony") else None,
+            "abundance_normalization_ions": bool(search.get("Normalize")),
+            "ident_fdr_psm": str(common["QValueThreshold"]),
+        }
     )

@@ -44,7 +44,7 @@ def test_merge_object_arrays_append_and_scalar_arrays_replace() -> None:
     assert _merge_rule_dicts({"var_keys": ["A"]}, {"var_keys": ["B"]}) == {"var_keys": ["B"]}
 
 
-def _document() -> dict:
+def _document() -> dict[str, object]:
     return {
         "schema_version": "0.1",
         "file_version": "1",
@@ -65,7 +65,10 @@ def _document() -> dict:
     }
 
 
-def _write_document(tmp_path: Path, data: dict | None = None) -> Path:
+def _write_document(
+    tmp_path: Path,
+    data: dict[str, object] | None = None,
+) -> Path:
     path = tmp_path / "rules.json"
     path.write_text(json.dumps(data or _document()))
     return path
@@ -90,7 +93,9 @@ def test_load_rule_path_without_level_works_for_single_level(tmp_path: Path) -> 
 
 def test_load_rule_path_requires_level_for_multi_level_document(tmp_path: Path) -> None:
     data = _document()
-    data["levels"]["protein"] = data["levels"]["ion"]
+    levels = data["levels"]
+    assert isinstance(levels, dict)
+    levels["protein"] = levels["ion"]
     path = _write_document(tmp_path, data)
     with pytest.raises(RuleDocumentError, match="select one explicitly"):
         load_rule(path)
@@ -103,7 +108,9 @@ def test_load_rule_locator_selects_level() -> None:
 
 def test_load_rule_document_validates_every_level(tmp_path: Path) -> None:
     data = _document()
-    data["levels"]["protein"] = {
+    levels = data["levels"]
+    assert isinstance(levels, dict)
+    levels["protein"] = {
         "axis": {"var_keys": ["Protein"], "x_layer": "missing"},
         "columns": {"var": {"select": {"Protein": "Protein"}}},
         "layers": [{"name": "Abundance", "source": "Abundance"}],

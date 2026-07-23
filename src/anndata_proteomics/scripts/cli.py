@@ -20,6 +20,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from anndata import AnnData
 from cyclopts import App
 from loguru import logger
 
@@ -29,8 +30,9 @@ from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule, load_rule_document
 from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.schema import QuantificationLevel
 from anndata_proteomics.rules.validate import (
-    _log_and_exit_code,
+    log_and_exit_code,
     validate_all_packaged,
     validate_file,
 )
@@ -48,7 +50,7 @@ def validate(*paths: Path) -> int:
         results = validate_all_packaged()
     else:
         results = [validate_file(p) for p in paths]
-    return _log_and_exit_code(results)
+    return log_and_exit_code(results)
 
 
 @app.command(name="list")
@@ -74,7 +76,7 @@ def export_schema_cmd() -> int:
 @app.command
 def convert(
     data: Path,
-    level: str | None = None,
+    level: QuantificationLevel | None = None,
     *,
     params: Path | None = None,
     rule_config: Path | None = None,
@@ -96,12 +98,12 @@ def convert(
     Without --output, the result is written next to the input using the input stem.
     """
     from anndata_proteomics.converters.pipeline import (
-        _build_mudata,
-        _build_mudata_from_rules,
-        _convert_level,
-        _param_version,
+        build_mudata,
+        build_mudata_from_rules,
+        convert_level,
         convertible_levels,
         matching_rules,
+        param_version,
         recognize_software,
         software_slug,
     )
@@ -127,7 +129,7 @@ def convert(
             return _write_anndata(adata, output, data)
         rules = matching_rules(document.effective_rules(), df.columns)
         if rules:
-            md = _build_mudata_from_rules(
+            md = build_mudata_from_rules(
                 df,
                 rules,
                 params_path=params,
@@ -150,16 +152,16 @@ def convert(
     if params is None:
         logger.error("pass --params (it gives the software version) or --rule-config PATH")
         return 1
-    version = _param_version(params, slug)
+    version = param_version(params, slug)
     logger.info(f"vendor={slug} software_version={version!r}")
 
     if level is not None:
-        adata = _convert_level(df, slug, level, version, params_path=params)
+        adata = convert_level(df, slug, level, version, params_path=params)
         return _write_anndata(adata, output, data)
 
     levels = convertible_levels(slug, version, df.columns)
     if levels:
-        md = _build_mudata(df, slug, version, params_path=params)
+        md = build_mudata(df, slug, version, params_path=params)
         out = _output_path(output, data, ".h5mu")
         _write_atomically(out, md.write_h5mu)
         _remove_stale_sibling(out, ".h5ad")
@@ -172,7 +174,7 @@ def convert(
     return 1
 
 
-def _write_anndata(adata, output: Path | None, data: Path) -> int:
+def _write_anndata(adata: AnnData, output: Path | None, data: Path) -> int:
     """Write a single-level AnnData to .h5ad and log a one-line summary."""
     out = _output_path(output, data, ".h5ad")
     _write_atomically(out, adata.write_h5ad)
@@ -324,23 +326,18 @@ def fasta(
             if has_protein and decoy_pattern is None and contaminant_pattern is None
             else None
         )
-        validation_kwargs = {
-            "sequence_field": sequence_field,
-            "backend": backend,
-            "leading_protein_field": leading_protein_field,
-            "protein_match_on": match_on,
-            "il_equivalent": il_equivalent,
-            "is_uniprot": is_uniprot,
-        }
-        if resolved_config is not None:
-            validation_kwargs["fasta_config"] = resolved_config
-        else:
-            validation_kwargs["decoy_pattern"] = decoy_pattern
-            validation_kwargs["contaminant_pattern"] = contaminant_pattern
         results = validate_peptide_modalities_against_fasta(
             obj,
             sources,
-            **validation_kwargs,
+            sequence_field=sequence_field,
+            backend=backend,
+            fasta_config=resolved_config,
+            decoy_pattern=decoy_pattern,
+            contaminant_pattern=contaminant_pattern,
+            leading_protein_field=leading_protein_field,
+            protein_match_on=match_on,
+            il_equivalent=il_equivalent,
+            is_uniprot=is_uniprot,
         )
         for name, result in results.items():
             logger.info(

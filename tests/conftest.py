@@ -12,17 +12,50 @@ from __future__ import annotations
 
 import csv
 import sys
+from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
+import pandas as pd
 import pytest
 from loguru import logger
 
+if TYPE_CHECKING:
+    from loguru import Message
+
+
+class CachedDataset(TypedDict):
+    """One cached ProteoBench input and its conversion metadata."""
+
+    input_file_path: str
+    input_path: Path
+    param_path: Path | None
+    version: str | None
+    headers: set[str]
+    targets: list[str]
+
+
+class ConversionFixture(TypedDict):
+    """Small report-backed table used by conversion-level tests."""
+
+    df: pd.DataFrame
+    version: str | None
+    slug: str
+
+
+DatasetLookup = Callable[[str], list[CachedDataset]]
+
+
+def _write_loguru_message(message: Message) -> None:
+    """Write through pytest's currently captured stderr stream."""
+    sys.stderr.write(message)
+
 
 @pytest.fixture(autouse=True)
-def _loguru_to_pytest_capsys():
+def loguru_to_pytest_capsys() -> Generator[None]:
     logger.remove()
     logger.add(
-        lambda msg: sys.stderr.write(msg),
+        _write_loguru_message,
         format="{level: <7} | {message}",
         level="DEBUG",
     )
@@ -43,7 +76,6 @@ _SUBSET_ROWS = 4000  # precursor rows; the fragment level explodes this ~12x
 
 def _read_headers(path: Path) -> set[str]:
     """Column names of a cached input (cheap; tsv via pandas, parquet via the arrow schema)."""
-    import pandas as pd
     import pyarrow.parquet as pq
 
     if path.suffix == ".parquet":
@@ -52,7 +84,7 @@ def _read_headers(path: Path) -> set[str]:
 
 
 @pytest.fixture(scope="session")
-def cached_datasets():
+def cached_datasets() -> DatasetLookup:
     """Callable ``slug -> list[dict]`` over cached ProteoBench inputs for a vendor.
 
     Each dict has ``input_path``, ``param_path`` (or None), ``version``, ``headers``, ``targets``.
@@ -62,10 +94,10 @@ def cached_datasets():
     from anndata_proteomics.converters import pipeline
     from anndata_proteomics.test_data import DOWNLOADED_DB, TEST_DATA_DIR
 
-    def lookup(slug: str) -> list[dict]:
+    def lookup(slug: str) -> list[CachedDataset]:
         if not DOWNLOADED_DB.exists():
             return []
-        rows: list[dict] = []
+        rows: list[CachedDataset] = []
         seen: set[str] = set()
         with open(DOWNLOADED_DB) as f:
             for row in csv.DictReader(f):
@@ -84,7 +116,7 @@ def cached_datasets():
                     headers = _read_headers(input_path)
                 except OSError:
                     continue
-                version = pipeline._param_version(param_path, slug) if param_path else None
+                version = pipeline.param_version(param_path, slug) if param_path else None
                 rows.append(
                     {
                         "input_file_path": rel,
@@ -101,13 +133,13 @@ def cached_datasets():
 
 
 @pytest.fixture(scope="session")
-def spectronaut_datasets(cached_datasets) -> list[dict]:
+def spectronaut_datasets(cached_datasets: DatasetLookup) -> list[CachedDataset]:
     """Cached Spectronaut datasets (see ``cached_datasets``)."""
     return cached_datasets("spectronaut")
 
 
 @pytest.fixture(scope="session")
-def diann_full_subset(cached_datasets) -> dict:
+def diann_full_subset(cached_datasets: DatasetLookup) -> ConversionFixture:
     """`{df, version, slug}` for a DIA-NN dataset with report-backed ion/protein/fragment levels."""
     from anndata_proteomics.readers.dispatch import read_table
 

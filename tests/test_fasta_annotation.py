@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 
+import numpy as np
 import pytest
 
 from anndata_proteomics.fasta.annotation import (
@@ -146,7 +147,11 @@ def test_fasta_to_dataframe_min_length_excludes_short_peptides():
     text = ">sp|P|X test GN=x PE=1 SV=1\nMKGLPRAKSHGSTGWGKRKRNKPK\n"
     df_lo = fasta_to_dataframe(text, min_length=2)
     df_hi = fasta_to_dataframe(text, min_length=5)
-    assert df_lo["nr_peptides"].iat[0] > df_hi["nr_peptides"].iat[0]
+    low_count = df_lo["nr_peptides"].iat[0]
+    high_count = df_hi["nr_peptides"].iat[0]
+    assert isinstance(low_count, int | np.integer)
+    assert isinstance(high_count, int | np.integer)
+    assert low_count > high_count
 
 
 @pytest.mark.parametrize(
@@ -158,8 +163,10 @@ def test_fasta_to_dataframe_min_length_excludes_short_peptides():
     ],
 )
 def test_header_id_split_strips_leading_gt_and_trailing_semicolon(
-    header, expected_id, expected_header
-):
+    header: str,
+    expected_id: str,
+    expected_header: str,
+) -> None:
     text = f">{header}\nAAAA\n"
     df = fasta_to_dataframe(text)
     assert df["fasta.id"].iat[0] == expected_id

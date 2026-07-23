@@ -13,6 +13,8 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 import pandas as pd
+from anndata import AnnData
+from mudata import MuData
 
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.params.anndata_io import write_search_parameters
@@ -20,10 +22,16 @@ from anndata_proteomics.params.registry import parse_params
 from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.loader import load_rule, resolve_rule_for_version
 from anndata_proteomics.rules.registry import iter_packaged_rules
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 
 # Quantification levels, coarse to fine. Not every vendor exposes every level.
-LEVELS = ["ion", "peptidoform", "peptide", "protein", "fragment"]
+LEVELS: tuple[QuantificationLevel, ...] = (
+    "ion",
+    "peptidoform",
+    "peptide",
+    "protein",
+    "fragment",
+)
 MUDATA = "mudata"
 # Per-level var_names prefix so modalities don't collide on the global axis.
 _PREFIX = {
@@ -57,7 +65,7 @@ def recognize_software(headers: Iterable[str]) -> str | None:
     return next(iter(slugs)) if len(slugs) == 1 else None
 
 
-def _param_version(param_path: Path | None, slug: str) -> str | None:
+def param_version(param_path: Path | None, slug: str) -> str | None:
     """Software version parsed from the param file, or None if absent/unparseable."""
     if param_path is None:
         return None
@@ -67,7 +75,12 @@ def _param_version(param_path: Path | None, slug: str) -> str | None:
         return None
 
 
-def select_rule(slug: str, level: str, version: str | None, headers: Iterable[str]):
+def select_rule(
+    slug: str,
+    level: QuantificationLevel,
+    version: str | None,
+    headers: Iterable[str],
+) -> ParseRule:
     """Resolve the rule for (slug, level) at ``version`` and validate it against ``headers``.
 
     Raises ValueError if no rule variant covers the version, or if the file's columns don't match
@@ -90,7 +103,11 @@ def select_rule(slug: str, level: str, version: str | None, headers: Iterable[st
     return rule
 
 
-def convertible_levels(slug: str, version: str | None, headers: Iterable[str]) -> list[str]:
+def convertible_levels(
+    slug: str,
+    version: str | None,
+    headers: Iterable[str],
+) -> list[QuantificationLevel]:
     """Levels whose version-selected rule both exists and matches this file's columns."""
     header_set = set(headers)
     out = []
@@ -106,16 +123,16 @@ def convertible_levels(slug: str, version: str | None, headers: Iterable[str]) -
 def available_targets(slug: str, version: str | None, headers: Iterable[str]) -> list[str]:
     """Convertible levels plus the all-level MuData target when any level resolves."""
     levels = convertible_levels(slug, version, headers)
-    targets = list(levels)
+    targets = [str(level) for level in levels]
     if levels:
         targets.append(MUDATA)
     return targets
 
 
 def matching_rules(
-    rules: Mapping[str, ParseRule],
+    rules: Mapping[QuantificationLevel, ParseRule],
     headers: Iterable[str],
-) -> dict[str, ParseRule]:
+) -> dict[QuantificationLevel, ParseRule]:
     """Return document levels whose required source columns match a vendor table."""
     header_set = set(headers)
     matched = {}
@@ -134,15 +151,15 @@ def _noop(_msg: str) -> None:
     pass
 
 
-def _convert_level(
+def convert_level(
     df: pd.DataFrame,
     slug: str,
-    level: str,
+    level: QuantificationLevel,
     version: str | None,
     *,
     params_path: Path | str | None = None,
     log: Callable[[str], None] = _noop,
-):
+) -> AnnData:
     from anndata_proteomics.converters.assemble import convert
 
     rule = select_rule(slug, level, version, df.columns)
@@ -151,14 +168,14 @@ def _convert_level(
     return adata
 
 
-def _build_mudata(
+def build_mudata(
     df: pd.DataFrame,
     slug: str,
     version: str | None,
     *,
     params_path: Path | str | None = None,
     log: Callable[[str], None] = _noop,
-):
+) -> MuData:
     """Build a MuData over the levels whose version-selected rule fits this file (shared run axis).
 
     Levels the version doesn't provide (e.g. fragment on DIA-NN 2.x) are skipped, not failed.
@@ -170,12 +187,12 @@ def _build_mudata(
     if not resolvable:
         raise ValueError(f"{slug}: no level resolves for software version {version!r}")
 
-    rules = {
+    rules: dict[QuantificationLevel, ParseRule] = {
         level: select_rule(slug, level, version, df.columns)
         for level in LEVELS
         if level in resolvable
     }
-    return _build_mudata_from_rules(
+    return build_mudata_from_rules(
         df,
         rules,
         params_path=params_path,
@@ -184,21 +201,20 @@ def _build_mudata(
     )
 
 
-def _build_mudata_from_rules(
+def build_mudata_from_rules(
     df: pd.DataFrame,
-    rules: Mapping[str, ParseRule],
+    rules: Mapping[QuantificationLevel, ParseRule],
     *,
     params_path: Path | str | None = None,
     software: str | None = None,
     log: Callable[[str], None] = _noop,
-):
+) -> MuData:
     """Build MuData from already selected effective rules."""
     import mudata
-    from mudata import MuData
 
     if not rules:
         raise ValueError("no levels supplied")
-    mods = {}
+    mods: dict[str, AnnData] = {}
     for level in LEVELS:
         if level not in rules:
             continue

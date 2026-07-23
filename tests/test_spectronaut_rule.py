@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pandas as pd
 import pytest
 
@@ -9,7 +11,10 @@ from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_locator
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
+
+if TYPE_CHECKING:
+    from conftest import CachedDataset
 
 # Cached Spectronaut datasets come from the catalog-free ``spectronaut_datasets`` fixture
 # (conftest.py); the ProteoBench browser/catalog itself lives in apb_studio.
@@ -70,7 +75,9 @@ def test_spectronaut_has_report_backed_ion_protein_and_fragment_rules() -> None:
     assert resolve_rule_locator("spectronaut", "peptide", None) is None
 
 
-def test_spectronaut_rule_matches_cached_common_headers(spectronaut_datasets) -> None:
+def test_spectronaut_rule_matches_cached_common_headers(
+    spectronaut_datasets: list[CachedDataset],
+) -> None:
     rules = [
         load_packaged_rule("spectronaut", "ion"),
         load_packaged_rule("spectronaut", "protein"),
@@ -84,7 +91,9 @@ def test_spectronaut_rule_matches_cached_common_headers(spectronaut_datasets) ->
         assert not matches(headers, load_packaged_rule("spectronaut", "fragment"))
 
 
-def test_spectronaut_catalog_offers_mudata(spectronaut_datasets) -> None:
+def test_spectronaut_catalog_offers_mudata(
+    spectronaut_datasets: list[CachedDataset],
+) -> None:
     if not spectronaut_datasets:
         return
     assert all(
@@ -94,7 +103,10 @@ def test_spectronaut_catalog_offers_mudata(spectronaut_datasets) -> None:
 
 
 @pytest.mark.parametrize("level", ["ion", "protein"])
-def test_spectronaut_conversion_matches_declared_columns(level: str, spectronaut_datasets) -> None:
+def test_spectronaut_conversion_matches_declared_columns(
+    level: QuantificationLevel,
+    spectronaut_datasets: list[CachedDataset],
+) -> None:
     """Conformance: the converted AnnData realizes exactly what the JSON rule declares — every
     selected/computed var and obs column is present, and the layer set is precisely the declared
     one (no stray, no missing). The expectations are read from the rule, not hardcoded."""
@@ -119,7 +131,10 @@ def test_spectronaut_conversion_matches_declared_columns(level: str, spectronaut
 
 
 @pytest.mark.parametrize("level", ["ion", "protein"])
-def test_spectronaut_declared_layout_matches_data(level: str, spectronaut_datasets) -> None:
+def test_spectronaut_declared_layout_matches_data(
+    level: QuantificationLevel,
+    spectronaut_datasets: list[CachedDataset],
+) -> None:
     """Placement correctness: a layer is an obs x var matrix, so a column belongs in [[layers]]
     only if it varies across samples for the same feature. This checks the rule's split against
     the real multi-sample report (the dimensionality test), which is what conformance alone cannot

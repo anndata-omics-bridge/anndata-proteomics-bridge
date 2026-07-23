@@ -76,22 +76,24 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
 
     max_len = data["database"]["enzyme"]["max_len"]
 
-    return Parameters(
-        software_name="Sage",
-        software_version=data["version"],
-        search_engine="Sage",
-        search_engine_version=data["version"],
-        enzyme=enzyme,
-        semi_enzymatic=semi_enzymatic,
-        allowed_miscleavages=data["database"]["enzyme"]["missed_cleavages"],
-        fixed_mods=_parse_static_mods(data["database"]["static_mods"]),
-        variable_mods=_parse_variable_mods(data["database"]["variable_mods"]),
-        precursor_mass_tolerance=format_tolerance_range(data["precursor_tol"]),
-        fragment_mass_tolerance=format_tolerance_range(data["fragment_tol"]),
-        min_peptide_length=int(data["database"]["enzyme"]["min_len"]),
-        max_peptide_length=int(max_len) if max_len is not None else None,
-        max_mods=int(data["database"]["max_variable_mods"]),
-        min_precursor_charge=int(data["precursor_charge"][0]),
-        max_precursor_charge=int(data["precursor_charge"][1]),
-        enable_match_between_runs=True,
+    return Parameters.model_validate(
+        {
+            "software_name": "Sage",
+            "software_version": data["version"],
+            "search_engine": "Sage",
+            "search_engine_version": data["version"],
+            "enzyme": enzyme,
+            "semi_enzymatic": semi_enzymatic,
+            "allowed_miscleavages": data["database"]["enzyme"]["missed_cleavages"],
+            "fixed_mods": _parse_static_mods(data["database"]["static_mods"]),
+            "variable_mods": _parse_variable_mods(data["database"]["variable_mods"]),
+            "precursor_mass_tolerance": format_tolerance_range(data["precursor_tol"]),
+            "fragment_mass_tolerance": format_tolerance_range(data["fragment_tol"]),
+            "min_peptide_length": int(data["database"]["enzyme"]["min_len"]),
+            "max_peptide_length": int(max_len) if max_len is not None else None,
+            "max_mods": int(data["database"]["max_variable_mods"]),
+            "min_precursor_charge": int(data["precursor_charge"][0]),
+            "max_precursor_charge": int(data["precursor_charge"][1]),
+            "enable_match_between_runs": True,
+        }
     )

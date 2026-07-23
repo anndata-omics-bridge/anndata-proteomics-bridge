@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -83,7 +85,10 @@ def test_resolve_unknown_accession_raises():
         resolve("UNIMOD:99999")
 
 
-def test_registry_rejects_duplicate_accession(tmp_path, monkeypatch):
+def test_registry_rejects_duplicate_accession(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Point load_registry at a temp TOML with a repeated accession and confirm it raises.
     from anndata_proteomics.modifications import unimod_registry as reg
 
@@ -116,17 +121,19 @@ mass_delta = 2.0
 
 def test_registry_entry_extras_forbidden():
     with pytest.raises(ValidationError):
-        UnimodRegistry(
-            entries=[
-                {
-                    "accession": "UNIMOD:35",
-                    "name": "Oxidation",
-                    "target": ["M"],
-                    "position": "Anywhere",
-                    "mass_delta": 15.9949,
-                    "vendor_specific": "nope",
-                }
-            ]
+        UnimodRegistry.model_validate(
+            {
+                "entries": [
+                    {
+                        "accession": "UNIMOD:35",
+                        "name": "Oxidation",
+                        "target": ["M"],
+                        "position": "Anywhere",
+                        "mass_delta": 15.9949,
+                        "vendor_specific": "nope",
+                    }
+                ]
+            }
         )
 
 
@@ -139,6 +146,7 @@ def test_runtime_rule_resolves_canonical_fields_from_accession():
         "map": [{"token": "15.9949", "accession": "UNIMOD:35"}],
     }
     rule = ParseRule.model_validate({**BASE, "modifications": modifications})
+    assert rule.modifications is not None
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
     assert runtime.entries[0].target == ["M"]
@@ -154,5 +162,6 @@ def test_runtime_rule_errors_on_unknown_accession():
         "map": [{"token": "nope", "accession": "UNIMOD:99999"}],
     }
     rule = ParseRule.model_validate({**BASE, "modifications": modifications})
+    assert rule.modifications is not None
     with pytest.raises(KeyError, match="UNIMOD:99999"):
         _to_runtime_rule(rule.modifications)

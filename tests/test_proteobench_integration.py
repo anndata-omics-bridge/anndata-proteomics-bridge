@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from anndata_proteomics.converters.pipeline import _convert_level, _param_version
+from anndata_proteomics.converters.pipeline import convert_level, param_version
 from anndata_proteomics.proteobench.config import load_module_settings, load_tool_settings
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
 from anndata_proteomics.proteobench.metrics import build_scores
@@ -102,8 +102,8 @@ def _load_plain_converted_fixture() -> ad.AnnData:
         return ad.read_h5ad(CONVERTED)
     data = read_table(FIXTURE / "input_file.parquet")
     params = FIXTURE / "param_0..txt"
-    version = _param_version(params, "diann")
-    return _convert_level(data, "diann", "ion", version, params_path=params)
+    version = param_version(params, "diann")
+    return convert_level(data, "diann", "ion", version, params_path=params)
 
 
 def _assert_score_mapping_close(actual: dict[str, Any], expected: dict[str, Any]) -> None:

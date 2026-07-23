@@ -9,8 +9,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import sparse
-
+from anndata_proteomics._matrix_types import is_sparse_matrix
 from anndata_proteomics.proteobench.config import ModuleSettings, SampleSettings, ToolSettings
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
@@ -556,7 +555,7 @@ def _decoys(target: Any, roles: ResolvedRoles, tool_settings: ToolSettings) -> n
 
 
 def _is_float32_backed(matrix: Any) -> bool:
-    values = matrix.data if sparse.issparse(matrix) else np.asarray(matrix).ravel()
+    values = matrix.data if is_sparse_matrix(matrix) else np.asarray(matrix).ravel()
     finite = np.asarray(values)[np.isfinite(values)]
     if not finite.size:
         return False
@@ -571,7 +570,7 @@ def _matrix_block(
     dtype: type[np.floating[Any]],
 ) -> np.ndarray:
     block = matrix[rows, start:stop]
-    if sparse.issparse(block):
+    if is_sparse_matrix(block):
         block = block.toarray()
     return np.asarray(block, dtype=dtype)
 
@@ -582,6 +581,6 @@ def _matrix_row(
     dtype: type[np.floating[Any]],
 ) -> np.ndarray:
     values = matrix[row, :]
-    if sparse.issparse(values):
+    if is_sparse_matrix(values):
         values = values.toarray()
     return np.asarray(values, dtype=dtype).reshape(-1).copy()

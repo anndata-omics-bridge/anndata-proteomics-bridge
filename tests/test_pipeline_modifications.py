@@ -131,7 +131,7 @@ def test_convert_rejects_non_integral_charge_for_proforma_ion():
         convert(df, _make_rule())
 
 
-def test_convert_with_params_path_attaches_search_parameters(tmp_path):
+def test_convert_with_params_path_attaches_search_parameters(tmp_path: Path) -> None:
     proteobench_params = Path(__file__).resolve().parent / "params" / "sage_parameterfile.json"
     if not proteobench_params.exists():
         pytest.skip("ProteoBench fixture missing")
@@ -144,7 +144,7 @@ def test_convert_with_params_path_attaches_search_parameters(tmp_path):
     assert uns["search_parameters_path"] == str(proteobench_params)
 
 
-def test_convert_with_params_path_for_unknown_software_keeps_path_only(tmp_path):
+def test_convert_with_params_path_for_unknown_software_keeps_path_only(tmp_path: Path) -> None:
     rule = ParseRule.model_validate({**RULE, "software_name": "UnknownTool"})
     fake = tmp_path / "fake_params.txt"
     fake.write_text("dummy")

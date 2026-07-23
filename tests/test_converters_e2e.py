@@ -17,7 +17,7 @@ from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.registry import RuleLocator, iter_packaged_rules
 from anndata_proteomics.test_data import find_test_data
 
 
@@ -26,7 +26,7 @@ from anndata_proteomics.test_data import find_test_data
     list(iter_packaged_rules()),
     ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_end_to_end_conversion(locator) -> None:
+def test_end_to_end_conversion(locator: RuleLocator) -> None:
     rule = load_rule(locator)
     if rule.fragments is not None:
         # The fragment level explodes the packed fragment lists ~12x; converting a full

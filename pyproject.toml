@@ -21,6 +21,8 @@ dependencies = [
     "anndata",
     "mudata",
     "pyarrow",
+    "pyyaml",
+    "packaging",
     "requests",
     "beautifulsoup4",
     "cyclopts",
@@ -38,7 +40,11 @@ dev = [
     "pytest",
     "pytest-cov",
     "black",
+    "deptry>=0.24,<1",
     "ruff",
+    "pyright",
+    "pandas-stubs",
+    "scipy-stubs",
     "jsonschema>=4",
     "pre-commit",
     # Exercise Prozor's optional Rust backend in APB's integration tests.
@@ -66,6 +72,44 @@ target-version = ["py313"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+
+# Strictest practical pyright, modelled on prozor / python_package_template.
+# See TODO/TODO_pyright.md for the completed burn-down and enforcement policy.
+[tool.pyright]
+include = ["src", "tests"]
+executionEnvironments = [
+    { root = "tests", reportPrivateUsage = "none" },
+    { root = "src" },
+]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+reportImportCycles = "error"
+reportMissingTypeStubs = "none"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
+enableTypeIgnoreComments = false
+# Third-party scientific libraries expose incomplete types even with their
+# canonical stub packages. Keep strict first-party checks while suppressing
+# diagnostics whose only signal is a propagated Unknown.
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+
+[tool.deptry]
+known_first_party = ["anndata_proteomics"]
+optional_dependencies_dev_groups = ["dev"]
+
+[tool.deptry.per_rule_ignores]
+# pandas loads this declared Parquet engine dynamically, so no direct Python
+# import exists for Deptry to observe.
+DEP002 = ["pyarrow"]
+
+[tool.deptry.package_module_name_map]
+mkdocs-material = "material"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -37,10 +37,11 @@ def _homogenize_mods(raw_mods: str, sep: str = ",") -> str:
 
 def _add_record(data: dict[str, XmlValue], tag: str, record: XmlValue) -> dict[str, XmlValue]:
     if tag in data:
-        if isinstance(data[tag], list):
-            data[tag].append(record)
+        existing = data[tag]
+        if isinstance(existing, list):
+            existing.append(record)
         else:
-            data[tag] = [data[tag], record]
+            data[tag] = [existing, record]
     else:
         data[tag] = record
     return data
@@ -105,18 +106,51 @@ def _flatten(d: dict[str, XmlValue], parent_key: KeyPath = ()) -> list[tuple[Key
 
 def _build_series(record: dict[str, XmlValue], index_length: int = 4) -> pd.Series:
     items = _flatten(record)
-    idx = pd.MultiIndex.from_tuples(_extend(k, index_length) for (k, _) in items)
-    return pd.Series((v for (_, v) in items), index=idx)
+    keys = [_extend(key, index_length) for key, _ in items]
+    values = [value for _, value in items]
+    idx = pd.MultiIndex.from_tuples(keys)
+    return pd.Series(values, index=idx)
+
+
+def _text(value: object, field: str) -> str:
+    """Return one scalar text value read from the flattened XML series."""
+    if not isinstance(value, str):
+        raise TypeError(f"MaxQuant {field} must contain one text value")
+    return value
+
+
+def _joined_text(value: object, field: str) -> str:
+    """Return one or more text values as a comma-delimited string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, pd.Series):
+        parts: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise TypeError(f"MaxQuant {field} entries must be text")
+            parts.append(item)
+        return ",".join(parts)
+    raise TypeError(f"MaxQuant {field} must contain text values")
 
 
 def _tolerance_pair(series: pd.Series) -> tuple[MassTolerance, MassTolerance]:
     """Build precursor (ppm) and fragment (ppm/Da) tolerances from the mqpar series."""
     prec_value = float(
-        series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]].squeeze()
+        _text(
+            series.loc[
+                pd.IndexSlice["parameterGroups", "parameterGroup", "mainSearchTol", :]
+            ].squeeze(),
+            "mainSearchTol",
+        )
     )
     precursor = MassTolerance(mode="absolute", value=prec_value, unit="ppm")
     frag_value = float(
-        series.loc[pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]].squeeze()
+        _text(
+            series.loc[
+                pd.IndexSlice["msmsParamsArray", "msmsParams", "MatchTolerance", :]
+            ].squeeze(),
+            "MatchTolerance",
+        )
     )
     in_ppm = bool(
         series.loc[
@@ -130,9 +164,9 @@ def _tolerance_pair(series: pd.Series) -> tuple[MassTolerance, MassTolerance]:
 def _min_peptide_length(series: pd.Series) -> int:
     """Read the minimum peptide length, tolerating the pre/post-rename key."""
     try:
-        return int(series.loc["minPepLen"].squeeze())
+        return int(_text(series.loc["minPepLen"].squeeze(), "minPepLen"))
     except KeyError:
-        return int(series.loc["minPeptideLength"].squeeze())
+        return int(_text(series.loc["minPeptideLength"].squeeze(), "minPeptideLength"))
 
 
 def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:
@@ -141,15 +175,14 @@ def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:
         fixed_path = pd.IndexSlice["parameterGroups", "parameterGroup", "fixedModifications", :]
     else:
         fixed_path = pd.IndexSlice["fixedModifications", :]
-    fixed_mods = series.loc[fixed_path].squeeze()
-    if not isinstance(fixed_mods, str):
-        fixed_mods = ",".join(fixed_mods)
+    fixed_mods = _joined_text(series.loc[fixed_path].squeeze(), "fixedModifications")
 
-    variable_mods = series.loc[
-        pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]
-    ].squeeze()
-    if not isinstance(variable_mods, str):
-        variable_mods = ",".join(variable_mods)
+    variable_mods = _joined_text(
+        series.loc[
+            pd.IndexSlice["parameterGroups", "parameterGroup", "variableModifications", :]
+        ].squeeze(),
+        "variableModifications",
+    )
 
     return _homogenize_mods(fixed_mods), _homogenize_mods(variable_mods)
 
@@ -166,40 +199,84 @@ def extract_params(
     method.
     """
     record = _read_xml(source)
-    record["msmsParamsArray"] = [
-        d for d in record["msmsParamsArray"] if d["msmsParams"]["Name"] == ms2frac
-    ]
+    msms_params_array = record.get("msmsParamsArray")
+    if not isinstance(msms_params_array, list):
+        raise ValueError("mqpar msmsParamsArray must be a list")
+    selected_params: list[XmlValue] = []
+    for entry in msms_params_array:
+        if not isinstance(entry, dict):
+            raise ValueError("mqpar msmsParamsArray entries must be mappings")
+        params = entry.get("msmsParams")
+        if not isinstance(params, dict):
+            raise ValueError("mqpar msmsParams entry must be a mapping")
+        if params.get("Name") == ms2frac:
+            selected_params.append(entry)
+    record["msmsParamsArray"] = selected_params
     series = _build_series(record, 4).sort_index()
 
     version = str(series.loc["maxQuantVersion"].squeeze())
     precursor_tolerance, fragment_tolerance = _tolerance_pair(series)
-    enzyme_mode = int(series.loc[("parameterGroups", "parameterGroup", "enzymeMode")].squeeze())
+    enzyme_mode = int(
+        _text(
+            series.loc[("parameterGroups", "parameterGroup", "enzymeMode")].squeeze(),
+            "enzymeMode",
+        )
+    )
     fixed_mods, variable_mods = _mods_for_version(series, version)
 
-    return Parameters(
-        software_name="MaxQuant",
-        software_version=version,
-        search_engine="Andromeda",
-        ident_fdr_psm=float(series.loc["peptideFdr"].squeeze()),
-        ident_fdr_peptide=None,
-        ident_fdr_protein=float(series.loc["proteinFdr"].squeeze()),
-        enable_match_between_runs=series.loc["matchBetweenRuns"].squeeze().lower() == "true",
-        precursor_mass_tolerance=precursor_tolerance,
-        fragment_mass_tolerance=fragment_tolerance,
-        enzyme=series.loc[("parameterGroups", "parameterGroup", "enzymes", "string")].squeeze(),
-        semi_enzymatic=enzyme_mode != 0,
-        allowed_miscleavages=int(
-            series.loc[
-                pd.IndexSlice["parameterGroups", "parameterGroup", "maxMissedCleavages", :]
-            ].squeeze()
-        ),
-        min_peptide_length=_min_peptide_length(series),
-        max_peptide_length=None,
-        fixed_mods=fixed_mods,
-        variable_mods=variable_mods,
-        max_mods=int(series.loc[("parameterGroups", "parameterGroup", "maxNmods")].squeeze()),
-        min_precursor_charge=None,
-        max_precursor_charge=int(
-            series.loc[pd.IndexSlice["parameterGroups", "parameterGroup", "maxCharge", :]].squeeze()
-        ),
+    return Parameters.model_validate(
+        {
+            "software_name": "MaxQuant",
+            "software_version": version,
+            "search_engine": "Andromeda",
+            "ident_fdr_psm": float(_text(series.loc["peptideFdr"].squeeze(), "peptideFdr")),
+            "ident_fdr_peptide": None,
+            "ident_fdr_protein": float(_text(series.loc["proteinFdr"].squeeze(), "proteinFdr")),
+            "enable_match_between_runs": (
+                _text(
+                    series.loc["matchBetweenRuns"].squeeze(),
+                    "matchBetweenRuns",
+                ).lower()
+                == "true"
+            ),
+            "precursor_mass_tolerance": precursor_tolerance,
+            "fragment_mass_tolerance": fragment_tolerance,
+            "enzyme": _text(
+                series.loc[("parameterGroups", "parameterGroup", "enzymes", "string")].squeeze(),
+                "enzyme",
+            ),
+            "semi_enzymatic": enzyme_mode != 0,
+            "allowed_miscleavages": int(
+                _text(
+                    series.loc[
+                        pd.IndexSlice[
+                            "parameterGroups",
+                            "parameterGroup",
+                            "maxMissedCleavages",
+                            :,
+                        ]
+                    ].squeeze(),
+                    "maxMissedCleavages",
+                )
+            ),
+            "min_peptide_length": _min_peptide_length(series),
+            "max_peptide_length": None,
+            "fixed_mods": fixed_mods,
+            "variable_mods": variable_mods,
+            "max_mods": int(
+                _text(
+                    series.loc[("parameterGroups", "parameterGroup", "maxNmods")].squeeze(),
+                    "maxNmods",
+                )
+            ),
+            "min_precursor_charge": None,
+            "max_precursor_charge": int(
+                _text(
+                    series.loc[
+                        pd.IndexSlice["parameterGroups", "parameterGroup", "maxCharge", :]
+                    ].squeeze(),
+                    "maxCharge",
+                )
+            ),
+        }
     )

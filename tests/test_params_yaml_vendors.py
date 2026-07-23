@@ -35,7 +35,7 @@ def _expected(csv: Path) -> Parameters:
     return Parameters.from_series(df.iloc[:, 0])
 
 
-def _compare(params: Parameters, csv: Path, extra: list[str] = ()) -> None:
+def _compare(params: Parameters, csv: Path, extra: tuple[str, ...] = ()) -> None:
     expected = _expected(csv)
     e = expected.to_series()
     a = params.to_series()
@@ -50,7 +50,7 @@ def _compare(params: Parameters, csv: Path, extra: list[str] = ()) -> None:
     "yaml_name",
     ["alphapept_0.4.9.yaml", "alphapept_0.4.9_unnormalized.yaml"],
 )
-def test_alphapept_matches_proteobench(yaml_name):
+def test_alphapept_matches_proteobench(yaml_name: str):
     yaml_path = PROTEOBENCH_PARAMS / yaml_name
     csv_path = yaml_path.with_suffix(".csv")
     if not yaml_path.exists():
@@ -59,7 +59,7 @@ def test_alphapept_matches_proteobench(yaml_name):
     _compare(
         params,
         csv_path,
-        extra=["ident_fdr_psm", "ident_fdr_protein", "fixed_mods", "variable_mods"],
+        extra=("ident_fdr_psm", "ident_fdr_protein", "fixed_mods", "variable_mods"),
     )
 
 
@@ -72,12 +72,12 @@ def test_wombat_matches_proteobench():
     _compare(
         params,
         csv_path,
-        extra=[
+        extra=(
             "ident_fdr_psm",
             "ident_fdr_peptide",
             "ident_fdr_protein",
             "fixed_mods",
             "variable_mods",
             "abundance_normalization_ions",
-        ],
+        ),
     )

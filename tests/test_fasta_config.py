@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import anndata as ad
 import mudata
 import numpy as np
@@ -59,7 +61,7 @@ def test_invalid_regex_is_rejected() -> None:
         FastaConfig(decoy_patterns=("[",))
 
 
-def test_config_round_trips_through_h5ad_and_h5mu(tmp_path) -> None:
+def test_config_round_trips_through_h5ad_and_h5mu(tmp_path: Path) -> None:
     resolved = resolve_fasta_config(("REV_P1",), FastaConfig())
     adata = ad.AnnData(np.zeros((1, 1)))
     write_fasta_config(adata, resolved)

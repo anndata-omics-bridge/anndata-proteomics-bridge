@@ -9,7 +9,7 @@ from typing import IO, Optional, Union
 from anndata_proteomics.params.parsers._common import homogenize_paren_mods, read_lines
 from anndata_proteomics.params.model import Parameters
 
-_Source = Union[str, Path, IO]
+_Source = Union[str, Path, IO[bytes], IO[str]]
 
 _VENDOR_SYSTEM_MAP = {
     "Thermo": "Thermo Orbitrap",
@@ -49,6 +49,14 @@ def _value(lines: list[str], term: str) -> Optional[str]:
         if term in line:
             return _clean(line.split(term)[1])
     return None
+
+
+def _required_value(lines: list[str], term: str) -> str:
+    """Return a required Spectronaut setting."""
+    value = _value(lines, term)
+    if value is None:
+        raise ValueError(f"Spectronaut setting {term!r} is missing")
+    return value
 
 
 def _value_regex(lines: list[str], pattern: str) -> Optional[str]:
@@ -133,28 +141,30 @@ def extract_params(source: _Source) -> Parameters:
     else:
         min_z = max_z = int(charge_raw)
 
-    return Parameters(
-        software_name="Spectronaut",
-        software_version=software_version,
-        search_engine="Spectronaut",
-        search_engine_version=software_version,
-        ident_fdr_psm=ident_psm,
-        ident_fdr_protein=ident_protein,
-        enable_match_between_runs=False,
-        precursor_mass_tolerance=precursor_tol,
-        fragment_mass_tolerance=fragment_tol,
-        enzyme=_value(lines, "Enzymes / Cleavage Rules:"),
-        semi_enzymatic=_value(lines, "Digest Type:") != "Specific",
-        allowed_miscleavages=int(_value(lines, "Missed Cleavages:")),
-        max_peptide_length=int(_value(lines, "Max Peptide Length:")),
-        min_peptide_length=int(_value(lines, "Min Peptide Length:")),
-        fixed_mods=_homogenize_mods(_value(lines, "Fixed Modifications:")),
-        variable_mods=_homogenize_mods(_value_regex(lines, r"^Variable Modifications:")),
-        max_mods=int(_value(lines, "Max Variable Modifications:")),
-        min_precursor_charge=min_z,
-        max_precursor_charge=max_z,
-        scan_window=_value(lines, "XIC IM Extraction Window:"),
-        quantification_method=_value(lines, "Quantity MS Level:"),
-        protein_inference=_value(lines, "Inference Algorithm:"),
-        abundance_normalization_ions=_value(lines, "Cross-Run Normalization:"),
+    return Parameters.model_validate(
+        {
+            "software_name": "Spectronaut",
+            "software_version": software_version,
+            "search_engine": "Spectronaut",
+            "search_engine_version": software_version,
+            "ident_fdr_psm": ident_psm,
+            "ident_fdr_protein": ident_protein,
+            "enable_match_between_runs": False,
+            "precursor_mass_tolerance": precursor_tol,
+            "fragment_mass_tolerance": fragment_tol,
+            "enzyme": _value(lines, "Enzymes / Cleavage Rules:"),
+            "semi_enzymatic": _value(lines, "Digest Type:") != "Specific",
+            "allowed_miscleavages": int(_required_value(lines, "Missed Cleavages:")),
+            "max_peptide_length": int(_required_value(lines, "Max Peptide Length:")),
+            "min_peptide_length": int(_required_value(lines, "Min Peptide Length:")),
+            "fixed_mods": _homogenize_mods(_value(lines, "Fixed Modifications:")),
+            "variable_mods": _homogenize_mods(_value_regex(lines, r"^Variable Modifications:")),
+            "max_mods": int(_required_value(lines, "Max Variable Modifications:")),
+            "min_precursor_charge": min_z,
+            "max_precursor_charge": max_z,
+            "scan_window": _value(lines, "XIC IM Extraction Window:"),
+            "quantification_method": _value(lines, "Quantity MS Level:"),
+            "protein_inference": _value(lines, "Inference Algorithm:"),
+            "abundance_normalization_ions": _value(lines, "Cross-Run Normalization:"),
+        }
     )

@@ -20,6 +20,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, TypeGuard
 
 import pandas as pd
 from loguru import logger
@@ -132,7 +133,7 @@ def count_peptides(
     )
 
 
-def _parse_header_id(header: str) -> tuple[str, str]:
+def parse_header_id(header: str) -> tuple[str, str]:
     """Split a header on the first whitespace into (fasta.id, fasta.header)."""
     parts = header.split(maxsplit=1)
     fasta_id = parts[0].lstrip(">").rstrip(";")
@@ -140,7 +141,7 @@ def _parse_header_id(header: str) -> tuple[str, str]:
     return fasta_id, fasta_header
 
 
-def _uniprot_proteinname(fasta_id: str) -> str:
+def uniprot_proteinname(fasta_id: str) -> str:
     """Return the accession while preserving a prefix before ``sp|``/``tr|``.
 
     A decoy such as ``REV_sp|P12345|NAME`` must remain ``REV_P12345``;
@@ -173,7 +174,7 @@ def fasta_to_dataframe(
     infers patterns from conservative candidates, while ``""`` explicitly
     disables that classification.
     """
-    frame, _ = _fasta_to_dataframe_with_config(
+    frame, _ = fasta_to_dataframe_with_config(
         sources,
         fasta_config=fasta_config,
         decoy_pattern=decoy_pattern,
@@ -187,7 +188,7 @@ def fasta_to_dataframe(
     return frame
 
 
-def _fasta_to_dataframe_with_config(
+def fasta_to_dataframe_with_config(
     sources: FastaSource | Iterable[FastaSource],
     *,
     fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
@@ -205,7 +206,7 @@ def _fasta_to_dataframe_with_config(
     records: list[tuple[str, str, str]] = []
     for source in _iter_sources(sources):
         for record in iter_fasta(source):
-            fasta_id, fasta_header = _parse_header_id(record.header)
+            fasta_id, fasta_header = parse_header_id(record.header)
             records.append((fasta_id, fasta_header, record.sequence))
 
     resolved = (
@@ -229,10 +230,10 @@ def _fasta_to_dataframe_with_config(
         ]
     )
     frame["is_decoy"] = frame["fasta.id"].map(
-        lambda value: matches_any(value, resolved.decoy.patterns)
+        lambda value: matches_any(str(value), resolved.decoy.patterns)
     )
     frame["is_contaminant"] = frame["fasta.id"].map(
-        lambda value: matches_any(value, resolved.contaminant.patterns)
+        lambda value: matches_any(str(value), resolved.contaminant.patterns)
     )
     frame = _add_annotation_columns(
         frame,
@@ -285,7 +286,7 @@ def _add_annotation_columns(
 ) -> pd.DataFrame:
     """Add proteinname, optional gene_name, protein_length, and peptide counts."""
     if is_uniprot:
-        frame["proteinname"] = frame["fasta.id"].map(_uniprot_proteinname)
+        frame["proteinname"] = frame["fasta.id"].map(uniprot_proteinname)
     else:
         frame["proteinname"] = frame["fasta.id"]
 
@@ -296,9 +297,21 @@ def _add_annotation_columns(
     rule, _ = resolve_cleavage(cleavage)
     frame["protein_length"] = frame["sequence"].map(len)
     frame["nr_peptides"] = frame["sequence"].map(
-        lambda seq: count_peptides(seq, cleavage=rule, min_length=min_length, max_length=max_length)
+        lambda seq: count_peptides(
+            str(seq),
+            cleavage=rule,
+            min_length=min_length,
+            max_length=max_length,
+        )
     )
     return frame
+
+
+def _is_text_stream(
+    source: FastaSource | Iterable[FastaSource],
+) -> TypeGuard[IO[str]]:
+    """Return whether *source* is one open text stream."""
+    return hasattr(source, "read")
 
 
 def _iter_sources(
@@ -307,8 +320,8 @@ def _iter_sources(
     if isinstance(sources, str | Path):
         yield sources
         return
-    if hasattr(sources, "read"):
-        yield sources  # type: ignore[misc]
+    if _is_text_stream(sources):
+        yield sources
         return
     yield from sources
 
@@ -327,8 +340,7 @@ def describe_sources(sources: FastaSource | Iterable[FastaSource]) -> list[str]:
     path) as ``<inline-fasta>``; open streams as ``<stream>``. Shared by both FASTA
     annotators so the same input is described identically everywhere.
     """
-    single = isinstance(sources, str | Path) or hasattr(sources, "read")
-    items = [sources] if single else list(sources)
+    items = materialize_sources(sources)
     out: list[str] = []
     for item in items:
         if isinstance(item, Path):

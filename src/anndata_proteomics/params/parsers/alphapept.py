@@ -17,6 +17,17 @@ MODIFICATION_MAPPING = {
 }
 
 
+def _map_modifications(modifications: list[object]) -> str:
+    """Map a validated list of AlphaPept modification names."""
+    mapped: list[str] = []
+    for modification in modifications:
+        if not isinstance(modification, str):
+            raise TypeError("AlphaPept modification names must be strings")
+        name = modification.strip()
+        mapped.append(MODIFICATION_MAPPING.get(name, name))
+    return ", ".join(mapped)
+
+
 def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     """Parse an AlphaPept YAML configuration file into :class:`Parameters`.
 
@@ -48,25 +59,25 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     prec_tol = MassTolerance(mode="absolute", value=float(search["prec_tol"]), unit=unit)
     frag_tol = MassTolerance(mode="absolute", value=float(search["frag_tol"]), unit=unit)
 
-    return Parameters(
-        software_name="AlphaPept",
-        software_version=summary["version"],
-        search_engine="AlphaPept",
-        search_engine_version=summary["version"],
-        enzyme=enzyme,
-        allowed_miscleavages=fasta["n_missed_cleavages"],
-        fixed_mods=", ".join(MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in fixed),
-        variable_mods=", ".join(
-            MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in variable
-        ),
-        max_mods=fasta["n_modifications_max"],
-        min_peptide_length=fasta["pep_length_min"],
-        max_peptide_length=fasta["pep_length_max"],
-        precursor_mass_tolerance=prec_tol,
-        fragment_mass_tolerance=frag_tol,
-        ident_fdr_protein=search["protein_fdr"],
-        ident_fdr_psm=search["peptide_fdr"],
-        min_precursor_charge=features["iso_charge_min"],
-        max_precursor_charge=features["iso_charge_max"],
-        enable_match_between_runs=workflow["match"],
+    return Parameters.model_validate(
+        {
+            "software_name": "AlphaPept",
+            "software_version": summary["version"],
+            "search_engine": "AlphaPept",
+            "search_engine_version": summary["version"],
+            "enzyme": enzyme,
+            "allowed_miscleavages": fasta["n_missed_cleavages"],
+            "fixed_mods": _map_modifications(fixed),
+            "variable_mods": _map_modifications(variable),
+            "max_mods": fasta["n_modifications_max"],
+            "min_peptide_length": fasta["pep_length_min"],
+            "max_peptide_length": fasta["pep_length_max"],
+            "precursor_mass_tolerance": prec_tol,
+            "fragment_mass_tolerance": frag_tol,
+            "ident_fdr_protein": search["protein_fdr"],
+            "ident_fdr_psm": search["peptide_fdr"],
+            "min_precursor_charge": features["iso_charge_min"],
+            "max_precursor_charge": features["iso_charge_max"],
+            "enable_match_between_runs": workflow["match"],
+        }
     )

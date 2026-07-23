@@ -8,6 +8,7 @@ and automatic validation through the ``apb fasta`` CLI.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import anndata as ad
@@ -37,16 +38,29 @@ FASTA = (
 )
 
 
-def _peptide_adata(sequences, index=None, level="ion", extra=None):
+def _peptide_adata(
+    sequences: Sequence[str | None],
+    index: Sequence[str] | None = None,
+    level: str = "ion",
+    extra: Mapping[str, Sequence[str]] | None = None,
+) -> ad.AnnData:
     """A peptide-derived AnnData with a ``ProForma_peptide`` var column."""
     index = index or [f"feat{i}" for i in range(len(sequences))]
-    var = pd.DataFrame({"ProForma_peptide": sequences}, index=index)
+    var = pd.DataFrame({"ProForma_peptide": list(sequences)}, index=list(index))
     if extra:
         for col, vals in extra.items():
             var[col] = vals
     adata = ad.AnnData(X=np.zeros((1, len(sequences)), dtype=float), var=var)
     adata.uns["anndata_proteomics"] = {"quantification_level": level, "schema_version": "1"}
     return adata
+
+
+def _validation_frame(adata: ad.AnnData | mudata.MuData) -> pd.DataFrame:
+    """Return the FASTA validation frame after checking its runtime type."""
+    value = adata.varm["fasta_validation"]
+    if not isinstance(value, pd.DataFrame):
+        raise AssertionError("expected varm['fasta_validation'] to contain a DataFrame")
+    return value
 
 
 # --- basic presence -------------------------------------------------------
@@ -64,7 +78,7 @@ def test_returns_result_and_mutates():
 def test_every_unmodified_peptide_found():
     a = _peptide_adata(["DTHK", "UNIQUEPEP"])
     validate_peptides_against_fasta(a, FASTA)
-    assert a.varm["fasta_validation"]["peptide_in_fasta"].all()
+    assert _validation_frame(a)["peptide_in_fasta"].all()
 
 
 def test_modified_peptidoform_validates_via_unmodified_sequence():
@@ -83,10 +97,13 @@ def test_modified_peptidoform_validates_via_unmodified_sequence():
 def test_shared_peptide_maps_to_all_proteins():
     a = _peptide_adata(["GVFRR"])
     validate_peptides_against_fasta(a, FASTA)
-    proteins = a.varm["fasta_validation"].loc["feat0", "fasta_matching_protein_ids"].split(";")
+    protein_ids = _validation_frame(a).loc["feat0", "fasta_matching_protein_ids"]
+    assert isinstance(protein_ids, str)
+    proteins = protein_ids.split(";")
     assert set(proteins) == {"P12345", "P67890", "REV_P00000"}
-    assert a.varm["fasta_validation"].loc["feat0", "fasta_match_site_count"] == 4
-    assert a.varm["fasta_validation"].loc["feat0", "fasta_matching_protein_count"] == 3
+    validation = _validation_frame(a)
+    assert validation.loc["feat0", "fasta_match_site_count"] == 4
+    assert validation.loc["feat0", "fasta_matching_protein_count"] == 3
 
 
 def test_repeated_occurrence_preserves_both_coordinates():
@@ -102,7 +119,7 @@ def test_ion_and_fragment_share_one_match_result():
     result = validate_peptides_against_fasta(a, FASTA)
     # one unique sequence -> one match row (DTHK occurs once in the DB target)
     assert (result.matches["sequence"] == "DTHK").sum() == 1
-    counts = a.varm["fasta_validation"]["fasta_match_site_count"]
+    counts = _validation_frame(a)["fasta_match_site_count"]
     assert counts["ion"] == counts["frag"] == 1
 
 
@@ -112,7 +129,7 @@ def test_ion_and_fragment_share_one_match_result():
 def test_unmatched_peptide_flagged_and_reported():
     a = _peptide_adata(["DTHK", "ZZZZZ"])
     result = validate_peptides_against_fasta(a, FASTA)
-    assert not a.varm["fasta_validation"].loc["feat1", "peptide_in_fasta"]
+    assert not _validation_frame(a).loc["feat1", "peptide_in_fasta"]
     assert "ZZZZZ" in result.sample_unmatched()
     assert result.n_unmatched_features == 1
 
@@ -157,7 +174,7 @@ def test_non_uniprot_proteinname_is_full_id():
 def test_decoy_only_match_is_valid_and_classified():
     a = _peptide_adata(["DECOYONLY"])
     result = validate_peptides_against_fasta(a, FASTA)
-    assert a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
     assert result.matches.loc[result.matches["sequence"] == "DECOYONLY", "is_decoy"].all()
 
 
@@ -167,7 +184,7 @@ def test_contaminant_only_match_is_valid_and_classified():
         a,
         ">zz|C1|CONT contaminant\nXXCONTAMINANTXX\n",
     )
-    assert a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
     assert result.matches["is_contaminant"].all()
 
 
@@ -212,7 +229,7 @@ def test_duplicate_peptides_deduplicated_in_matches():
     a = _peptide_adata(["GVFRR", "GVFRR"])
     result = validate_peptides_against_fasta(a, FASTA)
     # unique sequence scanned once; both features validate
-    assert a.varm["fasta_validation"]["peptide_in_fasta"].all()
+    assert _validation_frame(a)["peptide_in_fasta"].all()
     assert result.n_unique_sequences == 1
 
 
@@ -220,46 +237,46 @@ def test_missing_sequence_flagged_invalid():
     a = _peptide_adata(["DTHK", None])
     result = validate_peptides_against_fasta(a, FASTA)
     assert result.n_invalid_sequences == 1
-    assert not a.varm["fasta_validation"].loc["feat1", "peptide_in_fasta"]
+    assert not _validation_frame(a).loc["feat1", "peptide_in_fasta"]
 
 
 def test_lowercase_sequence_normalized():
     a = _peptide_adata(["dthk"])
     validate_peptides_against_fasta(a, FASTA)
-    assert a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
 
 def test_il_not_equivalent_by_default():
     """Peptide with I must NOT match its L-variant in the DB when il_equivalent=False."""
     a = _peptide_adata(["PEPTIDE"])  # has I
     validate_peptides_against_fasta(a, ">P\nXPEPTLDEX\n")  # DB has L; default strict
-    assert not a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert not _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
 
 def test_il_equivalent_opt_in():
     a = _peptide_adata(["PEPTIDE"])  # I
     validate_peptides_against_fasta(a, ">P\nXPEPTLDEX\n", il_equivalent=True)  # L
-    assert a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
 
 def test_ambiguous_residue_matched_literally():
     a = _peptide_adata(["ABXZ"])
     validate_peptides_against_fasta(a, ">P\nMKABXZQ\n")
-    assert a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
 
 def test_ambiguous_residue_is_not_a_wildcard():
     """X is a literal residue: 'ABXZ' must NOT match 'ABYZ'."""
     a = _peptide_adata(["ABXZ"])
     validate_peptides_against_fasta(a, ">P\nMKABYZQ\n")
-    assert not a.varm["fasta_validation"].loc["feat0", "peptide_in_fasta"]
+    assert not _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
 
 def test_empty_string_sequence_flagged_invalid():
     a = _peptide_adata(["DTHK", "   "])  # whitespace-only normalizes to invalid
     result = validate_peptides_against_fasta(a, FASTA)
     assert result.n_invalid_sequences == 1
-    assert not a.varm["fasta_validation"].loc["feat1", "peptide_in_fasta"]
+    assert not _validation_frame(a).loc["feat1", "peptide_in_fasta"]
 
 
 def test_missing_sequence_field_raises():
@@ -306,7 +323,7 @@ def test_leading_protein_validations_are_independent() -> None:
         extra={"Protein_Group": ["P12345", "P67890", "NOT_IN_FASTA"]},
     )
     validate_peptides_against_fasta(a, FASTA)
-    validation = a.varm["fasta_validation"]
+    validation = _validation_frame(a)
     assert validation["leading_protein_in_fasta"].tolist() == [True, True, False]
     assert validation["peptide_in_leading_protein"].tolist() == [True, False, False]
 
@@ -395,7 +412,7 @@ def test_mulink_update_preserves_existing_weights_and_is_idempotent() -> None:
 
     assert md.varp["feature_mapping"][positions["prt:P12345"], positions["ion:dthk"]] == 7.0
     assert md.varp["feature_mapping"][positions["ion:dthk"], positions["prt:P12345"]] == 1.0
-    assert (md.varp["feature_mapping"] != once).nnz == 0
+    assert np.array_equal(md.varp["feature_mapping"].toarray(), once.toarray())
 
 
 def test_mulink_revalidation_replaces_only_apb_owned_edges() -> None:
@@ -426,7 +443,10 @@ def test_mulink_revalidation_replaces_only_apb_owned_edges() -> None:
     assert owned[positions["ion:peptide"], positions["prt:P1"]] == 0
     assert owned[positions["ion:peptide"], positions["prt:P2"]] == 1
     assert (
-        md.mod["ion"].varm["fasta_validation"].loc["ion:peptide", "fasta_matching_protein_ids"]
+        _validation_frame(md.mod["ion"]).loc[
+            "ion:peptide",
+            "fasta_matching_protein_ids",
+        ]
         == "P2"
     )
 
@@ -543,17 +563,32 @@ def test_owned_edge_replacement_uses_overflow_safe_sparse_coordinates() -> None:
         shape=(size, size),
     )
     old_owned = csr_matrix(
-        ([1], ([owned_row], [owned_col])),
+        (
+            np.ones(1, dtype=np.int8),
+            (
+                np.asarray([owned_row], dtype=np.int64),
+                np.asarray([owned_col], dtype=np.int64),
+            ),
+        ),
         shape=(size, size),
-        dtype="int8",
     )
     target_rows = np.zeros(size, dtype=bool)
     target_rows[owned_row] = True
 
+    empty_mapping = csr_matrix(
+        (
+            np.empty(0, dtype=np.int8),
+            (
+                np.empty(0, dtype=np.int64),
+                np.empty(0, dtype=np.int64),
+            ),
+        ),
+        shape=(size, size),
+    )
     merged, owned = _replace_owned_feature_mapping(
         existing,
         old_owned,
-        csr_matrix((size, size), dtype="int8"),
+        empty_mapping,
         target_rows,
     )
 
@@ -572,12 +607,12 @@ OVERLAP_FASTA = ">sp|PN|NEST\nMKSAMPLERPEPTIDERKGVFRRXGVFRR\n"
 OVERLAP_PEPTIDES = ["SAMPLER", "SAMPLERPEPTIDER", "GVFRR", "ZZZZZ"]
 
 
-def _sorted_matches(result):
+def _sorted_matches(result: FastaValidationResult) -> pd.DataFrame:
     return result.matches.sort_values(["sequence", "protein_id", "start"]).reset_index(drop=True)
 
 
 @pytest.mark.parametrize("backend", get_available_backends())
-def test_backends_produce_identical_match_tables(backend):
+def test_backends_produce_identical_match_tables(backend: str) -> None:
     """Every available backend agrees with ahocorapy, incl. nested/overlapping peptides."""
     result = validate_peptides_against_fasta(
         _peptide_adata(OVERLAP_PEPTIDES), OVERLAP_FASTA, backend=backend, store=False
@@ -591,11 +626,11 @@ def test_backends_produce_identical_match_tables(backend):
 
 
 @pytest.mark.parametrize("backend", get_available_backends())
-def test_nested_peptide_matches_on_every_backend(backend):
+def test_nested_peptide_matches_on_every_backend(backend: str) -> None:
     """A missed-cleavage extension nested in a protein validates on all backends."""
     a = _peptide_adata(["SAMPLER", "SAMPLERPEPTIDER"], index=["short", "long"])
     validate_peptides_against_fasta(a, OVERLAP_FASTA, backend=backend)
-    assert a.varm["fasta_validation"]["peptide_in_fasta"].all()
+    assert _validation_frame(a)["peptide_in_fasta"].all()
 
 
 def test_match_table_absolute_coordinates():
@@ -621,7 +656,7 @@ def test_h5ad_round_trip(tmp_path: Path):
     p = tmp_path / "r.h5ad"
     a.write_h5ad(p)
     b = ad.read_h5ad(p)
-    pd.testing.assert_frame_equal(a.varm["fasta_validation"], b.varm["fasta_validation"])
+    pd.testing.assert_frame_equal(_validation_frame(a), _validation_frame(b))
     assert read_fasta_config(b) == read_fasta_config(a)
 
 
@@ -634,8 +669,8 @@ def test_h5mu_round_trip(tmp_path: Path):
         md.write_h5mu(p)
         mb = mudata.read_h5mu(p)
     pd.testing.assert_frame_equal(
-        md.mod["peptidoform"].varm["fasta_validation"],
-        mb.mod["peptidoform"].varm["fasta_validation"],
+        _validation_frame(md.mod["peptidoform"]),
+        _validation_frame(mb.mod["peptidoform"]),
     )
 
 
@@ -644,13 +679,13 @@ def test_revalidation_overwrites():
     validate_peptides_against_fasta(a, FASTA)
     # a second run must not raise and must replace the prior summary
     validate_peptides_against_fasta(a, FASTA)
-    assert a.varm["fasta_validation"].shape[0] == 1
+    assert _validation_frame(a).shape[0] == 1
 
 
 # --- provenance -----------------------------------------------------------
 
 
-def _last_provenance(adata):
+def _last_provenance(adata: ad.AnnData | mudata.MuData):
     import json
 
     entries = json.loads(adata.uns["anndata_proteomics"]["var_annotations_json"])
@@ -731,7 +766,7 @@ def test_cli_fasta_validates_peptide_only_input_by_default(tmp_path: Path):
 
     result = ad.read_h5ad(out)
     assert result.n_vars == 2
-    assert result.varm["fasta_validation"]["peptide_in_fasta"].tolist() == [True, False]
+    assert _validation_frame(result)["peptide_in_fasta"].tolist() == [True, False]
     from anndata_proteomics.readers.summary import describe
 
     assert describe(result)["fasta"]["proteotypic_feature_count"] == 1

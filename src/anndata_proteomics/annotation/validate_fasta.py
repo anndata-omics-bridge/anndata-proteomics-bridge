@@ -22,15 +22,15 @@ from scipy.sparse import csr_matrix
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.annotation.var_fasta import (
-    _leading_accession,
-    _protein_group_accessions,
-    _resolve_match_on,
+    leading_accession,
+    protein_group_accessions,
+    resolve_match_on,
 )
 from anndata_proteomics.fasta.annotation import (
-    _parse_header_id,
-    _uniprot_proteinname,
     describe_sources,
     materialize_sources,
+    parse_header_id,
+    uniprot_proteinname,
 )
 from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.config import (
@@ -434,7 +434,7 @@ def _feature_leading_proteins(
         if pd.isna(value) or not str(value).strip():
             proteins.append(None)
         else:
-            proteins.append(_leading_accession(str(value), is_uniprot=is_uniprot))
+            proteins.append(leading_accession(str(value), is_uniprot=is_uniprot))
     return pd.Series(proteins, index=index, dtype="object")
 
 
@@ -454,10 +454,10 @@ def _scan_fasta(
     def protein_records() -> Iterable[tuple[str, str]]:
         for source in fasta_sources:
             for record in iter_fasta(source):
-                fasta_id, _ = _parse_header_id(record.header)
+                fasta_id, _ = parse_header_id(record.header)
                 if accumulator is not None:
                     accumulator.observe(fasta_id)
-                proteinname = _uniprot_proteinname(fasta_id) if is_uniprot else fasta_id
+                proteinname = uniprot_proteinname(fasta_id) if is_uniprot else fasta_id
                 fasta_proteins.add(proteinname)
                 sequence = record.sequence.upper()
                 if il_equivalent:
@@ -482,7 +482,7 @@ def _scan_fasta(
         (
             annotation.peptide,
             annotation.protein_id,
-            _uniprot_proteinname(annotation.protein_id) if is_uniprot else annotation.protein_id,
+            uniprot_proteinname(annotation.protein_id) if is_uniprot else annotation.protein_id,
             annotation.start,
             annotation.end,
             annotation.length,
@@ -549,11 +549,14 @@ def _build_summary(
             "fasta_match_site_count": site_counts,
             "fasta_matching_protein_count": protein_counts,
             "fasta_matching_protein_ids": protein_ids,
-            "leading_protein_in_fasta": pd.array(leading_in_fasta, dtype="boolean"),
-            "peptide_in_leading_protein": pd.array(
+            "leading_protein_in_fasta": pd.Series(
+                leading_in_fasta,
+                dtype="boolean",
+            ).array,
+            "peptide_in_leading_protein": pd.Series(
                 peptide_in_leading,
                 dtype="boolean",
-            ),
+            ).array,
         },
         index=pd.Index(item.target.var_names).astype(str),
     )
@@ -570,7 +573,7 @@ def _store_mulink_feature_mapping(
     if not mdata.var_names.is_unique:
         raise ValueError("MuLink feature_mapping requires globally unique MuData var_names")
     protein = mdata.mod["protein"]
-    resolved_match_on = _resolve_match_on(protein, protein_match_on)
+    resolved_match_on = resolve_match_on(protein, protein_match_on)
     if resolved_match_on == "index":
         raw_groups = pd.Series(protein.var_names, index=protein.var_names)
     else:
@@ -578,7 +581,7 @@ def _store_mulink_feature_mapping(
 
     accession_to_nodes: dict[str, list[str]] = {}
     for node, raw_group in zip(protein.var_names, raw_groups, strict=True):
-        for accession in _protein_group_accessions(
+        for accession in protein_group_accessions(
             str(raw_group),
             is_uniprot=is_uniprot,
         ):
@@ -620,11 +623,16 @@ def _store_mulink_feature_mapping(
                     represented_accessions.add(accession)
 
     new_mapping = csr_matrix(
-        ([1] * len(rows), (rows, columns)),
+        (
+            np.ones(len(rows), dtype=np.int8),
+            (
+                np.asarray(rows, dtype=np.int64),
+                np.asarray(columns, dtype=np.int64),
+            ),
+        ),
         shape=(mdata.n_vars, mdata.n_vars),
         # MuData's update path temporarily writes -1 while reindexing varp;
         # use a signed type so h5mu round-trips remain valid.
-        dtype="int8",
     )
     new_mapping.sum_duplicates()
     if new_mapping.nnz:
@@ -633,7 +641,7 @@ def _store_mulink_feature_mapping(
     existing = csr_matrix(
         mdata.varp.get(
             _FEATURE_MAPPING_KEY,
-            csr_matrix(new_mapping.shape, dtype="int8"),
+            _empty_int8_csr(new_mapping.shape),
         )
     )
     if existing.shape != new_mapping.shape:
@@ -650,7 +658,7 @@ def _store_mulink_feature_mapping(
     old_owned = csr_matrix(
         mdata.varp.get(
             _OWNED_FEATURE_MAPPING_KEY,
-            csr_matrix(new_mapping.shape, dtype="int8"),
+            _empty_int8_csr(new_mapping.shape),
         )
     )
     if old_owned.shape != new_mapping.shape:
@@ -671,6 +679,18 @@ def _store_mulink_feature_mapping(
         n_fasta_edges=new_mapping.nnz,
         n_unrepresented_fasta_proteins=len(all_matched_accessions - represented_accessions),
         protein_match_on=resolved_match_on,
+    )
+
+
+def _empty_int8_csr(shape: tuple[int, int]) -> csr_matrix[np.int8]:
+    """Create a typed empty signed matrix for MuData feature mappings."""
+    empty_indices = np.empty(0, dtype=np.int64)
+    return csr_matrix(
+        (
+            np.empty(0, dtype=np.int8),
+            (empty_indices, empty_indices),
+        ),
+        shape=shape,
     )
 
 

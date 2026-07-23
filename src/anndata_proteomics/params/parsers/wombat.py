@@ -46,24 +46,28 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     if enzyme == "trypsin":
         enzyme = "Trypsin"
 
-    return Parameters(
-        software_name="Wombat",
-        software_version=record["version"],
-        search_engine="various",
-        enzyme=enzyme,
-        allowed_miscleavages=p["miscleavages"],
-        fixed_mods=", ".join(_homogenize_mod_xtandem(m) for m in p["fixed_mods"].split(",")),
-        variable_mods=", ".join(_homogenize_mod_xtandem(m) for m in p["variable_mods"].split(",")),
-        max_mods=p["max_mods"],
-        min_peptide_length=p["min_peptide_length"],
-        max_peptide_length=p["max_peptide_length"],
-        precursor_mass_tolerance=p["precursor_mass_tolerance"],
-        fragment_mass_tolerance=p["fragment_mass_tolerance"],
-        ident_fdr_protein=p["ident_fdr_protein"],
-        ident_fdr_peptide=p["ident_fdr_peptide"],
-        ident_fdr_psm=p["ident_fdr_psm"],
-        min_precursor_charge=p["min_precursor_charge"],
-        max_precursor_charge=p["max_precursor_charge"],
-        enable_match_between_runs=p["enable_match_between_runs"],
-        abundance_normalization_ions=p["normalization_method"],
+    return Parameters.model_validate(
+        {
+            "software_name": "Wombat",
+            "software_version": record["version"],
+            "search_engine": "various",
+            "enzyme": enzyme,
+            "allowed_miscleavages": p["miscleavages"],
+            "fixed_mods": ", ".join(_homogenize_mod_xtandem(m) for m in p["fixed_mods"].split(",")),
+            "variable_mods": ", ".join(
+                _homogenize_mod_xtandem(m) for m in p["variable_mods"].split(",")
+            ),
+            "max_mods": p["max_mods"],
+            "min_peptide_length": p["min_peptide_length"],
+            "max_peptide_length": p["max_peptide_length"],
+            "precursor_mass_tolerance": p["precursor_mass_tolerance"],
+            "fragment_mass_tolerance": p["fragment_mass_tolerance"],
+            "ident_fdr_protein": p["ident_fdr_protein"],
+            "ident_fdr_peptide": p["ident_fdr_peptide"],
+            "ident_fdr_psm": p["ident_fdr_psm"],
+            "min_precursor_charge": p["min_precursor_charge"],
+            "max_precursor_charge": p["max_precursor_charge"],
+            "enable_match_between_runs": p["enable_match_between_runs"],
+            "abundance_normalization_ions": p["normalization_method"],
+        }
     )

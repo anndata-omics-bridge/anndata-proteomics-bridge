@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from contextlib import chdir
 from pathlib import Path
 from typing import Literal
@@ -80,7 +81,7 @@ GENERATED_CSV_NAMES = (
 )
 
 
-def _feature_count(data: dict) -> int | float | None:
+def _feature_count(data: Mapping[str, int | float | None]) -> int | float | None:
     """Return ProteoBench's canonical feature count from one submission.
 
     ProteoBench renamed the serialized ``nr_prec`` field to ``nr_feature`` so
@@ -160,6 +161,16 @@ def get_merged_json(repo_url: str) -> Path:
     return output_directory / archive_roots.pop()
 
 
+def _hrefs_ending_with(soup: BeautifulSoup, suffix: str) -> list[str]:
+    """Return string href targets from one directory listing by suffix."""
+    hrefs: list[str] = []
+    for link in soup.find_all("a"):
+        href = link.get("href")
+        if isinstance(href, str) and href.endswith(suffix):
+            hrefs.append(href)
+    return hrefs
+
+
 def get_raw_data(
     df: pd.DataFrame,
     base_url: str = DATASETS_BASE_URL,
@@ -179,9 +190,7 @@ def get_raw_data(
     response = requests.get(base_url)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
-    folder_links = [
-        link["href"].strip("/") for link in soup.find_all("a") if link["href"].endswith("/")
-    ]
+    folder_links = [href.strip("/") for href in _hrefs_ending_with(soup, "/")]
     matching_folders = [folder for folder in folder_links if folder in hash_list]
 
     for folder in matching_folders:
@@ -197,9 +206,7 @@ def get_raw_data(
         folder_response = requests.get(folder_url)
         folder_response.raise_for_status()
         folder_soup = BeautifulSoup(folder_response.text, "html.parser")
-        zip_files = [
-            link["href"] for link in folder_soup.find_all("a") if link["href"].endswith(".zip")
-        ]
+        zip_files = _hrefs_ending_with(folder_soup, ".zip")
 
         for zip_file in zip_files:
             zip_url = f"{folder_url}{zip_file}"
@@ -276,7 +283,7 @@ def catalog(
     """
     cache_dir = cache_dir.resolve()
 
-    rows: list[dict] = []
+    rows: list[dict[str, object]] = []
     for module_key in CONFIGS:
         repo_url = CONFIGS[module_key]["repo_url"]
         repo_name = repo_url.split("/")[-5]
@@ -314,9 +321,11 @@ def catalog(
     print("\nRows per module:")
     print(df["module"].value_counts().to_string())
     print("\nUnique (software_name, software_version) per module:")
-    unique_counts = df.groupby("module").apply(
-        lambda g: g[["software_name", "software_version"]].drop_duplicates().shape[0],
-        include_groups=False,
+    unique_counts = (
+        df[["module", "software_name", "software_version"]]
+        .drop_duplicates()
+        .groupby("module")
+        .size()
     )
     print(unique_counts.to_string())
     print(f"\nWritten to {catalog_csv}")
@@ -396,7 +405,10 @@ def _select_rows(
     return selected, n_missing, rule
 
 
-def get_datasets_to_download(df: pd.DataFrame, output_directory: Path) -> tuple[pd.DataFrame, dict]:
+def get_datasets_to_download(
+    df: pd.DataFrame,
+    output_directory: Path,
+) -> tuple[pd.DataFrame, dict[str, str]]:
     """Check which datasets are already present in `output_directory`.
 
     Copied from `benchmark_analysis.py` — same idempotency logic.
@@ -445,6 +457,8 @@ def download(
 
     hash_to_dir: dict[str, str] = {}
     for repo_name, group in df.groupby("repo_name"):
+        if not isinstance(repo_name, str):
+            raise TypeError("repo_name values must be strings")
         module_output_dir = cache_dir / repo_name
         module_output_dir.mkdir(parents=True, exist_ok=True)
 

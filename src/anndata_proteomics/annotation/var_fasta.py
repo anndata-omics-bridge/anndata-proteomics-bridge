@@ -24,17 +24,19 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from loguru import logger
+from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.fasta.annotation import (
     CleavageRule,
-    _fasta_to_dataframe_with_config,
-    _uniprot_proteinname,
     describe_sources,
+    fasta_to_dataframe_with_config,
     materialize_sources,
     resolve_cleavage,
+    uniprot_proteinname,
 )
 from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.config import FastaConfig, ResolvedFastaConfig
@@ -93,14 +95,14 @@ def annotate_var_from_fasta(
     """
     target = _resolve_protein_target(obj)
     _ensure_varm_free(target)
-    resolved_match_on = _resolve_match_on(target, match_on)
+    resolved_match_on = resolve_match_on(target, match_on)
     sources = materialize_sources(fasta_sources)
     source_descriptions = describe_sources(sources)
 
     rule, enzyme_name, min_len, max_len = _resolve_digestion(
         target, cleavage, min_length, max_length
     )
-    ann, resolved_config = _fasta_to_dataframe_with_config(
+    ann, resolved_config = fasta_to_dataframe_with_config(
         sources,
         fasta_config=fasta_config,
         decoy_pattern=decoy_pattern,
@@ -239,7 +241,7 @@ def _database_priority(fasta_id: str) -> int:
     return 2
 
 
-def _resolve_match_on(target: Any, match_on: str | None) -> str:
+def resolve_match_on(target: Any, match_on: str | None) -> str:
     """Resolve an explicit or conventional protein identifier column."""
     if match_on is not None:
         return match_on
@@ -260,10 +262,10 @@ def _var_join_keys(target: Any, match_on: str, *, is_uniprot: bool) -> pd.Index:
                 f"match_on column {match_on!r} not found in var columns: {list(var.columns)}"
             )
         raw = pd.Index(var[match_on].astype(str))
-    return pd.Index([_leading_accession(v, is_uniprot=is_uniprot) for v in raw])
+    return pd.Index([leading_accession(v, is_uniprot=is_uniprot) for v in raw])
 
 
-def _leading_accession(group_value: str, *, is_uniprot: bool) -> str:
+def leading_accession(group_value: str, *, is_uniprot: bool) -> str:
     """First accession of a protein group, matched to the FASTA ``proteinname`` form.
 
     Strips a ``prt:`` modality prefix, takes the first ``;``-separated token, and
@@ -271,14 +273,14 @@ def _leading_accession(group_value: str, *, is_uniprot: bool) -> str:
     ``fasta_to_dataframe`` derives ``proteinname``.
     """
     token = str(group_value).removeprefix("prt:").strip().split(";")[0].strip()
-    return _uniprot_proteinname(token) if is_uniprot else token
+    return uniprot_proteinname(token) if is_uniprot else token
 
 
-def _protein_group_accessions(group_value: str, *, is_uniprot: bool) -> tuple[str, ...]:
+def protein_group_accessions(group_value: str, *, is_uniprot: bool) -> tuple[str, ...]:
     """All semicolon-separated accessions represented by one protein-group value."""
     raw = str(group_value).removeprefix("prt:").strip()
     tokens = (token.strip() for token in raw.split(";"))
-    return tuple(_uniprot_proteinname(token) if is_uniprot else token for token in tokens if token)
+    return tuple(uniprot_proteinname(token) if is_uniprot else token for token in tokens if token)
 
 
 def _ensure_varm_free(target: Any) -> None:
@@ -311,7 +313,11 @@ def _build_varm_frame(
     return aligned
 
 
-def _warn_on_mismatch(keys: pd.Index, in_table: pd.Series, ann: pd.DataFrame) -> None:
+def _warn_on_mismatch(
+    keys: pd.Index,
+    in_table: NDArray[np.bool_],
+    ann: pd.DataFrame,
+) -> None:
     n_unmatched = int((~in_table).sum())
     if n_unmatched:
         logger.warning(f"{n_unmatched}/{len(keys)} var rows had no matching FASTA record")

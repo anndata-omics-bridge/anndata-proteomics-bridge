@@ -31,12 +31,14 @@ def test_read_none_when_no_uns_entry():
 
 def test_write_then_read_roundtrip():
     adata = _empty_adata()
-    params = Parameters(
-        software_name="Sage",
-        software_version="0.14.6",
-        enzyme="KR",
-        allowed_miscleavages=1,
-        fixed_mods="{'C': 57.02146}",
+    params = Parameters.model_validate(
+        {
+            "software_name": "Sage",
+            "software_version": "0.14.6",
+            "enzyme": "KR",
+            "allowed_miscleavages": 1,
+            "fixed_mods": "{'C': 57.02146}",
+        }
     )
     write_search_parameters(adata, params, source_path="/tmp/fake.json")
 
@@ -62,6 +64,7 @@ def test_write_then_read_typed_value_roundtrip():
 
     recovered = read_search_parameters(adata)
 
+    assert isinstance(recovered, Parameters)
     assert recovered.ident_fdr_psm == Probability(value=0.01)
     assert recovered.precursor_mass_tolerance == MassTolerance(
         mode="absolute", value=15.0, unit="ppm"
@@ -87,6 +90,7 @@ def test_read_validates_against_current_schema():
         "search_parameters": '{"software_name": "Sage"}',
     }
     recovered = read_search_parameters(adata)
+    assert isinstance(recovered, Parameters)
     assert recovered.software_name == "Sage"
 
 

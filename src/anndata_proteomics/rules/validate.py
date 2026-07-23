@@ -39,7 +39,7 @@ def validate_all_packaged() -> list[ValidationResult]:
     return [validate_file(path) for path in iter_packaged_documents()]
 
 
-def _log_and_exit_code(results: list[ValidationResult]) -> int:
+def log_and_exit_code(results: list[ValidationResult]) -> int:
     """Log PASS/FAIL per document and return zero only when all are valid."""
     package_parent = packaged_rules_root().parent
     for result in results:

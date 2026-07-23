@@ -19,7 +19,7 @@ MODIFICATION_MAPPING = {
 
 def _homogenize_mods(raw_mods: str) -> str:
     """Map a comma-separated MSAID modification string to ProForma-like notation."""
-    if not isinstance(raw_mods, str) or not raw_mods.strip():
+    if not raw_mods.strip():
         return ""
     mapped = [MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in raw_mods.split(",")]
     return ", ".join(mapped)
@@ -41,25 +41,27 @@ def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
     quant_method = raw["Quantification Type"]
     mbr = "Quan in all file" in quant_method or "MBR" in quant_method
 
-    return Parameters(
-        software_name="MSAID",
-        software_version=None,
-        search_engine=search_engine,
-        search_engine_version=search_engine_version,
-        ident_fdr_psm=0.01,
-        ident_fdr_peptide=0.01,
-        ident_fdr_protein=0.01,
-        enable_match_between_runs=mbr,
-        fragment_mass_tolerance=f"[-{fragment_tol}, {fragment_tol}]",
-        enzyme=raw["Enzyme"],
-        semi_enzymatic=raw["Enzyme Specificity"] != "full",
-        allowed_miscleavages=int(raw["Max. Missed Cleavage Sites"]),
-        min_peptide_length=int(raw["Min. Peptide Length"]),
-        max_peptide_length=int(raw["Max. Peptide Length"]),
-        fixed_mods=_homogenize_mods(raw["Static Modifications"]),
-        variable_mods=_homogenize_mods(raw["Variable Modifications"]),
-        max_mods=int(raw["Maximum Number of Modifications"]),
-        min_precursor_charge=int(raw["Min. Peptide Charge"]),
-        max_precursor_charge=int(raw["Max. Peptide Charge"]),
-        quantification_method=quant_method,
+    return Parameters.model_validate(
+        {
+            "software_name": "MSAID",
+            "software_version": None,
+            "search_engine": search_engine,
+            "search_engine_version": search_engine_version,
+            "ident_fdr_psm": 0.01,
+            "ident_fdr_peptide": 0.01,
+            "ident_fdr_protein": 0.01,
+            "enable_match_between_runs": mbr,
+            "fragment_mass_tolerance": f"[-{fragment_tol}, {fragment_tol}]",
+            "enzyme": raw["Enzyme"],
+            "semi_enzymatic": raw["Enzyme Specificity"] != "full",
+            "allowed_miscleavages": int(raw["Max. Missed Cleavage Sites"]),
+            "min_peptide_length": int(raw["Min. Peptide Length"]),
+            "max_peptide_length": int(raw["Max. Peptide Length"]),
+            "fixed_mods": _homogenize_mods(raw["Static Modifications"]),
+            "variable_mods": _homogenize_mods(raw["Variable Modifications"]),
+            "max_mods": int(raw["Maximum Number of Modifications"]),
+            "min_precursor_charge": int(raw["Min. Peptide Charge"]),
+            "max_precursor_charge": int(raw["Max. Peptide Charge"]),
+            "quantification_method": quant_method,
+        }
     )

@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy import sparse
-
+from anndata_proteomics._matrix_types import is_sparse_matrix
 from anndata_proteomics.params.anndata_io import read_search_parameters
 
 _NAMESPACE = "anndata_proteomics"
@@ -264,7 +263,7 @@ def _numeric_summary(values: np.ndarray) -> dict[str, float | None]:
 def _matrix_values(layer: Any) -> np.ndarray:
     if hasattr(layer, "to_memory"):
         layer = layer.to_memory()
-    if sparse.issparse(layer):
+    if is_sparse_matrix(layer):
         return layer.toarray()
     return np.asarray(layer)
 

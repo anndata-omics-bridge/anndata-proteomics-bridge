@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import anndata as ad
 import mudata
@@ -248,7 +249,9 @@ def test_roc_auc_handles_ties_and_missing_class() -> None:
     assert np.isnan(compute_roc_auc(tied[tied["species"] == "HUMAN"]))
 
 
-def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(tmp_path) -> None:
+def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
+    tmp_path: Path,
+) -> None:
     adata = _adata()
     adata.obs["condition"] = ["A", "A", "B", "B"]
     adata.varm["fasta"] = pd.DataFrame({"accession": ["x"] * adata.n_vars}, index=adata.var_names)
@@ -279,7 +282,9 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(tmp_path)
         restored.uns["proteobench"]["protein_mapping"]["accession_mapper"]["sha256"]
         == accession_mapping["sha256"]
     )
-    assert restored.varm["proteobench"].index.equals(restored.var_names)
+    restored_proteobench = restored.varm["proteobench"]
+    assert isinstance(restored_proteobench, pd.DataFrame)
+    assert restored_proteobench.index.equals(restored.var_names)
 
 
 def test_pipeline_refuses_collisions_and_conflicting_annotations() -> None:
@@ -317,10 +322,11 @@ def test_annotation_fasta_and_scoring_are_order_independent() -> None:
     validate_peptides_against_fasta(score_first, fasta, backend="ahocorapy")
 
     assert enrich_first.uns["proteobench"]["scores"] == score_first.uns["proteobench"]["scores"]
-    pd.testing.assert_frame_equal(
-        enrich_first.varm["proteobench"],
-        score_first.varm["proteobench"],
-    )
+    enrich_scores = enrich_first.varm["proteobench"]
+    score_scores = score_first.varm["proteobench"]
+    assert isinstance(enrich_scores, pd.DataFrame)
+    assert isinstance(score_scores, pd.DataFrame)
+    pd.testing.assert_frame_equal(enrich_scores, score_scores)
     assert "fasta_validation" in enrich_first.varm
     assert "fasta_validation" in score_first.varm
     assert enrich_first.obs["condition"].tolist() == score_first.obs["condition"].tolist()
@@ -335,7 +341,7 @@ def test_role_resolution_reports_unretained_protein_source() -> None:
         resolve_roles(adata, _module_settings(), tool)
 
 
-def test_config_defaults_match_golden_json_projection(tmp_path) -> None:
+def test_config_defaults_match_golden_json_projection(tmp_path: Path) -> None:
     module_path = tmp_path / "module.toml"
     module_path.write_text(_module_toml())
     tool_path = tmp_path / "tool.toml"
@@ -349,7 +355,9 @@ def test_config_defaults_match_golden_json_projection(tmp_path) -> None:
     assert tool.source_for("Proteins") == "Protein.Ids"
 
 
-def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(tmp_path) -> None:
+def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(
+    tmp_path: Path,
+) -> None:
     input_path = tmp_path / "converted.h5ad"
     _adata().write_h5ad(input_path)
     module_path = tmp_path / "module.toml"
@@ -372,7 +380,7 @@ def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(tmp_path) -
     assert "proteobench" not in ad.read_h5ad(input_path).uns
 
 
-def test_cli_scores_only_the_module_modality_in_mudata(tmp_path) -> None:
+def test_cli_scores_only_the_module_modality_in_mudata(tmp_path: Path) -> None:
     ion = _adata()
     protein = _adata()
     ion.var_names = [f"ion:{name}" for name in ion.var_names]

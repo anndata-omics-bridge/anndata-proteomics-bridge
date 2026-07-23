@@ -22,14 +22,14 @@ CASES = [
 ]
 
 
-def _normalize(v):
-    if v is None or v == "" or (isinstance(v, float) and math.isnan(v)):
+def _normalize(value: object) -> object:
+    if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):
         return None
-    return v
+    return value
 
 
 @pytest.mark.parametrize("txt_name", CASES)
-def test_peaks_matches_proteobench(txt_name):
+def test_peaks_matches_proteobench(txt_name: str):
     txt = PROTEOBENCH_PARAMS / txt_name
     csv = txt.with_suffix(".csv")
     if not txt.exists() or not csv.exists():

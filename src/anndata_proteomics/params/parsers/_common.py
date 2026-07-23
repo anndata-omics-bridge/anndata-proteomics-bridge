@@ -16,16 +16,17 @@ def read_text(source: Source, *, errors: str = "strict") -> str:
     as UTF-8. Centralizes the source-acquisition logic that each vendor parser
     used to re-implement; only the per-vendor parse step legitimately varies.
     """
-    if hasattr(source, "read"):
-        try:
-            source.seek(0)
-        except Exception:
-            pass
-        raw = source.read()
-        if isinstance(raw, bytes):
-            return raw.decode("utf-8", errors=errors)
-        return raw
-    return Path(source).read_text(encoding="utf-8", errors=errors)
+    if isinstance(source, str | Path):
+        return Path(source).read_text(encoding="utf-8", errors=errors)
+
+    try:
+        source.seek(0)
+    except Exception:
+        pass
+    raw = source.read()
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors=errors)
+    return raw
 
 
 def read_lines(source: Source, *, strip: bool = False) -> list[str]:

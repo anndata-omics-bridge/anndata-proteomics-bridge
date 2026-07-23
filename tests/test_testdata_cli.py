@@ -68,7 +68,8 @@ def test_clean_command_uses_explicit_data_directory(tmp_path: Path) -> None:
 
 
 def test_download_module_jsons_normalizes_renamed_github_archive(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zip_file:
@@ -95,7 +96,10 @@ def test_download_module_jsons_normalizes_renamed_github_archive(
     assert (result / "abc.json").exists()
 
 
-def test_download_module_jsons_replaces_only_metadata_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_download_module_jsons_replaces_only_metadata_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo_dir = tmp_path / "historical-name"
     previous_metadata = repo_dir / "historical-name-main"
     downloaded_fixture = repo_dir / "fixture-hash"
@@ -131,7 +135,10 @@ def test_download_module_jsons_replaces_only_metadata_snapshot(tmp_path: Path, m
     assert (downloaded_fixture / "input_file.tsv").read_text() == "quantity\n1\n"
 
 
-def test_fasta_download_extracts_archives_without_zip_files(tmp_path: Path, monkeypatch) -> None:
+def test_fasta_download_extracts_archives_without_zip_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zip_file:
         zip_file.writestr("reference.fasta", ">protein\nPEPTIDE\n")
@@ -184,17 +191,19 @@ decoy_flag = true
 """
 
     class Response:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
         @staticmethod
         def raise_for_status() -> None:
             return None
 
-    requested = []
+    requested: list[str] = []
 
     def get(url: str) -> Response:
         requested.append(url)
-        response = Response()
-        response.content = annotation_content if url in ANNOTATION_URLS.values() else tool_content
-        return response
+        content = annotation_content if url in ANNOTATION_URLS.values() else tool_content
+        return Response(content)
 
     monkeypatch.setattr(
         "anndata_proteomics.scripts.extract_raw_file_db.requests.get",

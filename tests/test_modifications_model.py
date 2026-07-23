@@ -117,15 +117,20 @@ _AC_NT = MapEntry(
 )
 
 
-def _rule(**overrides) -> ModificationRule:
-    base = dict(
+def _rule(
+    *,
+    token_pattern: str = r"\[([^\]]+)\]",
+    token_position: str = "after_residue",
+    unknown_policy: str = "preserve",
+    entries: tuple[MapEntry, ...] = (_OX_M, _CAM_C, _AC_NT),
+) -> ModificationRule:
+    return ModificationRule(
         source_column="Modified Sequence",
-        token_pattern=r"\[([^\]]+)\]",
-        token_position="after_residue",
-        entries=(_OX_M, _CAM_C, _AC_NT),
+        token_pattern=token_pattern,
+        token_position=token_position,
+        unknown_policy=unknown_policy,
+        entries=entries,
     )
-    base.update(overrides)
-    return ModificationRule(**base)
 
 
 def test_apply_rule_fragpipe_style_numeric_token():

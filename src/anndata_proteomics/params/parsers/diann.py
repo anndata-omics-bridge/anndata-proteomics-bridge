@@ -12,7 +12,7 @@ from packaging.version import InvalidVersion, Version
 from anndata_proteomics.params.parsers._common import read_lines
 from anndata_proteomics.params.model import MassTolerance, Parameters, ParamsError
 
-_Source = Union[str, Path, IO]
+_Source = Union[str, Path, IO[bytes], IO[str]]
 
 MODIFICATION_MAPPING = {
     # Command-line short forms
@@ -229,7 +229,10 @@ def _protein_inference(cmd_dict: dict[str, _SettingValue]) -> str:
     if "no-prot-inf" in cmd_dict:
         return "Disabled"
     if "pg-level" in cmd_dict:
-        pg = cmd_dict["pg-level"][0]
+        values = cmd_dict["pg-level"]
+        if not isinstance(values, list) or not values:
+            raise ValueError("DIA-NN pg-level requires a value")
+        pg = values[0]
         return {"0": "Isoforms", "1": "Protein_names", "2": "Genes"}.get(pg, "Genes")
     return "Genes"
 
@@ -287,14 +290,22 @@ def _from_cmdline(cmd_dict: dict[str, _SettingValue]) -> dict[str, object]:
     for pb_name, cmd_name in _PARAM_CMD_DICT.items():
         if cmd_name not in cmd_dict:
             continue
-        if isinstance(cmd_dict[cmd_name], bool):
-            out[pb_name] = cmd_dict[cmd_name]
+        value = cmd_dict[cmd_name]
+        if isinstance(value, bool):
+            out[pb_name] = value
+        elif isinstance(value, list):
+            out[pb_name] = _coerce(pb_name, value)
         else:
-            out[pb_name] = _coerce(pb_name, cmd_dict[cmd_name])
+            raise TypeError(f"DIA-NN command-line setting {cmd_name!r} must contain arguments")
 
     enzyme = out.get("enzyme")
     # Missing enzyme happens when running fragpipe-diann or kept as GUI default.
-    out["enzyme"] = "Trypsin/P" if enzyme is None else _normalize_enzyme(enzyme)
+    if enzyme is None:
+        out["enzyme"] = "Trypsin/P"
+    elif isinstance(enzyme, str):
+        out["enzyme"] = _normalize_enzyme(enzyme)
+    else:
+        raise TypeError("DIA-NN enzyme setting must be text")
     out["abundance_normalization_ions"] = (
         "None" if "no-norm" in cmd_dict else "Cross-run normalization"
     )
@@ -315,14 +326,15 @@ def _from_log_regex(lines: list[str], have: set[str]) -> dict[str, object]:
 
 def _from_cfg(lines: list[str]) -> dict[str, object]:
     """Settings re-read from the ``--cfg`` free-text block when a config file was used."""
+    cleavage = _extract_cfg(lines, _CLEAVAGE)
+    cleavage_exclusion = _extract_cfg(lines, _CLEAVAGE_EXC)
+    cleavage_text = cleavage if isinstance(cleavage, str) else ""
+    exclusion_text = cleavage_exclusion if isinstance(cleavage_exclusion, str) else ""
     out: dict[str, object] = {
         "ident_fdr_psm": _extract_cfg(lines, _FDR, float),
         "ident_fdr_protein": None,
         "enable_match_between_runs": bool(re.search(_MBR_FLAG, "".join(lines))),
-        "enzyme": _normalize_enzyme(
-            f"{_extract_cfg(lines, _CLEAVAGE) or ''},"
-            f"!{(_extract_cfg(lines, _CLEAVAGE_EXC) or '').strip('*')}"
-        ),
+        "enzyme": _normalize_enzyme(f"{cleavage_text},!{exclusion_text.strip('*')}"),
         "allowed_miscleavages": _extract_cfg(lines, _MISSED_CLEAVAGES, int),
         "min_peptide_length": _extract_cfg(lines, _MIN_PEP_LEN, int),
         "max_peptide_length": _extract_cfg(lines, _MAX_PEP_LEN, int),
@@ -342,7 +354,9 @@ def _from_cfg(lines: list[str]) -> dict[str, object]:
     if re.search(_NORMALISATION_DISABLED, "".join(lines)):
         out["abundance_normalization_ions"] = "None"
     inference = _extract_cfg(lines, _PROTEIN_INFERENCE)
-    out["protein_inference"] = _PROT_INF_MAP.get(inference, "Genes")
+    out["protein_inference"] = (
+        _PROT_INF_MAP.get(inference, "Genes") if isinstance(inference, str) else "Genes"
+    )
     return out
 
 
@@ -385,6 +399,8 @@ def extract_params(source: _Source) -> Parameters:
         value = out.get(key)
         if value in (None, ""):
             continue
+        if not isinstance(value, str | int | float):
+            raise TypeError(f"DIA-NN {key} must be numeric")
         out[key] = MassTolerance(mode="absolute", value=float(value), unit="ppm")
 
     # Map modification strings to ProForma-like notation.
@@ -395,4 +411,4 @@ def extract_params(source: _Source) -> Parameters:
         mapped = [MODIFICATION_MAPPING.get(mod.strip(), mod.strip()) for mod in raw.split(",")]
         out[mod_key] = ", ".join(mapped)
 
-    return Parameters(**out)
+    return Parameters.model_validate(out)

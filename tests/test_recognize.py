@@ -10,7 +10,7 @@ import pytest
 from anndata_proteomics.converters.recognize import matches, recognize
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import iter_packaged_rules
+from anndata_proteomics.rules.registry import RuleLocator, iter_packaged_rules
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEST_DATA_DIR = PROJECT_ROOT / "test_data_download"
@@ -32,7 +32,7 @@ def _find_test_data(software_name: str) -> Path | None:
     list(iter_packaged_rules()),
     ids=lambda item: f"{item.path.parent.name}/{item.level}",
 )
-def test_recognize_picks_correct_rule_for_each_vendor(locator) -> None:
+def test_recognize_picks_correct_rule_for_each_vendor(locator: RuleLocator) -> None:
     rule = load_rule(locator)
     data_file = _find_test_data(rule.software_name)
     if data_file is None or not data_file.exists():

@@ -11,25 +11,31 @@ Two design points it validates:
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import anndata as ad
 import mudata
 from mudata import MuData
 
+from conftest import ConversionFixture
+
 from anndata_proteomics.converters import pipeline as ui
+from anndata_proteomics.rules.schema import QuantificationLevel
 
 # Per-level var_names prefix; the bare id stays available in the .var columns.
-_PREFIX = {
+_PREFIX: dict[QuantificationLevel, str] = {
     "fragment": "frg:",
     "ion": "ion:",
     "protein": "prt:",
 }
 
 
-def _convert(fixture, level):
-    return ui._convert_level(fixture["df"].copy(), fixture["slug"], level, fixture["version"])
+def _convert(fixture: ConversionFixture, level: QuantificationLevel) -> ad.AnnData:
+    return ui.convert_level(fixture["df"].copy(), fixture["slug"], level, fixture["version"])
 
 
-def _build_levels(fixture) -> dict:
-    levels = {}
+def _build_levels(fixture: ConversionFixture) -> dict[str, ad.AnnData]:
+    levels: dict[str, ad.AnnData] = {}
     for level, prefix in _PREFIX.items():
         adata = _convert(fixture, level)
         adata.var_names = [prefix + str(v) for v in adata.var_names]
@@ -37,13 +43,15 @@ def _build_levels(fixture) -> dict:
     return levels
 
 
-def _wire_foreign_keys(levels: dict) -> None:
+def _wire_foreign_keys(levels: dict[str, ad.AnnData]) -> None:
     """Add prefixed FK columns pointing from each child level into its parent's var_names."""
     frg = levels["fragment"]
     frg.var["ion_fk"] = "ion:" + frg.var["ProForma_ion"].astype(str)
 
 
-def test_ion_carries_peptide_peptidoform_and_protein_metadata(diann_full_subset) -> None:
+def test_ion_carries_peptide_peptidoform_and_protein_metadata(
+    diann_full_subset: ConversionFixture,
+) -> None:
     ion = _convert(diann_full_subset, "ion")
     assert {
         "ProForma_peptidoform",
@@ -55,7 +63,9 @@ def test_ion_carries_peptide_peptidoform_and_protein_metadata(diann_full_subset)
     } <= set(ion.var.columns)
 
 
-def test_foreign_keys_resolve_into_parent_var_names(diann_full_subset) -> None:
+def test_foreign_keys_resolve_into_parent_var_names(
+    diann_full_subset: ConversionFixture,
+) -> None:
     levels = _build_levels(diann_full_subset)
     _wire_foreign_keys(levels)
     ion, prt, frg = levels["ion"], levels["protein"], levels["fragment"]
@@ -68,7 +78,10 @@ def test_foreign_keys_resolve_into_parent_var_names(diann_full_subset) -> None:
     assert set("prt:" + real) <= set(prt.var_names)
 
 
-def test_mudata_wraps_all_levels_and_round_trips(diann_full_subset, tmp_path) -> None:
+def test_mudata_wraps_all_levels_and_round_trips(
+    diann_full_subset: ConversionFixture,
+    tmp_path: Path,
+) -> None:
     levels = _build_levels(diann_full_subset)
     _wire_foreign_keys(levels)
 

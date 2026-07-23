@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from loguru import logger
+from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.annotation.loader import AnnotationTable
@@ -103,7 +105,7 @@ def _join_obs_frame(
 
 def _warn_on_mismatch(
     keys: pd.Index,
-    in_table: pd.Series,
+    in_table: NDArray[np.bool_],
     annotation: pd.DataFrame,
 ) -> None:
     n_unmatched = int((~in_table).sum())

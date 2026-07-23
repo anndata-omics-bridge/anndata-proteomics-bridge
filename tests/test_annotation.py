@@ -80,7 +80,9 @@ def test_obs_join_by_index(tmp_path: Path) -> None:
 
 def test_annotation_preserves_quantification_summary(tmp_path: Path) -> None:
     adata = _adata()
-    adata.layers["intensity"] = adata.X.copy()
+    matrix = adata.X
+    assert isinstance(matrix, np.ndarray)
+    adata.layers["intensity"] = matrix.copy()
     adata.uns["anndata_proteomics"] = {
         "quantification_level": "ion",
         "software_name": "Synthetic",

@@ -26,14 +26,14 @@ CASES = [
 ]
 
 
-def _normalize(v):
-    if v is None or v == "" or (isinstance(v, float) and math.isnan(v)):
+def _normalize(value: object) -> object:
+    if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):
         return None
-    return v
+    return value
 
 
 @pytest.mark.parametrize("txt_name", CASES)
-def test_diann_matches_proteobench(txt_name):
+def test_diann_matches_proteobench(txt_name: str):
     txt = PROTEOBENCH_PARAMS / txt_name
     csv = txt.with_suffix(".csv")
     if not txt.exists() or not csv.exists():
@@ -80,7 +80,7 @@ def test_diann_matches_proteobench(txt_name):
 # --- graceful degrade: a non-DIA-NN param file must not crash the parser (root-cause fix) --------
 
 
-def test_extract_params_rejects_non_diann_file_cleanly(tmp_path):
+def test_extract_params_rejects_non_diann_file_cleanly(tmp_path: Path):
     # A FragPipe workflow file mis-attached to a DIA-NN submission (real ProteoBench case): no
     # `diann --` command line and no DIA-NN version banner → a clean ParamsError, NOT InvalidVersion.
     from anndata_proteomics.params.model import ParamsError
@@ -91,12 +91,16 @@ def test_extract_params_rejects_non_diann_file_cleanly(tmp_path):
         extract_params(bad)
 
 
-def test_version_below_tolerates_missing_or_garbage_version():
-    # The crash was Version("") in the <1.8 gate; an absent/garbage version must degrade to False,
-    # never raise InvalidVersion.
-    from anndata_proteomics.params.parsers.diann import _version_below
+@pytest.mark.parametrize("version", ["", "not-a-version"])
+def test_extract_params_tolerates_missing_or_garbage_version(tmp_path: Path, version: str):
+    # Exercise the public parser path that previously called Version("") in
+    # the <1.8 gate.
+    banner = (
+        f"DIA-NN {version} (Data-Independent Acquisition by Neural Networks)\n" if version else ""
+    )
+    params_file = tmp_path / "diann.log"
+    params_file.write_text(f"{banner}diann --unimod4\n")
 
-    assert _version_below("", "1.8") is False
-    assert _version_below("not-a-version", "1.8") is False
-    assert _version_below("1.7", "1.8") is True
-    assert _version_below("1.9", "1.8") is False
+    params = extract_params(params_file)
+
+    assert params.software_version == (version or None)

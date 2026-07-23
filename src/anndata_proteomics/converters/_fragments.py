@@ -10,6 +10,8 @@ precursor columns and raising loudly if the parallel lists have mismatched lengt
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from anndata_proteomics.rules.schema import Fragments
@@ -17,7 +19,12 @@ from anndata_proteomics.rules.schema import Fragments
 
 def _split_packed(value: object, delimiter: str) -> list[str]:
     """Split one packed cell into tokens, dropping a trailing empty terminator."""
-    if pd.isna(value):
+    if (
+        value is None
+        or value is pd.NA
+        or value is pd.NaT
+        or (isinstance(value, float) and math.isnan(value))
+    ):
         return []
     text = str(value).strip()
     if not text:
@@ -26,6 +33,13 @@ def _split_packed(value: object, delimiter: str) -> list[str]:
     if not text:
         return []
     return [token.strip() for token in text.split(delimiter)]
+
+
+def _fragment_positions(tokens: object) -> list[int]:
+    """Return positions for the token list produced by ``_split_packed``."""
+    if not isinstance(tokens, list):
+        raise TypeError(f"expected packed fragment tokens, got {type(tokens).__name__}")
+    return list(range(len(tokens)))
 
 
 def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
@@ -60,7 +74,7 @@ def explode_fragments(df: pd.DataFrame, fragments: Fragments) -> pd.DataFrame:
 
     if fragments.label_strategy == "positional":
         # Positional: a parallel index list per precursor, exploded alongside the values.
-        work["_frag_pos"] = work[value_columns[0]].map(lambda tokens: list(range(len(tokens))))
+        work["_frag_pos"] = work[value_columns[0]].map(_fragment_positions)
         work = work.explode([*value_columns, "_frag_pos"], ignore_index=True)
         work = work.dropna(subset=[value_columns[0]]).reset_index(drop=True)
         work[fragments.label_output] = [f"frag_{int(pos)}" for pos in work["_frag_pos"]]

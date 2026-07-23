@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from anndata_proteomics.rules.registry import (
+from anndata_proteomics.rules._discovery import (
     RuleLocator,
     document_paths_for_software,
 )

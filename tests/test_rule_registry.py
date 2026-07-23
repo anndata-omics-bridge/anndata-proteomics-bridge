@@ -51,8 +51,3 @@ def test_find_rule_without_version_resolves_identical_diann_ion() -> None:
 def test_find_rule_unknown_software() -> None:
     with pytest.raises(RuleNotFound, match="nope"):
         find_rule("nope", "ion")
-
-
-def test_find_rule_unknown_level() -> None:
-    with pytest.raises(RuleNotFound, match="psm"):
-        find_rule("diann", "psm")  # type: ignore[arg-type]

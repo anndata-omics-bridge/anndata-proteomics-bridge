@@ -65,7 +65,7 @@ def test_sage_results_matches_proteobench_csv():
     _assert_matches_expected(params, SAGE_RESULTS_CSV)
 
 
-def test_sage_accepts_filelike_object(tmp_path):
+def test_sage_accepts_filelike_object(tmp_path: Path):
     payload = b"""{
         "version": "0.14.6",
         "database": {

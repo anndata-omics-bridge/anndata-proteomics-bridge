@@ -70,13 +70,21 @@ def _ion_adata(var_names: list[str]) -> ad.AnnData:
     )
 
 
+def _varm_frame(adata: ad.AnnData | MuData, key: str = "fasta") -> pd.DataFrame:
+    """Return a DataFrame-valued varm entry after checking its runtime type."""
+    value = adata.varm[key]
+    if not isinstance(value, pd.DataFrame):
+        raise AssertionError(f"expected varm[{key!r}] to contain a DataFrame")
+    return value
+
+
 # --- happy paths -------------------------------------------------------------
 
 
 def test_varm_fasta_has_expected_columns() -> None:
     adata = _protein_adata(["P03018", "A0A385XJL2"])
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
-    fa = adata.varm["fasta"]
+    fa = _varm_frame(adata)
     assert {
         "fasta.id",
         "fasta.header",
@@ -94,7 +102,7 @@ def test_leading_accession_join_splits_group_and_uniprot_form() -> None:
     # "P04982;Q99999" -> first token P04982; "sp|P04994|..." -> middle P04994.
     adata = _protein_adata(["P04982;Q99999", "sp|P04994|EX7L_ECOLI"])
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
-    fa = adata.varm["fasta"]
+    fa = _varm_frame(adata)
     assert fa.loc["P04982;Q99999", "gene_name"] == "rbsD"
     assert fa.loc["sp|P04994|EX7L_ECOLI", "gene_name"] == "xseA"
 
@@ -102,13 +110,13 @@ def test_leading_accession_join_splits_group_and_uniprot_form() -> None:
 def test_match_on_index_strips_prt_prefix() -> None:
     adata = _protein_adata(["prt:P03018", "prt:A0A385XJL2"], with_group_column=False)
     annotate_var_from_fasta(adata, FASTA, match_on="index", cleavage="Trypsin")
-    assert adata.varm["fasta"].loc["prt:P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
+    assert _varm_frame(adata).loc["prt:P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
 
 
 def test_columns_subset_restricts_stored_columns() -> None:
     adata = _protein_adata(["P03018"])
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin", columns=["nr_peptides"])
-    assert list(adata.varm["fasta"].columns) == ["nr_peptides"]
+    assert list(_varm_frame(adata).columns) == ["nr_peptides"]
 
 
 # --- cleavage / enzyme -------------------------------------------------------
@@ -125,7 +133,7 @@ def test_enzyme_read_from_search_parameters_drives_count() -> None:
         Parameters(enzyme="Lys-C", min_peptide_length=7, max_peptide_length=30),
     )
     annotate_var_from_fasta(adata, FASTA)  # no cleavage arg => read from params
-    assert adata.varm["fasta"].loc["P03018", "nr_peptides"] == lysc
+    assert _varm_frame(adata).loc["P03018", "nr_peptides"] == lysc
 
 
 def test_cleavage_override_wins_over_params() -> None:
@@ -133,7 +141,7 @@ def test_cleavage_override_wins_over_params() -> None:
     write_search_parameters(adata, Parameters(enzyme="Lys-C"))
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin/P", min_length=7, max_length=30)
     expected = count_peptides(SEQ_P03018, cleavage="Trypsin/P", min_length=7, max_length=30)
-    assert adata.varm["fasta"].loc["P03018", "nr_peptides"] == expected
+    assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
 def test_no_params_warns_and_defaults_to_trypsin(capsys: pytest.CaptureFixture[str]) -> None:
@@ -142,7 +150,7 @@ def test_no_params_warns_and_defaults_to_trypsin(capsys: pytest.CaptureFixture[s
     err = capsys.readouterr().err
     assert "no enzyme in search parameters" in err
     expected = count_peptides(SEQ_P03018, cleavage="Trypsin", min_length=7, max_length=30)
-    assert adata.varm["fasta"].loc["P03018", "nr_peptides"] == expected
+    assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
 def test_unknown_enzyme_override_warns_and_falls_back(
@@ -152,7 +160,7 @@ def test_unknown_enzyme_override_warns_and_falls_back(
     annotate_var_from_fasta(adata, FASTA, cleavage="Pepsin", min_length=7, max_length=30)
     assert "unknown enzyme 'Pepsin'" in capsys.readouterr().err
     expected = count_peptides(SEQ_P03018, cleavage="Trypsin", min_length=7, max_length=30)
-    assert adata.varm["fasta"].loc["P03018", "nr_peptides"] == expected
+    assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
 # --- MuData ------------------------------------------------------------------
@@ -179,7 +187,7 @@ def test_mudata_roundtrips_through_h5mu(tmp_path: Path) -> None:
     md.write_h5mu(out)
     with mudata.set_options(pull_on_update=False):
         rt = mudata.read_h5mu(out)
-    fa = rt.mod["protein"].varm["fasta"]
+    fa = _varm_frame(rt.mod["protein"])
     assert fa.loc["prt:P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
 
 
@@ -213,7 +221,7 @@ def test_partial_match_warns_and_roundtrips_nullable_flags(
     adata = _protein_adata(["P03018", "NOSUCH"])
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
     assert "1/2 var rows had no matching" in capsys.readouterr().err
-    fa = adata.varm["fasta"]
+    fa = _varm_frame(adata)
     assert fa.loc["P03018", "gene_name"] == "uvrD"
     assert pd.isna(fa.loc["NOSUCH", "gene_name"])
     assert str(fa["is_decoy"].dtype) == "boolean"
@@ -222,7 +230,7 @@ def test_partial_match_warns_and_roundtrips_nullable_flags(
 
     path = tmp_path / "partial.h5ad"
     adata.write_h5ad(path)
-    restored = ad.read_h5ad(path).varm["fasta"]
+    restored = _varm_frame(ad.read_h5ad(path))
     assert not restored.loc["P03018", "is_decoy"]
     assert pd.isna(restored.loc["NOSUCH", "is_decoy"])
 
@@ -247,12 +255,15 @@ def test_unknown_match_on_column_raises() -> None:
 
 def test_decoy_quantification_is_retained_and_annotated() -> None:
     adata = _protein_adata(["REV_Q13515"])
-    before = adata.X.copy()
+    matrix = adata.X
+    assert isinstance(matrix, np.ndarray)
+    before = matrix.copy()
     annotate_var_from_fasta(adata, FASTA, cleavage="Trypsin")
     assert adata.n_vars == 1
     np.testing.assert_array_equal(adata.X, before)
-    assert bool(adata.varm["fasta"].loc["REV_Q13515", "is_decoy"])
-    assert adata.varm["fasta"].loc["REV_Q13515", "fasta.id"] == "REV_sp|Q13515|BFSP2_HUMAN"
+    fasta_frame = _varm_frame(adata)
+    assert bool(fasta_frame.loc["REV_Q13515", "is_decoy"])
+    assert fasta_frame.loc["REV_Q13515", "fasta.id"] == "REV_sp|Q13515|BFSP2_HUMAN"
 
 
 # --- provenance --------------------------------------------------------------
@@ -289,7 +300,7 @@ def test_cli_fasta_writes_annotated_file(tmp_path: Path) -> None:
     assert out.exists()
 
     rt = ad.read_h5ad(out)
-    assert rt.varm["fasta"].loc["P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
+    assert _varm_frame(rt).loc["P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
     assert describe(rt)["fasta"] == {
         "feature_count": 2,
         "annotated_feature_count": 2,
@@ -330,9 +341,10 @@ def test_cli_fasta_validates_all_mudata_layers_by_default(tmp_path: Path) -> Non
     with mudata.set_options(pull_on_update=False):
         restored = mudata.read_h5mu(output_path)
     assert "fasta" in restored.mod["protein"].varm
-    assert (
-        restored.mod["ion"].varm["fasta_validation"].loc["ion:MDVSY", "peptide_in_leading_protein"]
-    )
+    assert _varm_frame(restored.mod["ion"], "fasta_validation").loc[
+        "ion:MDVSY",
+        "peptide_in_leading_protein",
+    ]
     assert restored.varp["feature_mapping"].nnz == 1
 
 

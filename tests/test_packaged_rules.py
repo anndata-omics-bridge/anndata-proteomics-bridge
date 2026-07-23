@@ -5,8 +5,16 @@ from __future__ import annotations
 import pytest
 
 from anndata_proteomics.rules.loader import load_packaged_rule, load_rule, load_rule_document
-from anndata_proteomics.rules.registry import iter_packaged_documents, iter_packaged_rules
+from anndata_proteomics.rules.registry import (
+    RuleLocator,
+    iter_packaged_documents,
+    iter_packaged_rules,
+)
 from anndata_proteomics.rules.validate import validate_all_packaged
+
+
+def _locator_id(locator: RuleLocator) -> str:
+    return f"{locator.path.parent.name}/{locator.level}"
 
 
 def test_all_packaged_documents_validate() -> None:
@@ -28,9 +36,9 @@ def test_all_documents_declare_software_version() -> None:
 @pytest.mark.parametrize(
     "locator",
     list(iter_packaged_rules()),
-    ids=lambda item: f"{item.path.parent.name}/{item.level}",
+    ids=_locator_id,
 )
-def test_locator_level_matches_effective_rule(locator) -> None:
+def test_locator_level_matches_effective_rule(locator: RuleLocator) -> None:
     assert load_rule(locator).quantification_level == locator.level
 
 

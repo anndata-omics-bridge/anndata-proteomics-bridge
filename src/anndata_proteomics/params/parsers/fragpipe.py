@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import re
-from collections import namedtuple
 from io import BytesIO
 from pathlib import Path
-from typing import IO, Union
+from typing import IO, NamedTuple, Union
 
 import pandas as pd
 
 from anndata_proteomics.params.parsers._common import lookup_mass_mod, read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
 
-Parameter = namedtuple("Parameter", ["name", "value", "comment"])
+
+class Parameter(NamedTuple):
+    """One parsed FragPipe workflow entry."""
+
+    name: str | None
+    value: str | None
+    comment: str | None
+
 
 _VERSION_NO_PATTERN = r"MSFragger-(.+)\.jar"
 
@@ -144,9 +150,13 @@ def _parse_phi_report_filters(cmd: str) -> tuple[float, float, float]:
         "peptide": r"--pep\s+(\d+\.\d+)",
         "protein": r"--prot\s+(\d+\.\d+)",
     }
-    return tuple(
-        float(m.group(1)) if (m := re.search(pat, cmd)) else default
-        for pat in (patterns["psm"], patterns["peptide"], patterns["protein"])
+    psm_match = re.search(patterns["psm"], cmd)
+    peptide_match = re.search(patterns["peptide"], cmd)
+    protein_match = re.search(patterns["protein"], cmd)
+    return (
+        float(psm_match.group(1)) if psm_match else default,
+        float(peptide_match.group(1)) if peptide_match else default,
+        float(protein_match.group(1)) if protein_match else default,
     )
 
 
@@ -263,7 +273,7 @@ def _protein_inference(fp: pd.Series) -> str | None:
     return None
 
 
-def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
+def extract_params(source: Union[str, Path, IO[bytes], IO[str], BytesIO]) -> Parameters:
     """Parse a FragPipe ``.workflow`` file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.fragger.extract_params``. Loads the workflow
@@ -286,30 +296,32 @@ def extract_params(source: Union[str, Path, IO, BytesIO]) -> Parameters:
     min_z, max_z = _charge_range(fp)
     min_prec_mz, max_prec_mz = _precursor_mz(fp, min_z, max_z)
 
-    return Parameters(
-        software_name="FragPipe",
-        software_version=fragpipe_version,
-        search_engine="MSFragger",
-        search_engine_version=msfragger_version,
-        enzyme=_resolve_enzyme(fp),
-        allowed_miscleavages=int(fp.loc["msfragger.allowed_missed_cleavage_1"]),
-        semi_enzymatic=fp.loc["msfragger.num_enzyme_termini"] != "2",
-        fixed_mods=_parse_fixed_mods(fp.loc["msfragger.table.fix-mods"]),
-        variable_mods=_parse_variable_mods(fp.loc["msfragger.table.var-mods"]),
-        max_mods=int(fp.loc["msfragger.max_variable_mods_per_peptide"]),
-        min_peptide_length=int(fp.loc["msfragger.digest_min_length"]),
-        max_peptide_length=int(fp.loc["msfragger.digest_max_length"]),
-        precursor_mass_tolerance=precursor_tol,
-        fragment_mass_tolerance=fragment_tol,
-        ident_fdr_psm=psm,
-        ident_fdr_peptide=peptide_fdr,
-        ident_fdr_protein=protein_fdr,
-        enable_match_between_runs=enable_mbr,
-        quantification_method=quantification_method,
-        protein_inference=_protein_inference(fp),
-        min_precursor_charge=min_z,
-        max_precursor_charge=max_z,
-        min_precursor_mz=min_prec_mz,
-        max_precursor_mz=max_prec_mz,
-        abundance_normalization_ions=abundance_norm,
+    return Parameters.model_validate(
+        {
+            "software_name": "FragPipe",
+            "software_version": fragpipe_version,
+            "search_engine": "MSFragger",
+            "search_engine_version": msfragger_version,
+            "enzyme": _resolve_enzyme(fp),
+            "allowed_miscleavages": int(fp.loc["msfragger.allowed_missed_cleavage_1"]),
+            "semi_enzymatic": fp.loc["msfragger.num_enzyme_termini"] != "2",
+            "fixed_mods": _parse_fixed_mods(fp.loc["msfragger.table.fix-mods"]),
+            "variable_mods": _parse_variable_mods(fp.loc["msfragger.table.var-mods"]),
+            "max_mods": int(fp.loc["msfragger.max_variable_mods_per_peptide"]),
+            "min_peptide_length": int(fp.loc["msfragger.digest_min_length"]),
+            "max_peptide_length": int(fp.loc["msfragger.digest_max_length"]),
+            "precursor_mass_tolerance": precursor_tol,
+            "fragment_mass_tolerance": fragment_tol,
+            "ident_fdr_psm": psm,
+            "ident_fdr_peptide": peptide_fdr,
+            "ident_fdr_protein": protein_fdr,
+            "enable_match_between_runs": enable_mbr,
+            "quantification_method": quantification_method,
+            "protein_inference": _protein_inference(fp),
+            "min_precursor_charge": min_z,
+            "max_precursor_charge": max_z,
+            "min_precursor_mz": min_prec_mz,
+            "max_precursor_mz": max_prec_mz,
+            "abundance_normalization_ions": abundance_norm,
+        }
     )

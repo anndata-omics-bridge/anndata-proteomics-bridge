@@ -401,7 +401,7 @@ class Parameters(_Strict):
                 )
         if unparsed:
             data["unparsed_parameters"] = unparsed
-        return cls(**data)
+        return cls.model_validate(data)
 
     def _legacy_value(self, field: str) -> object:
         value = getattr(self, field)

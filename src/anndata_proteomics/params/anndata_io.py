@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 
 import anndata as ad
+import mudata as md
 
 from anndata_proteomics.params.model import Parameters
 
@@ -39,7 +40,7 @@ def read_search_parameters(adata: ad.AnnData) -> Parameters | None:
 
 
 def write_search_parameters(
-    adata: ad.AnnData,
+    adata: ad.AnnData | md.MuData,
     params: Parameters,
     *,
     source_path: str | None = None,

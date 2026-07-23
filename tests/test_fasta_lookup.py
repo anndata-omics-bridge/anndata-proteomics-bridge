@@ -129,6 +129,7 @@ def test_find_fasta_resolves_module_from_dataset_dir():
 def test_hye_fasta_contains_all_three_species():
     _require_fasta_cache()
     fasta = find_fasta(module="dia_aif")
+    assert fasta is not None
     df = fasta_to_dataframe(fasta, include_sequence=False)
     suffixes = df["fasta.id"].str.extract(r"_(HUMAN|YEAST|ECOLI)$")[0].dropna()
     counts = suffixes.value_counts().to_dict()
@@ -140,6 +141,7 @@ def test_hye_fasta_contains_all_three_species():
 def test_hy_fasta_omits_ecoli_proteome():
     _require_fasta_cache()
     fasta = find_fasta(module="dia_singlecell")
+    assert fasta is not None
     df = fasta_to_dataframe(fasta, include_sequence=False)
     suffixes = df["fasta.id"].str.extract(r"_(HUMAN|YEAST|ECOLI)$")[0].dropna()
     counts = suffixes.value_counts().to_dict()

@@ -22,17 +22,17 @@ CASES = [
 ]
 
 
-def _normalize(v):
+def _normalize(value: object) -> object:
     """Treat NaN, None, and 'NaN' as equivalent for comparison."""
-    if v is None:
+    if value is None:
         return None
-    if isinstance(v, float) and math.isnan(v):
+    if isinstance(value, float) and math.isnan(value):
         return None
-    return v
+    return value
 
 
 @pytest.mark.parametrize(("xml_name", "expected_name"), CASES)
-def test_maxquant_matches_proteobench(xml_name, expected_name):
+def test_maxquant_matches_proteobench(xml_name: str, expected_name: str):
     xml_path = PROTEOBENCH_PARAMS / xml_name
     expected_path = PROTEOBENCH_PARAMS / expected_name
     if not xml_path.exists() or not expected_path.exists():

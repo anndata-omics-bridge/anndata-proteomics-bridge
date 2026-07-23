@@ -1,8 +1,9 @@
-# Mirrors the qg_dump setup (ruff lint+format, then pytest), adapted for this repo:
+# Full APB quality gate: Ruff lint/format, Pyright, Deptry, and pytest.
 #   * dev tooling is installed via the `dev` optional-dependency group → `uv run --extra dev`
 #   * no GUI test suite here, so pytest runs the whole suite
-#   * pyright is intentionally omitted (not configured/installed in this repo yet);
-#     add a local pyright hook here once it is set up, mirroring qg_dump.
+#   * pyright uses the same locked dev environment as pytest and checks the full
+#     configured src/tests scope rather than only changed filenames
+#   * deptry checks the complete dependency boundary rather than changed files
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.12
@@ -13,6 +14,24 @@ repos:
 
   - repo: local
     hooks:
+      - id: pyright
+        name: pyright strict
+        entry: uv run --extra dev pyright
+        language: system
+        pass_filenames: false
+
+      - id: deptry
+        name: dependency declarations
+        entry: uv run --extra dev deptry .
+        language: system
+        pass_filenames: false
+
+      - id: forbid-type-checker-ignores
+        name: forbid type-checker ignore comments
+        entry: '#\s*(type:\s*ignore|pyright:\s*ignore)'
+        language: pygrep
+        types: [python]
+
       - id: pytest
         name: pytest
         entry: uv run --extra dev pytest -x -q
