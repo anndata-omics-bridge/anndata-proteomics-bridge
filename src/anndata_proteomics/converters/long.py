@@ -32,6 +32,24 @@ def _aggfunc_for(rule: ParseRule) -> str:
     return "first"
 
 
+def _raise_on_duplicate_cells(df: pd.DataFrame, rule: ParseRule) -> None:
+    """Reject repeated observation-feature keys when the rule requests ``error``."""
+    if rule.axis.duplicates.mode != "error":
+        return
+    keys = [*rule.axis.obs_keys, *rule.axis.var_keys]
+    valid = df[keys].notna().all(axis=1)
+    duplicated = df.loc[valid, keys].duplicated(keep=False)
+    if not duplicated.any():
+        return
+    examples = (
+        df.loc[valid, keys].loc[duplicated].drop_duplicates().head(5).to_dict(orient="records")
+    )
+    raise ValueError(
+        "duplicate observation-feature keys are not allowed when "
+        f"axis.duplicates.mode='error'; examples: {examples}"
+    )
+
+
 def _build_matrix(
     obs_codes: np.ndarray,
     var_codes: np.ndarray,
@@ -57,10 +75,12 @@ def _build_matrix(
         present = np.zeros((n_obs, n_var), dtype=bool)
         present[obs_codes[key_ok], var_codes[key_ok]] = True
         matrix[present] = totals[present]
-    else:  # "first" non-null: assign in reverse so the lowest-index value wins
+    else:  # "first" non-null
         keep = key_ok & ~np.isnan(values)
         oc, vc, vv = obs_codes[keep], var_codes[keep], values[keep]
-        matrix[oc[::-1], vc[::-1]] = vv[::-1]
+        flat_cells = oc.astype(np.int64, copy=False) * n_var + vc
+        _, first = np.unique(flat_cells, return_index=True)
+        matrix[oc[first], vc[first]] = vv[first]
     return matrix
 
 
@@ -71,6 +91,7 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     obs_keys = list(rule.axis.obs_keys)
     var_keys = list(rule.axis.var_keys)
+    _raise_on_duplicate_cells(df, rule)
 
     obs_df = build_axis_frame(df, obs_keys, rule.columns.obs.names)
     var_df = build_axis_frame(df, var_keys, rule.columns.var.names)

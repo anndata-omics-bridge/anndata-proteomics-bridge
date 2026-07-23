@@ -76,6 +76,9 @@ def test_find_proteobench_tool_settings_uses_audited_module_vendor_pair(
     expected = tmp_path / "proteobench_settings" / "dia_astral" / "diann.toml"
     expected.parent.mkdir(parents=True)
     expected.write_text("[mapper]\nProtein = 'Proteins'\n")
+    maxquant = tmp_path / "proteobench_settings" / "dda_astral" / "maxquant.toml"
+    maxquant.parent.mkdir(parents=True)
+    maxquant.write_text("[mapper]\nProteins = 'Proteins'\n")
 
     assert (
         find_proteobench_tool_settings(
@@ -87,8 +90,16 @@ def test_find_proteobench_tool_settings_uses_audited_module_vendor_pair(
     )
     assert (
         find_proteobench_tool_settings(
-            module="dia_astral",
+            module="dda_astral",
             vendor="maxquant",
+            test_data_dir=tmp_path,
+        )
+        == maxquant
+    )
+    assert (
+        find_proteobench_tool_settings(
+            module="dia_astral",
+            vendor="spectronaut",
             test_data_dir=tmp_path,
         )
         is None

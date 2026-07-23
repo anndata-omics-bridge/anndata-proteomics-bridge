@@ -10,7 +10,7 @@
         "Raw_File"
       ],
       "duplicates": {
-        "mode": "error"
+        "mode": "aggregate"
       }
     },
     "columns": {
@@ -71,9 +71,18 @@
             "Charge": "Charge",
             "Mass": "Mass",
             "Proteins": "Proteins",
+            "Leading_Proteins": "Leading proteins",
             "Leading_Razor_Protein": "Leading razor protein"
           },
           "compute": [
+            {
+              "name": "Proteins",
+              "from": [
+                "Proteins",
+                "Leading_Proteins"
+              ],
+              "how": "coalesce"
+            },
             {
               "name": "ProForma_peptidoform",
               "from": [

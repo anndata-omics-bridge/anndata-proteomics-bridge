@@ -50,6 +50,9 @@ _MODULE_ANNOTATION: dict[str, str] = {
 # Values are paths relative to ProteoBench's Quant/lfq settings directory at the
 # compatibility revision recorded by ``anndata_proteomics.proteobench.metrics``.
 PROTEOBENCH_TOOL_SETTINGS: dict[tuple[str, str], str] = {
+    ("dda_qexactive", "fragpipe"): "DDA/ion/QExactive/parse_settings_fragpipe.toml",
+    ("dda_astral", "fragpipe"): "DDA/ion/Astral/parse_settings_fragpipe.toml",
+    ("dda_astral", "maxquant"): "DDA/ion/Astral/parse_settings_maxquant.toml",
     ("dda_peptidoform", "wombat"): "DDA/peptidoform/parse_settings_wombat.toml",
     ("dia_aif", "diann"): "DIA/ion/AIF/parse_settings_diann.toml",
     ("dia_astral", "diann"): "DIA/ion/Astral/parse_settings_diann.toml",

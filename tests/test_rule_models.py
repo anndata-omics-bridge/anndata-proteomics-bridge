@@ -306,3 +306,65 @@ def test_proforma_sequence_compute_requires_modifications():
     bad.pop("modifications")
     with pytest.raises(ValidationError, match="modifications"):
         _parse(bad)
+
+
+def test_coalesce_can_replace_selected_column_in_place():
+    document = copy.deepcopy(LONG_EXAMPLE)
+    document["columns"]["var"]["select"]["Fallback_Proteins"] = "Leading proteins"
+    document["columns"]["var"]["compute"].insert(
+        0,
+        {
+            "name": "Protein_Ids",
+            "from": ["Protein_Ids", "Fallback_Proteins"],
+            "how": "coalesce",
+        },
+    )
+
+    rule = _parse(document)
+
+    assert rule.columns.var.names.count("Protein_Ids") == 1
+
+
+@pytest.mark.parametrize("how", ["coalesce", "join_nonempty"])
+def test_generic_compute_requires_at_least_two_sources(how: str):
+    bad = copy.deepcopy(LONG_EXAMPLE)
+    bad["columns"]["var"]["compute"].insert(
+        0,
+        {"name": "Proteins", "from": ["Protein_Ids"], "how": how, "separator": ";"},
+    )
+    if how == "coalesce":
+        bad["columns"]["var"]["compute"][0].pop("separator")
+
+    with pytest.raises(ValidationError, match="at least two"):
+        _parse(bad)
+
+
+def test_join_nonempty_requires_nonempty_separator():
+    bad = copy.deepcopy(LONG_EXAMPLE)
+    bad["columns"]["var"]["compute"].insert(
+        0,
+        {
+            "name": "Proteins",
+            "from": ["Protein_Ids", "Genes"],
+            "how": "join_nonempty",
+        },
+    )
+
+    with pytest.raises(ValidationError, match="non-empty separator"):
+        _parse(bad)
+
+
+def test_separator_is_only_valid_for_join_nonempty():
+    bad = copy.deepcopy(LONG_EXAMPLE)
+    bad["columns"]["var"]["compute"].insert(
+        0,
+        {
+            "name": "Proteins",
+            "from": ["Protein_Ids", "Genes"],
+            "how": "coalesce",
+            "separator": ";",
+        },
+    )
+
+    with pytest.raises(ValidationError, match="separator is valid only"):
+        _parse(bad)

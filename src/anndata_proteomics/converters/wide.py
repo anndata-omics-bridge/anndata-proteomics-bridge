@@ -8,7 +8,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from anndata_proteomics.converters._axis import build_axis_frame
+from anndata_proteomics.converters._axis import build_axis_frame, build_index
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.converters.numeric import coerce_numeric
@@ -35,27 +35,72 @@ def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]
 
 
 def _gather_layer_matrix(
-    df: pd.DataFrame, layer: Layer, sample_order: list[str], var_index: pd.Index
+    df: pd.DataFrame,
+    layer: Layer,
+    sample_order: list[str],
+    var_index: pd.Index,
+    var_keys: list[str],
+    duplicate_mode: str,
 ) -> np.ndarray:
     """Build (n_obs × n_var) matrix for a single wide layer."""
     matches = _matching_columns(list(df.columns), layer.source)
-    sample_to_col = {sample: col for col, sample in matches}
+    sample_to_columns: dict[str, list[str]] = {}
+    for column, sample in matches:
+        sample_to_columns.setdefault(sample, []).append(column)
 
     n_obs = len(sample_order)
     n_var = len(var_index)
     matrix = np.full((n_obs, n_var), np.nan, dtype="float64")
+    feature_index = build_index(df, var_keys)
 
     for i, sample in enumerate(sample_order):
-        col = sample_to_col.get(sample)
-        if col is None:
+        columns = sample_to_columns.get(sample, [])
+        if not columns:
             continue
-        series = df[col]
-        if layer.encoding_mode == "factor":
-            series = encode_factor(series, layer.categories)
+        if duplicate_mode == "error" and len(columns) > 1:
+            raise ValueError(
+                "duplicate observation-feature keys are not allowed when "
+                f"axis.duplicates.mode='error'; layer {layer.name!r} has multiple "
+                f"columns for sample {sample!r}: {columns}"
+            )
+        values = [_coerce_layer_series(df[column], layer) for column in columns]
+        combined = pd.concat(values, axis=1)
+        if duplicate_mode == "aggregate":
+            series = combined.sum(axis=1)
         else:
-            series = coerce_numeric(series, layer.missing_values)
-        matrix[i, :] = series.values[:n_var]
+            series = combined.bfill(axis=1).iloc[:, 0]
+        series.index = feature_index
+        grouped = series.groupby(level=0, sort=False)
+        if duplicate_mode == "aggregate":
+            series = grouped.sum()
+        else:
+            series = grouped.first()
+        matrix[i, :] = series.reindex(var_index).to_numpy(dtype="float64")
     return matrix
+
+
+def _coerce_layer_series(series: pd.Series, layer: Layer) -> pd.Series:
+    if layer.encoding_mode == "factor":
+        return encode_factor(series, layer.categories)
+    return coerce_numeric(series, layer.missing_values)
+
+
+def _raise_on_duplicate_features(df: pd.DataFrame, rule: ParseRule) -> None:
+    """Reject repeated feature keys in a wide table when requested by the rule."""
+    if rule.axis.duplicates.mode != "error":
+        return
+    keys = list(rule.axis.var_keys)
+    valid = df[keys].notna().all(axis=1)
+    duplicated = df.loc[valid, keys].duplicated(keep=False)
+    if not duplicated.any():
+        return
+    examples = (
+        df.loc[valid, keys].loc[duplicated].drop_duplicates().head(5).to_dict(orient="records")
+    )
+    raise ValueError(
+        "duplicate observation-feature keys are not allowed when "
+        f"axis.duplicates.mode='error'; examples: {examples}"
+    )
 
 
 def _apply_sample_cleanup(samples: list[str], rule: ParseRule) -> list[str]:
@@ -74,6 +119,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     """Convert a wide DataFrame to AnnData pieces using a wide ParseRule."""
     if rule.input_shape != "wide":
         raise ValueError(f"convert_wide called with {rule.input_shape!r} rule")
+    _raise_on_duplicate_features(df, rule)
 
     headers = list(df.columns)
 
@@ -101,7 +147,14 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
                 "skipping optional layer %r: no headers matched %r", layer.name, layer.source
             )
             continue
-        layers[layer.name] = _gather_layer_matrix(df, layer, sample_order, var_df.index)
+        layers[layer.name] = _gather_layer_matrix(
+            df,
+            layer,
+            sample_order,
+            var_df.index,
+            list(rule.axis.var_keys),
+            rule.axis.duplicates.mode,
+        )
 
     obs_names = _apply_sample_cleanup(sample_order, rule)
     obs_index = pd.Index(obs_names, name="sample")

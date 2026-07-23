@@ -16,7 +16,12 @@ TokenPosition = Literal[
 ]
 UnknownPolicy = Literal["preserve", "drop", "error"]
 ColumnComputeMode = Literal[
-    "proforma_sequence", "stripped_sequence", "proforma_ion", "proforma_fragment"
+    "coalesce",
+    "join_nonempty",
+    "proforma_sequence",
+    "stripped_sequence",
+    "proforma_ion",
+    "proforma_fragment",
 ]
 
 _PROFORMA_COMPUTE_NAME = {
@@ -48,6 +53,18 @@ class ColumnCompute(_Strict):
     name: str
     from_: list[str] = Field(alias="from", min_length=1)
     how: ColumnComputeMode
+    separator: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_generic_compute(self) -> ColumnCompute:
+        if self.how in {"coalesce", "join_nonempty"} and len(self.from_) < 2:
+            raise ValueError(f"how={self.how!r} requires at least two source columns.")
+        if self.how == "join_nonempty":
+            if self.separator is None or not self.separator:
+                raise ValueError("how='join_nonempty' requires a non-empty separator.")
+        elif self.separator is not None:
+            raise ValueError("separator is valid only for how='join_nonempty'.")
+        return self
 
 
 class ColumnGroup(_Strict):
@@ -56,7 +73,7 @@ class ColumnGroup(_Strict):
 
     @property
     def names(self) -> list[str]:
-        return list(self.select) + [column.name for column in self.compute]
+        return list(dict.fromkeys([*self.select, *(column.name for column in self.compute)]))
 
 
 class Columns(_Strict):
@@ -272,13 +289,15 @@ class ParseRule(_Strict):
                     f"computed column {column.name!r} references undeclared "
                     f"var column(s): {missing_sources}"
                 )
-            expected_name = _PROFORMA_COMPUTE_NAME[column.how]
-            if column.name != expected_name:
+            expected_name = _PROFORMA_COMPUTE_NAME.get(column.how)
+            if expected_name is not None and column.name != expected_name:
                 raise ValueError(
                     f"computed column with how={column.how!r} must be named "
                     f"{expected_name!r}, got {column.name!r}"
                 )
-            if column.how in {"proforma_sequence", "stripped_sequence"}:
+            if column.how in {"coalesce", "join_nonempty"}:
+                pass
+            elif column.how in {"proforma_sequence", "stripped_sequence"}:
                 if self.modifications is None:
                     raise ValueError(f"how={column.how!r} requires a [modifications] block.")
                 if len(column.from_) != 1:

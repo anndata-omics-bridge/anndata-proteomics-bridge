@@ -68,11 +68,21 @@
             "Charge": "Charge",
             "M_Z": "M/Z",
             "Protein": "Protein",
+            "Mapped_Proteins": "Mapped Proteins",
             "Protein_ID": "Protein ID",
             "Gene": "Gene",
             "Assigned_Modifications": "Assigned Modifications"
           },
           "compute": [
+            {
+              "name": "Protein",
+              "from": [
+                "Protein",
+                "Mapped_Proteins"
+              ],
+              "how": "join_nonempty",
+              "separator": ","
+            },
             {
               "name": "ProForma_peptidoform",
               "from": [

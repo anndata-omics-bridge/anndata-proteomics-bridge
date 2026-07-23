@@ -52,6 +52,8 @@
         },
         "how": {
           "enum": [
+            "coalesce",
+            "join_nonempty",
             "proforma_sequence",
             "stripped_sequence",
             "proforma_ion",
@@ -59,6 +61,18 @@
           ],
           "title": "How",
           "type": "string"
+        },
+        "separator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Separator"
         }
       },
       "required": [

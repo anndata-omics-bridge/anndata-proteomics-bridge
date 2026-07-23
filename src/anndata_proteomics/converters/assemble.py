@@ -164,6 +164,16 @@ def _materialize_column_group(df: pd.DataFrame, group: ColumnGroup) -> None:
 
 
 def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
+    if column.how in {"coalesce", "join_nonempty"}:
+        missing = [key for key in column.from_ if key not in df.columns]
+        if missing:
+            raise ValueError(
+                f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
+            )
+        if column.how == "coalesce":
+            return _coalesce_columns(df, column.from_)
+        assert column.separator is not None
+        return _join_nonempty_columns(df, column.from_, column.separator)
     if column.how in {"proforma_sequence", "stripped_sequence"}:
         source_key = column.how
         if source_key not in df.columns:
@@ -197,6 +207,33 @@ def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
             index=df.index,
         )
     raise ValueError(f"unsupported column compute mode: {column.how!r}")
+
+
+def _coalesce_columns(df: pd.DataFrame, sources: list[str]) -> pd.Series:
+    """Return the first non-null source value in declaration order."""
+    result = df[sources[0]].astype(object).copy()
+    for source in sources[1:]:
+        result = result.where(result.notna(), df[source].astype(object))
+    return result
+
+
+def _join_nonempty_columns(
+    df: pd.DataFrame,
+    sources: list[str],
+    separator: str,
+) -> pd.Series:
+    """Join non-null, non-empty source values in declaration order."""
+    result = pd.Series("", index=df.index, dtype="string")
+    has_value = pd.Series(False, index=df.index)
+    for source in sources:
+        values = df[source].astype("string")
+        valid = values.notna() & values.ne("")
+        append = has_value & valid
+        result = result.mask(append, result + separator + values)
+        first = ~has_value & valid
+        result = result.mask(first, values)
+        has_value |= valid
+    return result.mask(~has_value, pd.NA)
 
 
 def _format_charge(value: object) -> str:

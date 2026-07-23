@@ -56,3 +56,26 @@ def test_fragpipe_intensity_declares_zero_as_missing() -> None:
     assert by_name["Intensity"].missing_values == [0.0]
     assert by_name["Spectral_Count"].missing_values == []
     assert by_name["Match_Type"].missing_values == []
+
+
+def test_fragpipe_combines_leading_and_mapped_proteins() -> None:
+    rule = load_packaged_rule("fragpipe", "ion", "22.1-build02")
+    protein = next(column for column in rule.columns.var.compute if column.name == "Protein")
+
+    assert rule.columns.var.select["Mapped_Proteins"] == "Mapped Proteins"
+    assert protein.how == "join_nonempty"
+    assert protein.from_ == ["Protein", "Mapped_Proteins"]
+    assert protein.separator == ","
+    assert rule.columns.var.names.count("Protein") == 1
+
+
+def test_maxquant_fills_missing_proteins_from_leading_proteins() -> None:
+    rule = load_packaged_rule("maxquant", "ion", "2.6.7.0")
+    proteins = next(column for column in rule.columns.var.compute if column.name == "Proteins")
+
+    assert rule.axis.duplicates.mode == "aggregate"
+    assert rule.columns.var.select["Leading_Proteins"] == "Leading proteins"
+    assert rule.columns.var.select["Leading_Razor_Protein"] == "Leading razor protein"
+    assert proteins.how == "coalesce"
+    assert proteins.from_ == ["Proteins", "Leading_Proteins"]
+    assert rule.columns.var.names.count("Proteins") == 1

@@ -111,8 +111,11 @@ After merging, every effective `ParseRule` has these required fields:
 `axis.x_layer` must match a declared layer name.
 
 `axis.duplicates.mode` is one of `error` (default), `aggregate`, `keep_first`, or
-`keep_all_as_raw_table`. Duplicate aggregation resolves repeated observations of an
-already valid level; it does not derive another quantitative level.
+`keep_all_as_raw_table`. `error` rejects repeated observation-feature cells,
+`aggregate` sums their layer values, and `keep_first` retains the first non-null
+layer value in input order. `keep_all_as_raw_table` is reserved but not implemented.
+Duplicate aggregation resolves repeated observations of an already valid level; it
+does not derive another quantitative level.
 
 ## Columns
 
@@ -138,13 +141,18 @@ separators with underscores. Do not replace them with cross-vendor semantic alia
 
 | `how` | Required `name` | Purpose |
 |---|---|---|
+| `coalesce` | Any declared output | First non-null source value in declared order. |
+| `join_nonempty` | Any declared output | Non-null/non-empty source values joined with the required `separator`. |
 | `stripped_sequence` | `ProForma_peptide` | Sequence without modifications. |
 | `proforma_sequence` | `ProForma_peptidoform` | Normalized modified sequence. |
 | `proforma_ion` | `ProForma_ion` | Peptidoform plus charge. |
 | `proforma_fragment` | `ProForma_fragment` | Ion plus fragment label. |
 
-Computed columns may depend on earlier computed columns. Their reserved names are APB
-identifiers, not input-column aliases.
+All computed columns may depend on earlier computed columns. `coalesce` and
+`join_nonempty` require at least two sources; `separator` is required only for
+`join_nonempty`. A generic compute may intentionally replace a selected output with
+the same name. ProForma computed columns retain their reserved APB identifier names,
+not input-column aliases.
 
 ## Layers
 

@@ -41,10 +41,20 @@ must not be pulled into this migration.
   DIA-NN AIF, Astral, diaPASEF, ZenoTOF, and single-cell, plus WOMBAT
   peptidoform. Only these combinations are advertised by the managed settings
   registry.
-- FragPipe, MaxQuant, and Spectronaut are not advertised as golden-compatible:
-  their historical results depend on loader transformations not fully declared
-  by their per-tool TOMLs (for example FragPipe's implicit `Mapped Proteins`
-  merge and MaxQuant's `Leading proteins` fallback).
+- FragPipe Q Exactive/Astral and MaxQuant Astral are now advertised as
+  golden-compatible. APB conversion produces the complete protein value that
+  ProteoBench passes to its shared accession mapper:
+  - FragPipe conversion previously dropped `Mapped Proteins` instead of joining it to
+    `Protein`;
+  - MaxQuant conversion previously left missing `Proteins` values instead of filling
+    them from `Leading proteins`.
+  The declarative conversion fix plus MaxQuant duplicate aggregation reproduces
+  every golden intermediate value and score metric.
+- Spectronaut is not part of this protein-conversion gap. Its short accessions
+  map with zero unmatched tokens, and the compatible Astral fixtures checked
+  during the diagnosis reproduce exact threshold counts. Any other
+  Spectronaut discrepancy must be isolated independently before changing its
+  conversion rule.
 - On DIA-NN Astral `269bb831`, plain H5AD load + APB scoring took 8.94 s versus
   11.32 s for the pinned ProteoBench raw parse + intermediate + datapoint path.
   FASTA-enriched input produced identical scores and no scoring speedup
@@ -175,6 +185,188 @@ referenced raw column is not retained by conversion, retain that exact source
 column in the relevant APB rule before declaring the combination scoreable.
 Do not add speculative columns: the currently fetched MaxQuant per-tool TOML,
 for example, does not map `Reverse` or `Potential contaminant`.
+
+## Follow-up: produce ProteoBench's complete protein value during conversion
+
+### Requirements
+
+The converted AnnData must contain the complete tool-reported protein value
+that ProteoBench standardizes as `Proteins` before applying `mapper.csv`.
+
+This follow-up must:
+
+- fix the problem at conversion time so every downstream consumer sees the
+  completed protein assignment;
+- preserve the existing tool-specific APB output column names (`Protein` for
+  FragPipe and `Proteins` for MaxQuant);
+- preserve the ProteoBench per-tool TOMLs unchanged:
+  - FragPipe continues to declare `Protein = "Proteins"`;
+  - MaxQuant continues to declare `Proteins = "Proteins"`;
+- preserve the generic ProteoBench role resolver and shared scorer unchanged;
+- preserve raw leading/mapped-protein source columns when selected;
+- keep conversion consumer-neutral: the new operations are generic parsing-rule
+  computations, not software-name branches or ProteoBench-specific roles;
+- remain independent of annotation and FASTA.
+
+The shared accession mapper continues to use the second `mapper.csv` column
+(`gene_name`) as its lookup key. It maps each short reported token to the
+corresponding description, leaves already-complete or unknown tokens unchanged,
+and then applies the module TOML's species substrings to the combined protein
+string.
+
+### Verified root cause
+
+| Fixture | Current threshold-1 difference | Conversion information lost | In-memory restoration |
+| --- | ---: | --- | ---: |
+| FragPipe DDA Q Exactive `b9f217a2` | +557 | `Mapped Proteins` omitted | 0 |
+| FragPipe DDA Astral `54db0c0b` | +476 | `Mapped Proteins` omitted | 0 |
+| MaxQuant DDA Astral `e5a709af` | -56 | missing `Proteins` not filled | 0 |
+
+The two FragPipe raw files contain 5,610 and 4,078 rows, respectively, with
+non-empty `Mapped Proteins`. Some assignments cross species; for example a
+YEAST primary protein can have a HUMAN mapped protein. ProteoBench joins both,
+marks the feature multi-species, and removes it. APB currently retains only the
+primary protein and therefore keeps the feature.
+
+The MaxQuant raw file contains 188 rows with missing `Proteins`, collapsing to
+56 converted ion features. ProteoBench fills those values from
+`Leading proteins` before mapping. Applying the same fallback to the converted
+feature metadata removes the complete `-56` threshold-1 discrepancy and makes
+all thresholds exact.
+
+Full score comparison during implementation exposed a second MaxQuant
+conversion mismatch that feature counts do not reveal: MaxQuant evidence can
+contain repeated rows for the same run and ion. ProteoBench sums those
+intensities before computing condition statistics; the APB MaxQuant rule's
+previous duplicate policy retained one value. For example, one canonical ion
+has raw intensities `3,321,800` and `328,300` in one run, and the golden
+intermediate contains their sum, `3,650,100`. The MaxQuant rule must therefore
+use APB's existing `duplicates.mode = "aggregate"` policy.
+
+Spectronaut is the counter-check: its converted `PG_ProteinGroups` contains
+short accessions, but the shared mapper resolves every observed token. The
+protein mapper is therefore not the cause of a remaining Spectronaut score
+difference.
+
+### Design
+
+Extend the existing parsing-rule `columns.var.compute` mechanism with two
+generic string operations:
+
+1. `coalesce`
+   - takes two or more selected columns in priority order;
+   - returns the first non-null value;
+   - does not treat an empty string as null, matching ProteoBench's Pandas
+     `fillna` behavior.
+2. `join_nonempty`
+   - takes two or more selected string columns;
+   - skips null/empty inputs;
+   - joins the remaining values using a required rule-declared separator;
+   - retains the order declared in `from`.
+
+Allow a computed column to replace a selected column with the same name. This
+lets the conversion rule keep the raw-source mapping used by the per-tool TOML
+while materializing the completed value in place:
+
+```json
+{
+  "select": {
+    "Proteins": "Proteins",
+    "Leading_Proteins": "Leading proteins",
+    "Leading_Razor_Protein": "Leading razor protein"
+  },
+  "compute": [
+    {
+      "name": "Proteins",
+      "from": ["Proteins", "Leading_Proteins"],
+      "how": "coalesce"
+    }
+  ]
+}
+```
+
+FragPipe uses the same pattern:
+
+```json
+{
+  "select": {
+    "Protein": "Protein",
+    "Mapped_Proteins": "Mapped Proteins"
+  },
+  "compute": [
+    {
+      "name": "Protein",
+      "from": ["Protein", "Mapped_Proteins"],
+      "how": "join_nonempty",
+      "separator": ","
+    }
+  ]
+}
+```
+
+The materialization order remains select first, compute second, so the compute
+overwrites the selected raw value before axis construction. Deduplicate
+`ColumnGroup.names` while preserving declaration order so an in-place computed
+column appears exactly once in `var`.
+
+Do not introduce a new consensus protein column. Do not change the module TOML,
+per-tool TOML, `resolve_roles()`, mapper, species matching, or scoring formulas.
+
+### Implementation plan
+
+- [x] Extend `ColumnComputeMode` and `ColumnCompute` in
+      `src/anndata_proteomics/rules/schema.py` with `coalesce`,
+      `join_nonempty`, and the separator contract.
+- [x] Update computed-column validation:
+      - permit these generic output names;
+      - permit intentional replacement of an already selected output;
+      - validate source counts and require `separator` only for
+        `join_nonempty`;
+      - keep the existing fixed ProForma names and level-specific validation.
+- [x] Implement vectorized `coalesce` and `join_nonempty` in
+      `src/anndata_proteomics/converters/assemble.py`.
+- [x] Deduplicate materialized column names so in-place computed outputs produce
+      one `var` column.
+- [x] Update the FragPipe ion rule to retain `Mapped Proteins` and compute the
+      completed `Protein` value in place.
+- [x] Update the MaxQuant ion rule to retain exact raw `Leading proteins` and
+      compute the completed `Proteins` value in place. Keep
+      `Leading razor protein` separately where already retained, and aggregate
+      repeated evidence rows for the same run/ion.
+- [x] Regenerate the committed parsing-rule JSON Schemas.
+- [x] Add schema and materialization unit tests covering:
+      - first value present;
+      - first value null;
+      - all values null;
+      - empty strings versus null;
+      - deterministic join order and separator;
+      - in-place replacement;
+      - H5AD categorical/string round-trip.
+- [x] Add converter regression tests asserting the completed protein values for
+      representative FragPipe and MaxQuant rows.
+- [x] Extend the golden harness with FragPipe Q Exactive, FragPipe Astral, and
+      MaxQuant Astral:
+      - exact included feature identities and species flags;
+      - exact `nr_feature` for thresholds 1 through 6;
+      - all score metrics within the established floating tolerance;
+      - unchanged resolved ProteoBench `column_roles`.
+- [x] Advertise those tool/module pairs only after the full golden comparisons
+      pass.
+- [x] Audit any remaining Spectronaut discrepancy separately; do not modify its
+      protein columns unless a failing protein-assignment comparison proves a
+      conversion defect.
+
+### Acceptance
+
+- Converted FragPipe `var["Protein"]` contains primary and mapped proteins in
+  the same logical order used by ProteoBench.
+- Converted MaxQuant `var["Proteins"]` contains the ProteoBench fallback value
+  whenever raw `Proteins` is null.
+- The per-tool TOMLs, `resolve_roles()`, mapper, and scorer require no changes.
+- The three verified fixtures reproduce every golden threshold count and score
+  metric.
+- DIA-NN, WOMBAT, and currently compatible Spectronaut results remain
+  unchanged.
 
 ### 2. Load the scoring subset of module settings as a typed APB model
 
@@ -404,6 +596,10 @@ Enable this only after core golden parity is green.
 - species assignment, no-species, multi-species, contaminant, and decoy cases;
 - exact per-tool raw-column resolution through stored `rule_json` and clear
   failures for genuinely unretained mapped columns;
+- generic conversion computations for null coalescing and ordered joining,
+  including in-place replacement of the selected protein output;
+- FragPipe primary-plus-mapped protein conversion and MaxQuant
+  missing-`Proteins` fallback;
 - epsilon and precision-center formulas for two and three species;
 - every thresholded score key and top-level default-cutoff projection;
 - ROC-AUC missing-class and tied-score cases;
@@ -490,6 +686,12 @@ groupbys, pivot, merge, and duplicated raw-intensity columns.
 - [x] Add the registry-driven APB Studio stage and UI rendering.
 - [x] Update `docs/ARCHITECTURE.md`, README/CLI docs, and `CHANGES.md` in both
       touched repositories.
+- [x] Add generic conversion-rule `coalesce` and `join_nonempty` computed
+      columns with in-place output replacement.
+- [x] Complete FragPipe and MaxQuant protein values during conversion and add
+      their golden parity fixtures.
+- [x] Advertise FragPipe and MaxQuant only after all threshold counts and score
+      metrics match.
 - [ ] Add PYE/plasma as a follow-up using the same intermediate contract.
 
 ## Done when
@@ -504,6 +706,8 @@ groupbys, pivot, merge, and duplicated raw-intensity columns.
   scores for every ordering of optional annotation and FASTA enrichment;
 - the representative golden intermediate and score JSON match, followed by all
   vendors declared supported;
+- FragPipe and MaxQuant protein completion is owned by their declarative
+  conversion rules, with no vendor logic added to the ProteoBench scorer;
 - APB Studio runs the stage only on eligible branches and displays its stored
   scores;
 - APB and APB Studio tests and Ruff checks pass;

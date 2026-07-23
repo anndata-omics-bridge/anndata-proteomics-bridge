@@ -1,5 +1,10 @@
 # Changes
 
+- 2026-07-23: Complete ProteoBench-compatible FragPipe and MaxQuant protein values
+  during conversion with declarative `join_nonempty`/`coalesce` computations; sum
+  repeated MaxQuant evidence rows and enforce the declared duplicate modes.
+- 2026-07-23: Download managed ProteoBench module/tool TOMLs from the pinned
+  intermediate-format revision containing `species_mapper` and `[[samples]]`.
 - 2026-07-22: Add independent matrix-native ProteoBench HYE scoring for AnnData/MuData,
   compatible score JSON in `uns['proteobench']['scores']`, feature intermediates in
   `varm['proteobench']`, compact protein-mapping provenance, a CLI command, managed

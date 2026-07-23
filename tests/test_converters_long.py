@@ -116,3 +116,26 @@ def test_convert_long_replaces_declared_numeric_missing_values() -> None:
     assert np.isnan(intensity[0, 1])
     assert intensity[1, 0] == 30.0
     assert intensity[1, 1] == 40.0
+
+
+def test_convert_long_duplicate_modes_are_honored() -> None:
+    df = pd.DataFrame(
+        {
+            "Run": ["S1", "S1"],
+            "Condition": ["A", "A"],
+            "Sequence": ["PEP1", "PEP1"],
+            "Charge": [2, 2],
+            "Intensity": [10.0, 20.0],
+        }
+    )
+    document = _build_long_rule().model_dump(by_alias=True)
+
+    document["axis"]["duplicates"]["mode"] = "error"
+    with pytest.raises(ValueError, match="duplicate observation-feature keys"):
+        convert_long(df, ParseRule.model_validate(document))
+
+    document["axis"]["duplicates"]["mode"] = "keep_first"
+    assert convert_long(df, ParseRule.model_validate(document)).X[0, 0] == 10.0
+
+    document["axis"]["duplicates"]["mode"] = "aggregate"
+    assert convert_long(df, ParseRule.model_validate(document)).X[0, 0] == 30.0

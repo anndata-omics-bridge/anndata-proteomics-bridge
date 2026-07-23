@@ -7,6 +7,7 @@ import pytest
 from anndata_proteomics.scripts.extract_raw_file_db import (
     ANNOTATION_URLS,
     GENERATED_CSV_NAMES,
+    PROTEOBENCH_SETTINGS_REVISION,
     TOOL_SETTINGS_URLS,
     _download_module_jsons,
     _feature_count,
@@ -219,3 +220,9 @@ decoy_flag = true
     }
     assert len(list(settings_dir.glob("*/*.toml"))) == len(TOOL_SETTINGS_URLS)
     assert not list(tmp_path.glob(".*.download.toml"))
+
+
+def test_settings_urls_use_intermediate_format_contract_revision() -> None:
+    assert PROTEOBENCH_SETTINGS_REVISION == "2738c47f8d621f0ee1fa4a6d3d358846f2bfa261"
+    assert all(PROTEOBENCH_SETTINGS_REVISION in url for url in ANNOTATION_URLS.values())
+    assert all(PROTEOBENCH_SETTINGS_REVISION in url for url in TOOL_SETTINGS_URLS.values())

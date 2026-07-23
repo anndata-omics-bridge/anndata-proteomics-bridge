@@ -24,7 +24,6 @@ from cyclopts import App
 
 from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.proteobench.config import load_module_settings, load_tool_settings
-from anndata_proteomics.proteobench.metrics import PROTEOBENCH_SOURCE_REVISION
 from anndata_proteomics.test_data import PROTEOBENCH_TOOL_SETTINGS, TEST_DATA_DIR
 
 
@@ -107,8 +106,13 @@ FASTA_URLS = (
     "https://proteobench.cubimed.rub.de/fasta/ProteoBenchFASTA_MixedSpecies_HY.zip",
 )
 
+# The matrix/scorer baseline predates the intermediate-format module contract:
+# its module TOMLs have neither ``species_mapper`` nor ``[[samples]]``. Settings
+# therefore use the pinned intermediate-format revision that supplies both while
+# scorer/mapper provenance remains on ``PROTEOBENCH_SOURCE_REVISION``.
+PROTEOBENCH_SETTINGS_REVISION = "2738c47f8d621f0ee1fa4a6d3d358846f2bfa261"
 _PROTEOBENCH_SETTINGS_ROOT = (
-    f"https://raw.githubusercontent.com/Proteobench/ProteoBench/{PROTEOBENCH_SOURCE_REVISION}/"
+    f"https://raw.githubusercontent.com/Proteobench/ProteoBench/{PROTEOBENCH_SETTINGS_REVISION}/"
     "proteobench/io/parsing/io_parse_settings/Quant/lfq"
 )
 ANNOTATION_URLS = {

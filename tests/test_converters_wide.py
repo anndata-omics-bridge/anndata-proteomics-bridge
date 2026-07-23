@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from anndata_proteomics.converters.wide import convert_wide
 from anndata_proteomics.rules.schema import ParseRule
@@ -163,3 +166,46 @@ def test_convert_wide_replaces_declared_numeric_missing_values() -> None:
     assert intensity[0, 1] == 20.0
     assert intensity[1, 0] == 11.0
     assert np.isnan(intensity[1, 1])
+
+
+def test_convert_wide_duplicate_modes_are_honored() -> None:
+    df = pd.DataFrame(
+        {
+            "Modified Sequence": ["PEP1", "PEP1"],
+            "Charge": [2, 2],
+            "S1 Intensity": [10.0, 20.0],
+        }
+    )
+    document: dict[str, Any] = {
+        "schema_version": "0.1",
+        "file_version": "1",
+        "software_name": "Synthetic",
+        "software_version": "1.0",
+        "input_shape": "wide",
+        "quantification_level": "ion",
+        "axis": {
+            "obs_keys": ["sample"],
+            "var_keys": ["Modified Sequence", "Charge"],
+            "x_layer": "Intensity",
+            "duplicates": {"mode": "error"},
+        },
+        "columns": {
+            "obs": {"select": {"sample": "<sample>"}},
+            "var": {
+                "select": {
+                    "Modified Sequence": "Modified Sequence",
+                    "Charge": "Charge",
+                }
+            },
+        },
+        "layers": [{"name": "Intensity", "source": "^(?P<sample>S\\d+) Intensity$"}],
+    }
+
+    with pytest.raises(ValueError, match="duplicate observation-feature keys"):
+        convert_wide(df, ParseRule.model_validate(document))
+
+    document["axis"]["duplicates"]["mode"] = "keep_first"
+    assert convert_wide(df, ParseRule.model_validate(document)).X[0, 0] == 10.0
+
+    document["axis"]["duplicates"]["mode"] = "aggregate"
+    assert convert_wide(df, ParseRule.model_validate(document)).X[0, 0] == 30.0
