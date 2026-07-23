@@ -1,6 +1,7 @@
 # TODO: add ProteoBench scoring to APB and APB Studio
 
-> Plan only. Do not implement until this design is approved.
+> Approved implementation tracker. The HYE-first implementation is complete;
+> PYE/plasma and additional vendor compatibility remain follow-up work.
 
 ## Goal
 
@@ -25,6 +26,30 @@ and `peptidoform` levels. It must:
 PYE/plasma metrics are the next quantitative variant because they reuse the same
 intermediate table. De-novo and entrapment scoring are separate future work and
 must not be pulled into this migration.
+
+## Implementation result (2026-07-22)
+
+- `apb proteobench` scores a converted or independently enriched H5AD/H5MU from
+  the required module and per-tool TOMLs.
+- Feature intermediates are stored at `varm["proteobench"]`; the compatible
+  score document is stored at `uns["proteobench"]["scores"]`.
+- `uns["proteobench"]["protein_mapping"]` records the exact module
+  `species_mapper`, accession-mapper asset hash/size, and matched/unmatched token
+  counts without embedding the 38k-row mapper in every result.
+- The DIA-NN Astral golden test compares the full legacy intermediate and every
+  score threshold. A wider audit reproduced exact threshold feature counts for
+  DIA-NN AIF, Astral, diaPASEF, ZenoTOF, and single-cell, plus WOMBAT
+  peptidoform. Only these combinations are advertised by the managed settings
+  registry.
+- FragPipe, MaxQuant, and Spectronaut are not advertised as golden-compatible:
+  their historical results depend on loader transformations not fully declared
+  by their per-tool TOMLs (for example FragPipe's implicit `Mapped Proteins`
+  merge and MaxQuant's `Leading proteins` fallback).
+- On DIA-NN Astral `269bb831`, plain H5AD load + APB scoring took 8.94 s versus
+  11.32 s for the pinned ProteoBench raw parse + intermediate + datapoint path.
+  FASTA-enriched input produced identical scores and no scoring speedup
+  (8.71 s scoring versus 8.72 s plain; load 0.28 s versus 0.22 s), so FASTA
+  remains an independent optional enrichment.
 
 ## Ownership and dependency direction
 
@@ -53,6 +78,11 @@ rather than independently adapted to APB's matrix representation, retain the
 required Apache-2.0 attribution and record the source revision.
 
 ### Source baseline
+
+Implementation pins ProteoBench v0.17.0 commit
+`fc95e712ca0466485814d3895087a048cfc0d2b0`; provenance is stored with each
+scored object and the redistributed mapper includes its notice and Apache-2.0
+license.
 
 The ProteoBench checkout was fetched while writing this plan. The current
 checkout (`90773d2d`) is ahead 3 / behind 67 relative to
@@ -86,7 +116,7 @@ another.
 ## Existing APB inputs
 
 The current converted `.h5ad` / `.h5mu` outputs plus the ProteoBench module TOML
-provide the complete scoring input:
+and per-tool parsing TOML provide the complete scoring input:
 
 - the designated quantitative matrix is `X`;
 - runs are rows and quantified features are columns;
@@ -99,6 +129,8 @@ provide the complete scoring input:
 - the downloaded ProteoBench `module_settings.toml` contains
   the `[[samples]]` run-to-condition design, `species_mapper`,
   `species_expected_ratio`, `min_count_multispec`, and quantitative level.
+- the ProteoBench per-tool TOML contains the raw-vendor-to-ProteoBench mapper and
+  contaminant/decoy interpretation.
 
 **Neither annotation nor FASTA is a scoring input.** ProteoBench gets the sample
 design from the required module TOML and scores species from reported protein
@@ -112,45 +144,39 @@ The canonical local test-data cache also has both compatibility oracles:
 - `<fixture>/result_performance.csv` for the full intermediate table;
 - `<repo>-main/<intermediate_hash>.json` for the score payload.
 
-## Required standardized input contract
+## Required input contract
 
-Do not add vendor-name branches or guess species inside the scoring functions.
-Fix the standardized conversion metadata they consume.
+Do not add vendor-name branches or ProteoBench-specific roles to APB conversion
+rules. Conversion remains consumer-neutral.
 
-### 1. Declare the reported-protein-ID column semantically
+### 1. Load and resolve the per-tool ProteoBench settings
 
-ProteoBench's per-tool parser maps one source column to its standardized
-`Proteins` field, then applies each `species_mapper` substring to that field.
-APB currently retains the same information under different normalized names,
-for example `Protein_Ids`, `Proteins`, `PG_ProteinAccessions`, or `Accession`.
-For DIA-NN the compatible field is `Protein_Ids`, not `Protein_Group`.
+Require the ProteoBench per-tool TOML as a separate CLI/library input. Its
+`[mapper]` identifies the exact raw vendor column standardized as `Proteins` and
+its `[general]` block defines contaminant/decoy handling.
 
-Declare one semantic `reported_protein_ids` role in APB's parsing-rule/storage
-contract and point it at the correct retained `var` column for every supported
-rule. The scorer resolves the role, not a vendor and not a priority list of
-guessed column names. Where a rule does not yet retain the ProteoBench source
-field (for example a tool's mapped-protein column), fix that parsing rule before
-declaring the tool scoreable.
+The converted object already stores its complete effective APB rule as JSON at
+`uns["anndata_proteomics"]["rule_json"]`. Resolve each raw source name from the
+per-tool mapper through `columns.var.select`, `columns.obs.select`, and the
+declared layers to its exact APB location. Do not use sanitization heuristics or
+software-name switches. Write the resolved mapping to:
 
-Species flags are then computed exactly as ProteoBench does: substring matching
-of the configured species flags against the reported-protein-ID string. Do not
-replace reported assignments with all theoretical peptide-to-protein matches;
-that changes multi-species filtering and the expected scores.
+```python
+target.uns["proteobench"]["column_roles"]
+```
 
-### 2. Standardize decoy/contaminant exclusion state
+For DIA-NN this resolves `Protein.Ids -> Protein_Ids`; it must not substitute
+`Protein_Group`. Species flags are computed by applying the module TOML's
+`species_mapper` substrings to that reported-protein-ID field. Do not replace
+reported assignments with theoretical FASTA matches.
 
-ProteoBench removes decoys, contaminants, and non-positive intensities before
-scoring. These decisions currently live partly in per-tool ProteoBench parser
-TOMLs. Move the needed vendor interpretation into APB's parsing-rule contract
-and expose boolean feature state to the scorer. Do not embed strings such as
-`Cont_` in the scoring algorithm and do not derive this state from FASTA.
+Audit every supported APB vendor/level against the actual per-tool mapper. If a
+referenced raw column is not retained by conversion, retain that exact source
+column in the relevant APB rule before declaring the combination scoreable.
+Do not add speculative columns: the currently fetched MaxQuant per-tool TOML,
+for example, does not map `Reverse` or `Potential contaminant`.
 
-This is required for exact parity. For example, the inspected DIA-NN Astral
-fixture has 1,399 features whose `Protein_Ids` include `Cont_`; 604 otherwise
-single-species features are removed by this rule, explaining the difference
-between the APB feature count and the expected 111,675-row intermediate.
-
-### 3. Load the scoring subset of module settings as a typed APB model
+### 2. Load the scoring subset of module settings as a typed APB model
 
 Add a small, strict model for:
 
@@ -261,10 +287,10 @@ in the `uns["proteobench"]` namespace.
 
 Port the formulas, not the long-table implementation:
 
-1. Validate the target level, unique feature names, complete one-to-one
+1. Validate the target level, unique feature names, resolved per-tool columns,
+   complete one-to-one
    alignment between converted run identifiers and `[[samples]].raw_file`,
-   required A/B conditions, the `reported_protein_ids` role, and exclusion
-   state.
+   and required A/B conditions.
 2. Read `X` as the ProteoBench intensity matrix. A valid observation is finite
    and strictly greater than zero.
 3. For each condition, slice rows once and compute per feature with NumPy/SciPy:
@@ -319,7 +345,7 @@ src/anndata_proteomics/proteobench/
 Expose one library operation from `pipeline.py`, tentatively:
 
 ```python
-score_quantification(obj, module_settings) -> obj
+score_quantification(obj, module_settings, tool_settings) -> obj
 ```
 
 Do not add layer/vendor override parameters in the first version. `X` and the
@@ -330,6 +356,7 @@ Add the CLI command:
 
 ```text
 apb proteobench <converted-or-enriched.h5ad|h5mu> <module-settings.toml> \
+  <per-tool.toml> \
   --output <scored.h5ad|h5mu>
 ```
 
@@ -346,7 +373,9 @@ Enable this only after core golden parity is green.
    - depends only on `convert`;
    - uses the module TOML through a clearly named `module_settings` resource;
      reuse/alias the existing resource path rather than copying the file;
-   - invokes `apb proteobench {input} {module_settings} --output {output}`;
+   - resolves the matching per-tool TOML as a separate `tool_settings` resource;
+   - invokes
+     `apb proteobench {input} {module_settings} {tool_settings} --output {output}`;
    - writes a distinct `*.proteobench.h5ad/.h5mu` artifact.
 2. Add a registry field for supported quantitative branches/levels and teach
    target expansion to omit the stage for protein/fragment branches. Do not run
@@ -373,6 +402,8 @@ Enable this only after core golden parity is green.
 - zeros, negative values, infinities, NaNs, one replicate (`ddof=1`), and a
   missing condition;
 - species assignment, no-species, multi-species, contaminant, and decoy cases;
+- exact per-tool raw-column resolution through stored `rule_json` and clear
+  failures for genuinely unretained mapped columns;
 - epsilon and precision-center formulas for two and three species;
 - every thresholded score key and top-level default-cutoff projection;
 - ROC-AUC missing-class and tied-score cases;
@@ -396,7 +427,7 @@ For a representative fixture, and then parametrically across supported
 vendors/modules:
 
 1. load the raw APB converted object (no annotation or FASTA stage required);
-2. score it with that module's downloaded TOML;
+2. score it with that module's downloaded TOML and matching per-tool TOML;
 3. compare the reconstructed legacy intermediate to
    `<fixture>/result_performance.csv`:
    - identical feature identifiers, row order, column order, and shape;
@@ -434,10 +465,10 @@ groupbys, pivot, merge, and duplicated raw-intensity columns.
 
 - target expansion adds scoring only to eligible MuData/ion/peptidoform
   branches;
-- command rendering reuses the module TOML and consumes the `convert`-stage
-  output;
-- missing module settings yields `BLOCKED`, not `FAILED`, without blocking
-  annotation or FASTA targets;
+- command rendering reuses the module and per-tool TOMLs and consumes the
+  `convert`-stage output;
+- missing module or per-tool settings yields `BLOCKED`, not `FAILED`, without
+  blocking annotation or FASTA targets;
 - annotation, FASTA, and scoring targets are independent, and scoring results
   are identical for every enrichment order;
 - scoring output, log, failure marker, provenance, baskets, clean behavior, and
@@ -446,26 +477,28 @@ groupbys, pivot, merge, and duplicated raw-intensity columns.
 
 ## Implementation order
 
-- [ ] Approve the storage keys, HYE-first scope, and score-only JSON boundary.
-- [ ] Pin the ProteoBench source revision and record attribution obligations.
-- [ ] Add golden tests that initially fail against one DIA-NN fixture.
-- [ ] Add the reported-protein-ID role and decoy/contaminant state to the APB
-      parsing contract.
-- [ ] Implement typed module settings.
-- [ ] Implement the vectorized HYE intermediate and legacy assembler/hash.
-- [ ] Implement aggregate HYE scores and JSON serialization.
-- [ ] Add AnnData/MuData storage, CLI, provenance, summary, and round-trip tests.
-- [ ] Expand golden parity across each APB-supported quantitative vendor.
-- [ ] Benchmark and optimize only while retaining parity.
-- [ ] Add the registry-driven APB Studio stage and UI rendering.
-- [ ] Update `docs/ARCHITECTURE.md`, README/CLI docs, and `CHANGES.md` in both
+- [x] Approve the storage keys, HYE-first scope, and score-only JSON boundary.
+- [x] Pin the ProteoBench source revision and record attribution obligations.
+- [x] Add golden tests against one DIA-NN fixture.
+- [x] Implement typed module and per-tool settings plus exact `rule_json`
+      resolution; retain only genuinely missing source columns in APB rules.
+- [x] Implement the vectorized HYE intermediate and legacy assembler/hash.
+- [x] Implement aggregate HYE scores and JSON serialization.
+- [x] Add AnnData/MuData storage, CLI, provenance, summary, and round-trip tests.
+- [x] Audit golden parity and advertise only verified module/vendor pairs.
+- [x] Benchmark and optimize only while retaining parity.
+- [x] Add the registry-driven APB Studio stage and UI rendering.
+- [x] Update `docs/ARCHITECTURE.md`, README/CLI docs, and `CHANGES.md` in both
       touched repositories.
 - [ ] Add PYE/plasma as a follow-up using the same intermediate contract.
 
 ## Done when
 
 - one `apb proteobench` command turns a converted APB object plus its required
-  module TOML into a scored object with aligned `varm["proteobench"]` and a
+  module and per-tool TOMLs into a scored object with aligned
+  `varm["proteobench"]`, resolved
+  `uns["proteobench"]["column_roles"]`, compact
+  `uns["proteobench"]["protein_mapping"]`, and a
   compatible JSON mapping at `uns["proteobench"]["scores"]`;
 - the command has no annotation or FASTA precondition and returns the same
   scores for every ordering of optional annotation and FASTA enrichment;

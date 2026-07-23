@@ -15,6 +15,7 @@ TEST_DATA_DIR = REPO_ROOT / "test_data_download"
 DOWNLOADED_DB = TEST_DATA_DIR / "raw_file_db_downloaded.csv"
 FASTA_DIR = TEST_DATA_DIR / "fasta"
 ANNOTATION_DIR = TEST_DATA_DIR / "annotations"
+PROTEOBENCH_TOOL_SETTINGS_DIR = TEST_DATA_DIR / "proteobench_settings"
 
 # Which ProteoBench FASTA pairs with each module. Each module ships a single
 # species mix; see ProteoBench's per-module docs under
@@ -42,6 +43,19 @@ _MODULE_ANNOTATION: dict[str, str] = {
     "dia_diapasef": "dia_diapasef.toml",
     "dia_zenotof": "dia_zenotof.toml",
     "dia_singlecell": "dia_singlecell.toml",
+}
+
+# Scoring combinations audited against APB's retained raw columns/run axes and
+# verified against their stored ProteoBench threshold feature counts.
+# Values are paths relative to ProteoBench's Quant/lfq settings directory at the
+# compatibility revision recorded by ``anndata_proteomics.proteobench.metrics``.
+PROTEOBENCH_TOOL_SETTINGS: dict[tuple[str, str], str] = {
+    ("dda_peptidoform", "wombat"): "DDA/peptidoform/parse_settings_wombat.toml",
+    ("dia_aif", "diann"): "DIA/ion/AIF/parse_settings_diann.toml",
+    ("dia_astral", "diann"): "DIA/ion/Astral/parse_settings_diann.toml",
+    ("dia_diapasef", "diann"): "DIA/ion/diaPASEF/parse_settings_diann.toml",
+    ("dia_zenotof", "diann"): "DIA/ion/ZenoTOF/parse_settings_diann.toml",
+    ("dia_singlecell", "diann"): "DIA/ion/lowinput/parse_settings_diann.toml",
 }
 
 # A representative parameter file per tool, committed in-repo under tests/params/
@@ -117,6 +131,19 @@ def find_annotation(
     if filename is None:
         return None
     path = test_data_dir.expanduser().resolve() / "annotations" / filename
+    return path if path.is_file() else None
+
+
+def find_proteobench_tool_settings(
+    *,
+    module: str,
+    vendor: str,
+    test_data_dir: Path = TEST_DATA_DIR,
+) -> Path | None:
+    """Return one audited downloaded per-tool ProteoBench TOML, if available."""
+    if (module, vendor) not in PROTEOBENCH_TOOL_SETTINGS:
+        return None
+    path = test_data_dir.expanduser().resolve() / "proteobench_settings" / module / f"{vendor}.toml"
     return path if path.is_file() else None
 
 

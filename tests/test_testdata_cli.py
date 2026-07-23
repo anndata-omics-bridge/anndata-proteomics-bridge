@@ -7,6 +7,7 @@ import pytest
 from anndata_proteomics.scripts.extract_raw_file_db import (
     ANNOTATION_URLS,
     GENERATED_CSV_NAMES,
+    TOOL_SETTINGS_URLS,
     _download_module_jsons,
     _feature_count,
     annotations,
@@ -25,7 +26,7 @@ def test_feature_count_supports_legacy_proteobench_field() -> None:
 
 
 def test_clean_generated_data_removes_only_known_artifacts(tmp_path: Path) -> None:
-    for directory in ("json_dir", "fasta", "annotations"):
+    for directory in ("json_dir", "fasta", "annotations", "proteobench_settings"):
         path = tmp_path / directory
         path.mkdir()
         (path / "generated").touch()
@@ -36,12 +37,13 @@ def test_clean_generated_data_removes_only_known_artifacts(tmp_path: Path) -> No
 
     removed = clean_generated_data(tmp_path)
 
-    assert len(removed) == 6
+    assert len(removed) == 7
     assert keep.exists()
     assert not any((tmp_path / name).exists() for name in GENERATED_CSV_NAMES)
     assert not (tmp_path / "json_dir").exists()
     assert not (tmp_path / "fasta").exists()
     assert not (tmp_path / "annotations").exists()
+    assert not (tmp_path / "proteobench_settings").exists()
 
 
 def test_clean_generated_data_is_idempotent(tmp_path: Path) -> None:
@@ -156,29 +158,55 @@ def test_annotation_download_fetches_and_validates_each_module_toml(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    content = b'[[samples]]\nraw_file = "run1"\ncondition = "A"\n'
+    annotation_content = b"""
+[species_expected_ratio.HUMAN]
+A_vs_B = 1.0
+[species_mapper]
+_HUMAN = "HUMAN"
+[general]
+min_count_multispec = 1
+level = "ion"
+[[samples]]
+raw_file = "run1"
+sample_name = "A1"
+condition = "A"
+[[samples]]
+raw_file = "run2"
+sample_name = "B1"
+condition = "B"
+"""
+    tool_content = b"""
+[mapper]
+Protein = "Proteins"
+[general]
+contaminant_flag = "Cont_"
+decoy_flag = true
+"""
 
     class Response:
         @staticmethod
         def raise_for_status() -> None:
             return None
 
-    Response.content = content
     requested = []
 
     def get(url: str) -> Response:
         requested.append(url)
-        return Response()
+        response = Response()
+        response.content = annotation_content if url in ANNOTATION_URLS.values() else tool_content
+        return response
 
     monkeypatch.setattr(
         "anndata_proteomics.scripts.extract_raw_file_db.requests.get",
         get,
     )
 
-    annotations(annotation_dir=tmp_path)
+    settings_dir = tmp_path / "tool-settings"
+    annotations(annotation_dir=tmp_path, tool_settings_dir=settings_dir)
 
-    assert requested == list(ANNOTATION_URLS.values())
+    assert requested == [*ANNOTATION_URLS.values(), *TOOL_SETTINGS_URLS.values()]
     assert {path.name for path in tmp_path.glob("*.toml")} == {
         f"{module}.toml" for module in ANNOTATION_URLS
     }
+    assert len(list(settings_dir.glob("*/*.toml"))) == len(TOOL_SETTINGS_URLS)
     assert not list(tmp_path.glob(".*.download.toml"))

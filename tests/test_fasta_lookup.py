@@ -18,6 +18,7 @@ from anndata_proteomics.test_data import (
     TEST_DATA_DIR,
     find_annotation,
     find_fasta,
+    find_proteobench_tool_settings,
     find_test_data,
 )
 
@@ -67,6 +68,31 @@ def test_find_annotation_uses_explicit_test_data_root(tmp_path: Path) -> None:
 
     assert find_annotation(module="dia_aif", test_data_dir=tmp_path) == expected
     assert find_annotation(module="unknown", test_data_dir=tmp_path) is None
+
+
+def test_find_proteobench_tool_settings_uses_audited_module_vendor_pair(
+    tmp_path: Path,
+) -> None:
+    expected = tmp_path / "proteobench_settings" / "dia_astral" / "diann.toml"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("[mapper]\nProtein = 'Proteins'\n")
+
+    assert (
+        find_proteobench_tool_settings(
+            module="dia_astral",
+            vendor="diann",
+            test_data_dir=tmp_path,
+        )
+        == expected
+    )
+    assert (
+        find_proteobench_tool_settings(
+            module="dia_astral",
+            vendor="maxquant",
+            test_data_dir=tmp_path,
+        )
+        is None
+    )
 
 
 def test_find_fasta_resolves_dataset_from_explicit_test_data_root(tmp_path: Path) -> None:

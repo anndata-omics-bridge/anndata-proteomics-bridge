@@ -8,6 +8,7 @@ Convert proteomics quantification output into **AnnData / MuData** using declara
 - **One file → a multi-level MuData.** A single vendor export is converted into a MuData whose modalities are the quantification levels it provides (`ion` / `fragment` / `peptidoform` / `protein`) on a shared run axis — or a single-level AnnData when you ask for one level.
 - **Standardised content.** Peptide modifications are normalised to **ProForma**; a per-vendor parser reads the vendor **parameter file** (enzyme, FDR, tolerances, …) into one typed record under `uns['search_parameters']`.
 - **Enrichable and validated.** Join sample metadata onto `obs` (`apb annotate`); `apb fasta` adds protein annotation and automatically checks every peptide-derived feature against the supplied FASTA with Aho--Corasick.
+- **ProteoBench scoring.** `apb proteobench` computes HYE intermediate statistics and compatible score JSON directly from converted ion or peptidoform matrices.
 - **Interoperable.** Writes plain `.h5ad` / `.h5mu`, readable from Python (`anndata` / `mudata` / `scanpy`) and R (`anndataR`).
 
 > **New to AnnData?**  It's the standard container for an annotated data matrix — observations (`obs`, here MS runs) × variables (`var`, here peptides/proteins), with multiple measurement `layers`, dimensionality-reduction slots (`obsm`/`varm`), and free-form metadata (`uns`). **MuData** bundles several AnnData objects as *modalities*. See [anndata.readthedocs.io](https://anndata.readthedocs.io) and [mudata.readthedocs.io](https://mudata.readthedocs.io).
@@ -61,7 +62,7 @@ integration tests. Build it with the dedicated CLI:
 apb-testdata catalog
 apb-testdata select
 apb-testdata download
-apb-testdata annotations
+apb-testdata annotations  # module TOMLs plus golden-verified per-tool scoring TOMLs
 apb-testdata fasta
 ```
 
@@ -69,7 +70,10 @@ The cache and its CSV manifests are generated and remain outside git.
 
 ## Command-line interface
 
-The umbrella CLI is `apb` (the installed Python package is `anndata-proteomics`). Typical flow: **convert** a vendor file → **annotate** / **fasta** to enrich it → **validate** / **list** to manage rules.
+The umbrella CLI is `apb` (the installed Python package is `anndata-proteomics`).
+`convert` creates the common input; `annotate`, `fasta`, and `proteobench` are
+independent enrichments that can be applied in any order. `validate` and `list`
+maintain parsing rules.
 
 ### Convert
 
@@ -111,7 +115,7 @@ condition = "B"
 ### Annotate and validate against FASTA
 
 ```bash
-apb fasta data.h5mu proteome.fasta              # writes data.annotated.h5mu
+apb fasta data.h5mu proteome.fasta              # writes data.fasta.h5mu
 apb fasta data.h5mu human.fasta crap.fasta      # multiple FASTA files
 apb fasta data.h5mu proteome.fasta --no-validate # protein annotation only
 ```
@@ -135,6 +139,32 @@ Decoy and contaminant patterns are inferred from raw FASTA IDs and persisted in
 `uns['anndata_proteomics']['fasta_config']`; `--decoy-pattern` and
 `--contaminant-pattern` override inference. Classification never filters
 quantified rows or FASTA records.
+
+### Compute ProteoBench scores
+
+```bash
+apb proteobench data.h5mu module_settings.toml parse_settings_diann.toml
+# writes data.proteobench.h5mu
+```
+
+The module TOML is the experiment-design contract: it supplies the scoring
+level, run-to-condition samples, species mapping, and expected ratios. The
+per-tool ProteoBench TOML resolves vendor source columns through the conversion
+rule stored in the object. Neither `apb annotate` nor `apb fasta` is required;
+running either before or after scoring preserves the other enrichments.
+
+For a standalone AnnData, the module level must match the object. For MuData,
+only that modality is scored. Feature-aligned means, standard deviations, CVs,
+observation counts, species assignments, epsilon, and precision values are
+stored in `varm['proteobench']`. Compatible JSON field names and threshold
+layout are retained in `uns['proteobench']['scores']`; resolved source roles and
+compact protein-mapper provenance live beside it in `column_roles` and
+`protein_mapping`.
+
+The managed test-data registry currently advertises golden-verified settings
+for DIA-NN AIF, Astral, diaPASEF, ZenoTOF, and single-cell ion modules, plus the
+WOMBAT DDA peptidoform module. The library validates any supplied ProteoBench
+TOMLs, but combinations outside that list are not claimed as golden-compatible.
 
 ### Inspect / maintain rules
 
@@ -242,7 +272,8 @@ APB is a pure library plus the `apb` CLI. It ships no GUI.
 - MuLink relationships can only target protein features already present in a
   MuData. Full FASTA match IDs remain in `varm['fasta_validation']` even when no
   corresponding protein feature exists.
-- Per-tool `uns['<app_name>']['column_roles']` writeback (the tool-specific view ADR) is not yet populated — only `uns['anndata_proteomics']` is written.
+- HYE ion and peptidoform scoring is implemented; PYE/plasma, de-novo, and
+  entrapment metrics remain future extensions.
 
 ## Documentation
 

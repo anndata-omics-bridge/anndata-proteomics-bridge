@@ -142,6 +142,9 @@ def describe(obj: Any) -> dict[str, Any]:
     payload.setdefault("container_type", "anndata")
     if "quantification" not in payload:
         payload["quantification"] = _quantification_summary(obj)
+    proteobench = obj.uns.get("proteobench")
+    if isinstance(proteobench, Mapping) and "scores" in proteobench:
+        payload["proteobench"] = _to_json_compatible(proteobench)
     return payload
 
 
@@ -264,6 +267,21 @@ def _matrix_values(layer: Any) -> np.ndarray:
     if sparse.issparse(layer):
         return layer.toarray()
     return np.asarray(layer)
+
+
+def _to_json_compatible(value: Any) -> Any:
+    """Copy an HDF5-decoded mapping into ordinary JSON-compatible values."""
+    if isinstance(value, Mapping):
+        return {str(key): _to_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_to_json_compatible(item) for item in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_to_json_compatible(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return deepcopy(value)
 
 
 def _read_payload(obj: Any) -> dict[str, Any]:

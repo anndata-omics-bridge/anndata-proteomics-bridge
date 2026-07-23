@@ -20,6 +20,7 @@ apb validate
 apb convert report.tsv --params report.log.txt
 apb annotate data.h5mu module_settings.toml
 apb fasta data.h5mu proteome.fasta
+apb proteobench data.h5mu module_settings.toml parse_settings_diann.toml
 ```
 
 ## Build these docs

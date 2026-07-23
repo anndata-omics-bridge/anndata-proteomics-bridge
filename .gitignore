@@ -37,6 +37,7 @@ TODO/*.html
 *.tsv
 *.csv
 !examples/*.csv
+!src/anndata_proteomics/proteobench/mapper.csv
 
 # OS
 .DS_Store

@@ -1,0 +1,22 @@
+[mapper]
+"Modified.Sequence" = "Sequence"
+Run = "Raw file"
+"Protein.Ids" = "Proteins"
+"Precursor.Charge" = "Charge"
+"Precursor.Normalised" = "Intensity"
+
+[modifications_parser]
+parse_column = "Sequence"
+before_aa = false
+isalpha = true
+isupper = true
+pattern = "\\(([^()]*)\\)"
+
+[modifications_parser.modification_dict]
+"(unimod:35)" = "Oxidation"
+"(unimod:1)" = "Acetyl"
+"(unimod:4)" = "Carbamidomethyl"
+
+[general]
+contaminant_flag = "Cont_"
+decoy_flag = true

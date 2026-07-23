@@ -8,6 +8,7 @@ Subcommands:
 - summary <path>             print a stored descriptive summary
 - annotate <data> <json>     join sample annotations onto obs
 - fasta <data> <fasta...>    annotate proteins and validate peptide identifications
+- proteobench <data> <module.toml> <tool.toml>  compute quantitative benchmark scores
 """
 
 from __future__ import annotations
@@ -357,11 +358,50 @@ def fasta(
         return 1
 
     store_fasta_summary(obj)
-    out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
+    out = output or data.with_name(f"{data.stem}.fasta{data.suffix}")
     if hasattr(obj, "mod"):
         obj.write_h5mu(out)
     else:
         obj.write_h5ad(out)
+    logger.info(f"wrote {out}")
+    return 0
+
+
+@app.command
+def proteobench(
+    data: Path,
+    module_settings: Path,
+    tool_settings: Path,
+    *,
+    output: Path | None = None,
+) -> int:
+    """Compute ProteoBench scores without requiring annotation or FASTA stages.
+
+    The module TOML supplies the sample design and species ratios. The per-tool
+    TOML resolves raw vendor columns retained by APB conversion. The default
+    output is ``<stem>.proteobench<suffix>`` beside the input.
+    """
+    from anndata_proteomics.proteobench.config import (
+        load_module_settings,
+        load_tool_settings,
+    )
+    from anndata_proteomics.proteobench.pipeline import score_quantification
+    from anndata_proteomics.readers.result import load_converted_result
+
+    obj = load_converted_result(data)
+    score_quantification(
+        obj,
+        load_module_settings(module_settings),
+        load_tool_settings(tool_settings),
+    )
+
+    out = output or data.with_name(f"{data.stem}.proteobench{data.suffix}")
+    if out.suffix != data.suffix:
+        raise ValueError(f"ProteoBench output must keep the input container suffix {data.suffix!r}")
+    if out.resolve() == data.resolve():
+        raise ValueError("ProteoBench output must differ from the input path")
+    writer = obj.write_h5mu if hasattr(obj, "mod") else obj.write_h5ad
+    _write_atomically(out, writer)
     logger.info(f"wrote {out}")
     return 0
 

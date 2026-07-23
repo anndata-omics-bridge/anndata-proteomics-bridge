@@ -33,6 +33,8 @@ test_data_download/
 │       └── <hash>/                               # one folder per downloaded submission (from `download`)
 │           ├── input_file.{tsv,txt,csv,parquet}  # raw vendor output
 │           └── param_0..<ext>                     # co-located search parameters (note the double dot)
+├── annotations/                # pinned ProteoBench module_settings.toml files
+├── proteobench_settings/       # golden-verified pinned per-tool scoring TOMLs
 └── fasta/                     # ProteoBench HYE / HY reference FASTAs (from `fasta`)
 ```
 
@@ -75,8 +77,9 @@ Run the commands from any directory; each step feeds the next:
 apb-testdata catalog   # 1. metadata JSONs + raw_file_db_full.csv
 apb-testdata select    # 2. representative rows → raw_file_db_selected.csv
 apb-testdata download  # 3. vendor files + raw_file_db_downloaded.csv
-apb-testdata fasta     # 4. HYE + HY reference FASTAs → fasta/
-apb-testdata clean     # remove json_dir/, fasta/, and the three CSVs
+apb-testdata annotations # 4. module + per-tool scoring TOMLs
+apb-testdata fasta     # 5. HYE + HY reference FASTAs → fasta/
+apb-testdata clean     # remove generated caches and the three CSVs
 ```
 
 **How `select` chooses its one row:** it drops submissions with a missing
@@ -97,6 +100,7 @@ regardless of your working directory:
 uv run apb-testdata catalog
 uv run apb-testdata select --selection-csv test_data_download/my_selection.csv
 uv run apb-testdata download --selection-csv test_data_download/my_selection.csv
+uv run apb-testdata annotations
 uv run apb-testdata fasta
 ```
 
@@ -135,7 +139,8 @@ absent, lookups return `None`/`[]` and the fixtures `pytest.skip(...)`, so the
 suite is green on a fresh checkout.
 
 - [`test_data.py`](../src/anndata_proteomics/test_data.py)
-  exposes the cache paths (`TEST_DATA_DIR`, `DOWNLOADED_DB`, `FASTA_DIR`) and the
+  exposes the cache paths (`TEST_DATA_DIR`, `DOWNLOADED_DB`, `FASTA_DIR`,
+  `ANNOTATION_DIR`, `PROTEOBENCH_TOOL_SETTINGS_DIR`) and the
   lookups:
   - `find_test_data(software_name)` — the first successfully-downloaded
     (`status == "ok"`) cached input for a tool, or `None` if the cache index is
@@ -143,6 +148,9 @@ suite is green on a fresh checkout.
     `software_name` (e.g. `"DIA-NN"`).
   - `find_fasta(module=... | dataset_dir=..., test_data_dir=...)` — the reference
     FASTA for a module, optionally resolved from an explicit cache root.
+  - `find_annotation(module=...)` and
+    `find_proteobench_tool_settings(module=..., vendor=...)` — pinned module and
+    golden-verified per-tool scoring contracts.
   - `find_param_file(software_name)` — a representative parameter file for a tool,
     read from the committed in-repo `tests/params/` fixtures (no external checkout).
 - [`conftest.py`](conftest.py) turns the index into fixtures. `cached_datasets`

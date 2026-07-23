@@ -725,7 +725,7 @@ def test_cli_fasta_validates_peptide_only_input_by_default(tmp_path: Path):
 
     rc = cli_fasta(data, fasta)
     assert rc == 0
-    out = data.with_name("in.annotated.h5ad")
+    out = data.with_name("in.fasta.h5ad")
     assert out.exists()
     assert "fasta_validation" in ad.read_h5ad(out).varm
 

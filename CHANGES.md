@@ -1,5 +1,11 @@
 # Changes
 
+- 2026-07-22: Add independent matrix-native ProteoBench HYE scoring for AnnData/MuData,
+  compatible score JSON in `uns['proteobench']['scores']`, feature intermediates in
+  `varm['proteobench']`, compact protein-mapping provenance, a CLI command, managed
+  scoring TOMLs, and golden/performance regression coverage.
+- 2026-07-22: Give independent FASTA enrichment the default `.fasta.h5ad/.h5mu`
+  output suffix instead of `.annotated`.
 - 2026-07-22: Preserve `ProForma_peptide` on DIA-NN v1 fragment outputs so fragment and
   multi-modality FASTA validation use the complete peptide hierarchy.
 - 2026-07-22: Read ProteoBench module annotation TOMLs directly, allow CSV/TSV observation
