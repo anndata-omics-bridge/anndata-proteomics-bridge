@@ -1,5 +1,7 @@
 """Tests for the FASTA → protein-annotation DataFrame builder."""
 
+# ruff: noqa: E501 - FASTA fixture headers are intentionally stored verbatim.
+
 from __future__ import annotations
 
 from io import StringIO

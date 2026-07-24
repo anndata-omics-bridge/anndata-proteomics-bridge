@@ -1,5 +1,9 @@
 # Changes
 
+- 2026-07-23: Align local and GitHub quality gates with the FGCZ Python
+  reference: staged Ruff/Pyright/Deptry/coverage hooks, wheel inspection,
+  strict docs, dependency audit, typed-package marker, and CI/Pages/security
+  workflows.
 - 2026-07-23: Complete ProteoBench-compatible FragPipe and MaxQuant protein values
   during conversion with declarative `join_nonempty`/`coalesce` computations; sum
   repeated MaxQuant evidence rows and enforce the declared duplicate modes.

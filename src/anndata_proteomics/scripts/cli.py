@@ -74,7 +74,7 @@ def export_schema_cmd() -> int:
 
 
 @app.command
-def convert(
+def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
     data: Path,
     level: QuantificationLevel | None = None,
     *,
@@ -146,7 +146,8 @@ def convert(
     slug = software or recognize_software(df.columns)
     if slug is None:
         logger.error(
-            f"could not auto-detect the vendor for {data}; pass --software SLUG or --rule-config PATH"
+            f"could not auto-detect the vendor for {data}; "
+            "pass --software SLUG or --rule-config PATH"
         )
         return 1
     if params is None:
@@ -249,7 +250,7 @@ def annotate(
 
 
 @app.command
-def fasta(
+def fasta(  # noqa: PLR0913 - stable CLI option surface
     data: Path,
     *fasta_files: Path,
     output: Path | None = None,

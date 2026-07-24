@@ -5,14 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO, Optional, Union
+from typing import IO
 
 from packaging.version import InvalidVersion, Version
 
-from anndata_proteomics.params.parsers._common import read_lines
 from anndata_proteomics.params.model import MassTolerance, Parameters, ParamsError
+from anndata_proteomics.params.parsers._common import read_lines
 
-_Source = Union[str, Path, IO[bytes], IO[str]]
+_Source = str | Path | IO[bytes] | IO[str]
 
 MODIFICATION_MAPPING = {
     # Command-line short forms
@@ -121,7 +121,7 @@ _DIANN_IMPLICIT_DEFAULTS: dict[str, object] = {
 }
 
 
-def _find_cmdline(lines: list[str]) -> Optional[str]:
+def _find_cmdline(lines: list[str]) -> str | None:
     for line in lines:
         if "diann" in line and "--" in line:
             return line.strip()
@@ -131,9 +131,9 @@ def _find_cmdline(lines: list[str]) -> Optional[str]:
 def _version_below(software_version: str, threshold: str) -> bool:
     """DIA-NN version < threshold, tolerant of a missing/unparseable version string.
 
-    A param-less or non-DIA-NN file yields an empty version; treat it as "not below" (the newer-DIA-NN
-    branch) instead of crashing on ``Version("")`` — see ``extract_params`` for the clean rejection of
-    files that are not DIA-NN parameter files at all.
+    A param-less or non-DIA-NN file yields an empty version; treat it as "not below" (the newer
+    DIA-NN branch) instead of crashing on ``Version("")`` — see ``extract_params`` for the clean
+    rejection of files that are not DIA-NN parameter files at all.
     """
     head = (software_version or "").split(" ")[0]
     try:
@@ -142,7 +142,10 @@ def _version_below(software_version: str, threshold: str) -> bool:
         return False
 
 
-def _parse_cmdline(cmd: str, software_version: str) -> dict[str, _SettingValue]:
+def _parse_cmdline(  # noqa: C901 - vendor command-line grammar
+    cmd: str,
+    software_version: str,
+) -> dict[str, _SettingValue]:
     settings: dict[str, _SettingValue] = {}
     var_mods: list[str] = []
     fixed_mods: list[str] = []
@@ -185,7 +188,7 @@ def _coerce(setting_name: str, values: list[str]) -> float | int | str:
     return "".join(values)
 
 
-def _extract_with_regex(lines: list[str], regex: str, search_all: bool = False) -> Optional[str]:
+def _extract_with_regex(lines: list[str], regex: str, search_all: bool = False) -> str | None:
     container: list[str] = []
     for line in lines:
         match = re.search(regex, line)
@@ -213,7 +216,7 @@ def _extract_cfg(
         return default
 
 
-def _extract_modifications(lines: list[str], regexes: list[str]) -> Optional[str]:
+def _extract_modifications(lines: list[str], regexes: list[str]) -> str | None:
     joined = "\n".join(lines)
     mods: list[str] = []
     for regex in regexes:

@@ -16,6 +16,7 @@ import mudata
 import numpy as np
 import pandas as pd
 import pytest
+from prozor.ahocorasick import get_available_backends
 from scipy.sparse import csr_matrix
 
 from anndata_proteomics.annotation.validate_fasta import (
@@ -26,7 +27,6 @@ from anndata_proteomics.annotation.validate_fasta import (
 )
 from anndata_proteomics.fasta.anndata_io import read_fasta_config
 from anndata_proteomics.fasta.config import FastaConfig
-from prozor.ahocorasick import get_available_backends
 
 FASTA = (
     ">sp|P12345|PROT1 first protein\n"

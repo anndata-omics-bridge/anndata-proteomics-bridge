@@ -1,6 +1,12 @@
+<!-- Managed by agent: keep commands and file references verified -->
+<!-- Last updated: 2026-07-23 | Last verified: 2026-07-23 -->
+
 # anndata_proteomics
 
 Convert proteomics software output to AnnData format.
+
+**Precedence:** the closest `AGENTS.md` to changed files wins. Explicit user
+instructions override repository files.
 
 ## Terminology
 
@@ -79,8 +85,18 @@ integration tests, and gitignored. Do not add parallel `benchmark_data/`,
 
 ## Development
 
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"   # the [dev] extra brings in pytest + ruff
-pytest tests/
-```
+| Task | Command |
+| --- | --- |
+| Install | `uv sync --frozen --extra dev --group docs` |
+| Fast checks | `uv run pre-commit run --hook-stage pre-commit --all-files` |
+| Full gate | `uv run pre-commit run --hook-stage pre-push --all-files` |
+| Single test | `uv run pytest tests/test_cli.py -q` |
+| Security audit | `uv run pre-commit run dependency-audit --hook-stage manual --all-files` |
+
+The pre-commit configuration is the command source of truth for CI. Do not
+lower Ruff, strict Pyright, dependency, or coverage gates without explicit
+approval.
+
+## Scoped AGENTS.md
+
+- [GitHub workflows](./.github/workflows/AGENTS.md)

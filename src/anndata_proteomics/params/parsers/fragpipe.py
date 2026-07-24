@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 from io import BytesIO
 from pathlib import Path
-from typing import IO, NamedTuple, Union
+from typing import IO, NamedTuple
 
 import pandas as pd
 
-from anndata_proteomics.params.parsers._common import lookup_mass_mod, read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
+from anndata_proteomics.params.parsers._common import lookup_mass_mod, read_text
 
 
 class Parameter(NamedTuple):
@@ -128,9 +128,6 @@ def _parse_lines(lines: list[str], sep: str = "=") -> list[Parameter]:
             continue
         if "#" in line:
             parts = line.split("#")
-            if len(parts) == 1:
-                out.append(Parameter(None, None, parts[0].strip()))
-                continue
             param, comment = parts[0].strip(), parts[1].strip()
         else:
             param, comment = line, None
@@ -273,7 +270,7 @@ def _protein_inference(fp: pd.Series) -> str | None:
     return None
 
 
-def extract_params(source: Union[str, Path, IO[bytes], IO[str], BytesIO]) -> Parameters:
+def extract_params(source: str | Path | IO[bytes] | IO[str] | BytesIO) -> Parameters:
     """Parse a FragPipe ``.workflow`` file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.fragger.extract_params``. Loads the workflow

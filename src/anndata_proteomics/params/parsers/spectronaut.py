@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import IO, Optional, Union
+from typing import IO
 
-from anndata_proteomics.params.parsers._common import homogenize_paren_mods, read_lines
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers._common import homogenize_paren_mods, read_lines
 
-_Source = Union[str, Path, IO[bytes], IO[str]]
+_Source = str | Path | IO[bytes] | IO[str]
 
 _VENDOR_SYSTEM_MAP = {
     "Thermo": "Thermo Orbitrap",
@@ -29,7 +29,7 @@ MODIFICATION_MAPPING = {
 }
 
 
-def _homogenize_mods(raw_mods: Optional[str], sep: str = ",") -> Optional[str]:
+def _homogenize_mods(raw_mods: str | None, sep: str = ",") -> str | None:
     """Map a separator-delimited ``{name} ({residues})`` string to ProForma-like notation."""
     if not raw_mods or not raw_mods.strip():
         return raw_mods
@@ -44,7 +44,7 @@ def _clean(text: str) -> str:
     return re.sub(r"^[\s:,\t]+|[\s:,\t]+$", "", text)
 
 
-def _value(lines: list[str], term: str) -> Optional[str]:
+def _value(lines: list[str], term: str) -> str | None:
     for line in lines:
         if term in line:
             return _clean(line.split(term)[1])
@@ -59,19 +59,22 @@ def _required_value(lines: list[str], term: str) -> str:
     return value
 
 
-def _value_regex(lines: list[str], pattern: str) -> Optional[str]:
+def _value_regex(lines: list[str], pattern: str) -> str | None:
     for line in lines:
         if re.search(pattern, line):
             return _clean(re.split(pattern, line)[1])
     return None
 
 
-def _extract_tolerances(lines: list[str], system: str) -> tuple[Optional[str], Optional[str]]:
+def _extract_tolerances(  # noqa: C901, PLR0912 - nested vendor block grammar
+    lines: list[str],
+    system: str,
+) -> tuple[str | None, str | None]:
     in_tolerance_block = False
     in_system_block = False
-    calibration: Optional[str] = None
-    ms1: Optional[str] = None
-    ms2: Optional[str] = None
+    calibration: str | None = None
+    ms1: str | None = None
+    ms2: str | None = None
 
     for line in lines:
         if line.startswith("Pulsar Search\\Tolerances"):

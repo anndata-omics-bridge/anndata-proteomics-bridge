@@ -264,10 +264,10 @@ def _attach_search_parameters(adata: ad.AnnData, params_path: str | Path, softwa
     Parameter parsing is best-effort metadata extraction over user-supplied files (e.g. ProteoBench
     uploads, which sometimes bundle a param file for the wrong tool). A parse failure must NOT abort
     the conversion of otherwise-valid quant data: on failure we keep the source path, record a
-    ``search_parameters_error`` under ``uns`` (a machine-readable flag downstream tools surface), log a
-    warning, and return. The specific parser bugs behind the common failures are fixed at the source
-    (e.g. the DIA-NN parser rejecting a non-DIA-NN file cleanly); this boundary is the graceful
-    degrade the flag rides on.
+    ``search_parameters_error`` under ``uns`` (a machine-readable flag downstream tools
+    surface), log a warning, and return. The specific parser bugs behind the common failures are
+    fixed at the source (e.g. the DIA-NN parser rejecting a non-DIA-NN file cleanly); this boundary
+    is the graceful degradation policy the flag rides on.
     """
     software_key = software.lower()
     available = {s.lower() for s in available_software()}

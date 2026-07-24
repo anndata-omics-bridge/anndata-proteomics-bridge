@@ -16,6 +16,7 @@ build/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 
@@ -46,9 +47,4 @@ __marimo__/
 .claude/
 
 # Canonical downloaded test-data cache (regenerable via apb-testdata)
-test_data_download/json_dir/
-test_data_download/fasta/
-test_data_download/raw_file_db_full.csv
-test_data_download/raw_file_db_selected.csv
-test_data_download/raw_file_db_downloaded.csv
-test_data_download/raw_file_db.csv
+test_data_download/

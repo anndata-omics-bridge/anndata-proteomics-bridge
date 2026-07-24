@@ -6,7 +6,7 @@ import csv
 import hashlib
 import re
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, partial
 from pathlib import Path
 from typing import Any
 
@@ -141,8 +141,6 @@ def parse_proteobench_features(
             if modification is not None:
                 if index == 0:
                     rendered += f"[{modification}]-"
-                elif index == len(stripped):
-                    rendered += f"-[{modification}]"
                 else:
                     rendered += f"[{modification}]"
             if not settings.before_aa:
@@ -191,8 +189,8 @@ def _apply_unrepresented_fixed_modifications(
         targets = set(match.group("targets"))
         name = match.group("name")
         result = result.map(
-            lambda feature: _add_fixed_residue_modification(
-                str(feature),
+            partial(
+                _add_fixed_residue_modification,
                 targets=targets,
                 name=name,
             )
@@ -201,15 +199,16 @@ def _apply_unrepresented_fixed_modifications(
 
 
 def _add_fixed_residue_modification(
-    feature: str,
+    feature: object,
     *,
     targets: set[str],
     name: str,
 ) -> str:
     charge = ""
-    sequence = feature
-    if "/" in feature:
-        sequence, suffix = feature.rsplit("/", 1)
+    feature_text = str(feature)
+    sequence = feature_text
+    if "/" in feature_text:
+        sequence, suffix = feature_text.rsplit("/", 1)
         charge = f"/{suffix}"
     rendered = ""
     in_brackets = False

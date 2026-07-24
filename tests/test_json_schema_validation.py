@@ -21,7 +21,6 @@ from anndata_proteomics.rules.registry import (
     packaged_rules_root,
 )
 
-
 SCHEMA_PATH = packaged_rules_root() / "_schema" / "parse_rule.schema.json"
 
 

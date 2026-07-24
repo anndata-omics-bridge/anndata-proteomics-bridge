@@ -106,7 +106,7 @@ class Probability(_Strict):
         return value
 
     @classmethod
-    def parse(cls, value: object) -> "Probability | None":
+    def parse(cls, value: object) -> Probability | None:
         if _is_missing(value):
             return None
         if isinstance(value, Probability):
@@ -138,13 +138,13 @@ class MassTolerance(_Strict):
     label: str | None = None
 
     @model_validator(mode="after")
-    def _validate_shape(self) -> "MassTolerance":
+    def _validate_shape(self) -> MassTolerance:
         if self.mode == "absolute":
             if self.value is None:
                 raise ValueError("absolute tolerance requires value")
             if self.unit is None:
                 raise ValueError("absolute tolerance requires unit")
-        elif self.mode == "automatic":
+        else:
             if self.unit is not None:
                 raise ValueError("automatic tolerance cannot define unit")
             if self.value is not None:
@@ -152,7 +152,7 @@ class MassTolerance(_Strict):
         return self
 
     @classmethod
-    def parse(cls, value: object) -> "MassTolerance | None":
+    def parse(cls, value: object) -> MassTolerance | None:  # noqa: C901, PLR0911
         """Parse vendor tolerance values into a typed tolerance."""
         if _is_missing(value):
             return None
@@ -373,7 +373,7 @@ class Parameters(_Strict):
         return value
 
     @model_validator(mode="after")
-    def _validate_ranges(self) -> "Parameters":
+    def _validate_ranges(self) -> Parameters:
         _validate_order(self.min_precursor_charge, self.max_precursor_charge, "charge")
         _validate_order(self.min_peptide_length, self.max_peptide_length, "peptide length")
         _validate_order(self.min_precursor_mz, self.max_precursor_mz, "precursor m/z")
@@ -385,7 +385,7 @@ class Parameters(_Strict):
         return pd.Series({field: self._legacy_value(field) for field in _SERIES_FIELDS})
 
     @classmethod
-    def from_series(cls, series: pd.Series) -> "Parameters":
+    def from_series(cls, series: pd.Series) -> Parameters:
         """Build a ``Parameters`` instance from a ProteoBench-style Series."""
         fields = set(cls.model_fields)
         data: dict[str, object] = {}

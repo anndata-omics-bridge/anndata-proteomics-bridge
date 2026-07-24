@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from anndata_proteomics.rules.schema import ParseRule
 
-
 BASE: dict[str, Any] = {
     "schema_version": "0.1",
     "file_version": "1",

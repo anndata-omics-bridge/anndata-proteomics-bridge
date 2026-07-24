@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
 from anndata_proteomics._matrix_types import is_sparse_matrix
 from anndata_proteomics.params.anndata_io import read_search_parameters
 

@@ -48,10 +48,19 @@ Each conversion takes the **quant file** (the numbers) plus the **parameter file
 ## Install
 
 ```bash
-uv venv --python 3.13
-source .venv/bin/activate
-uv pip install -e '.[dev]'   # drop [dev] if you only need the CLI (it adds pytest + ruff)
+uv sync --frozen
 ```
+
+For development, install all locked quality and documentation tools:
+
+```bash
+uv sync --frozen --extra dev --group docs
+uv run pre-commit run --hook-stage pre-commit --all-files
+uv run pre-commit run --hook-stage pre-push --all-files
+```
+
+See [docs/development.md](docs/development.md) for the security audit and
+individual checks.
 
 ## Integration test data
 

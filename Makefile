@@ -2,7 +2,7 @@
 # apb is a pure library + `apb` CLI; the marimo GUIs live in the sibling apb_studio package.
 
 .DEFAULT_GOAL := help
-.PHONY: help clean test lint docs docs-serve
+.PHONY: help clean sync test lint check check-full audit package docs docs-serve
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -11,14 +11,29 @@ help:  ## Show this help
 clean:  ## Remove generated AnnData/MuData outputs
 	find . -type f \( -name '*.h5ad' -o -name '*.h5mu' \) -not -path './.venv/*' -delete
 
+sync:  ## Install the frozen development and documentation environment
+	uv sync --frozen --extra dev --group docs
+
 test:  ## Run the test suite
-	uv run --extra dev pytest -q
+	uv run --frozen --extra dev pytest -q
 
 lint:  ## Ruff check src/ and tests/
-	uv run --extra dev ruff check src/ tests/
+	uv run --frozen --extra dev ruff check .
+
+check:  ## Run the commit-stage quality gate
+	uv run pre-commit run --hook-stage pre-commit --all-files
+
+check-full:  ## Run the push-stage quality gate
+	uv run pre-commit run --hook-stage pre-push --all-files
+
+audit:  ## Audit locked dependencies
+	uv run pre-commit run dependency-audit --hook-stage manual --all-files
+
+package:  ## Build and inspect the distribution contract
+	uv run --frozen --extra dev python scripts/package_smoke.py
 
 docs:  ## Build the documentation site into public/
-	uv run --group docs mkdocs build
+	uv run --frozen --group docs mkdocs build --strict
 
 docs-serve:  ## Preview the documentation site at http://127.0.0.1:8000
-	uv run --group docs mkdocs serve
+	uv run --frozen --group docs mkdocs serve

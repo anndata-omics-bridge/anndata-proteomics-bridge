@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from functools import lru_cache
+from functools import cache
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -162,6 +162,6 @@ def _resolve_patterns(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _compile_patterns(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(pattern) for pattern in patterns)

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
-from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
+from anndata_proteomics.params.parsers._common import read_text
 
-_Source = Union[str, Path, IO[bytes], IO[str]]
+_Source = str | Path | IO[bytes] | IO[str]
 # A parsed TOML mapping, or the first line of the version-text file.
 _Loaded = dict[str, object] | str
 

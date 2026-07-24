@@ -274,7 +274,9 @@ class ParseRule(_Strict):
         return self
 
     @model_validator(mode="after")
-    def _computed_column_consistency(self) -> ParseRule:
+    def _computed_column_consistency(  # noqa: C901, PLR0912 - schema invariant
+        self,
+    ) -> ParseRule:
         available_var_columns = set(self.columns.var.select)
         if self.fragments is not None:
             # explode_fragments injects this column before materialization, so it is a
@@ -311,7 +313,7 @@ class ParseRule(_Strict):
                     raise ValueError("how='proforma_ion' requires exactly two source columns.")
                 if self.quantification_level == "ion" and column.name not in self.axis.var_keys:
                     raise ValueError("computed ProForma ion columns must be used in axis.var_keys.")
-            elif column.how == "proforma_fragment":
+            else:
                 if self.quantification_level != "fragment":
                     raise ValueError("how='proforma_fragment' is valid only for fragment rules.")
                 if len(column.from_) != 2:

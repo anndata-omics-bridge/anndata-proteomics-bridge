@@ -7,8 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.parsers.alphapept import extract_params as alphapept_extract
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers.alphapept import extract_params as alphapept_extract
 from anndata_proteomics.params.parsers.wombat import extract_params as wombat_extract
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"

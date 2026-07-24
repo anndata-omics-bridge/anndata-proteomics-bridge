@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.28,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -37,16 +37,17 @@ apb-testdata = "anndata_proteomics.scripts.extract_raw_file_db:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-cov",
-    "black",
-    "deptry>=0.24,<1",
-    "ruff",
-    "pyright",
+    "deptry>=0.25.1,<0.26",
+    "diff-cover>=10.4,<11",
+    "pip-audit>=2.10,<3",
+    "pre-commit>=4.5,<5",
+    "pyright>=1.1.408,<2",
+    "pytest>=9,<10",
+    "pytest-cov>=7,<8",
+    "ruff==0.15.12",
     "pandas-stubs",
     "scipy-stubs",
     "jsonschema>=4",
-    "pre-commit",
     # Exercise Prozor's optional Rust backend in APB's integration tests.
     "prozor[fast]>=0.1.0",
 ]
@@ -65,20 +66,43 @@ docs = [
 # distributions retain the portable registry requirement (`prozor>=0.1.0`).
 prozor = { git = "https://github.com/anndata-omics-bridge/prozor.git", rev = "0cf5875ac7730fab68d30fac411553ff580df883" }
 
-[tool.black]
-line-length = 100
-target-version = ["py313"]
-
 [tool.ruff]
 line-length = 100
 target-version = "py313"
 
+[tool.ruff.lint]
+select = [
+    "A",
+    "B",
+    "C4",
+    "C901",
+    "E",
+    "F",
+    "I",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "UP",
+    "W",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 7
+
+[tool.ruff.format]
+quote-style = "double"
+
 # Strictest practical pyright, modelled on prozor / python_package_template.
 # See TODO/TODO_pyright.md for the completed burn-down and enforcement policy.
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 executionEnvironments = [
     { root = "tests", reportPrivateUsage = "none" },
+    { root = "scripts", reportPrivateUsage = "none" },
     { root = "src" },
 ]
 venvPath = "."
@@ -112,6 +136,7 @@ DEP002 = ["pyarrow"]
 mkdocs-material = "material"
 
 [tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
@@ -119,3 +144,13 @@ python_functions = ["test_*"]
 markers = [
     "integration: mark test as integration test (requires network)",
 ]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["anndata_proteomics"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_also = ["if __name__ == .__main__.:"]

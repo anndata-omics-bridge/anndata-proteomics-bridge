@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from loguru import logger
+from prozor.annotate import annotate_peptides_streaming
 from scipy.sparse import csr_matrix
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
@@ -26,13 +27,13 @@ from anndata_proteomics.annotation.var_fasta import (
     protein_group_accessions,
     resolve_match_on,
 )
+from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.annotation import (
     describe_sources,
     materialize_sources,
     parse_header_id,
     uniprot_proteinname,
 )
-from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.config import (
     FastaConfig,
     FastaConfigAccumulator,
@@ -40,7 +41,6 @@ from anndata_proteomics.fasta.config import (
     matches_any,
 )
 from anndata_proteomics.fasta.parser import FastaSource, iter_fasta
-from prozor.annotate import annotate_peptides_streaming
 
 _SCHEMA_VERSION = "0.2"
 _DEFAULT_SEQUENCE_FIELD = "ProForma_peptide"
@@ -119,7 +119,7 @@ class _TargetInput:
     leading_protein_field: str | None
 
 
-def validate_peptides_against_fasta(
+def validate_peptides_against_fasta(  # noqa: PLR0913 - stable public API
     obj: Any,
     fasta_sources: FastaSource | Iterable[FastaSource],
     *,
@@ -161,7 +161,7 @@ def validate_peptides_against_fasta(
     return results[name]
 
 
-def validate_peptide_modalities_against_fasta(
+def validate_peptide_modalities_against_fasta(  # noqa: PLR0913 - stable public API
     obj: Any,
     fasta_sources: FastaSource | Iterable[FastaSource],
     *,
@@ -195,7 +195,7 @@ def validate_peptide_modalities_against_fasta(
     )
 
 
-def _validate_targets(
+def _validate_targets(  # noqa: PLR0913 - explicit validation contract
     owner: Any,
     targets: dict[str, Any],
     fasta_sources: FastaSource | Iterable[FastaSource],
@@ -438,7 +438,7 @@ def _feature_leading_proteins(
     return pd.Series(proteins, index=index, dtype="object")
 
 
-def _scan_fasta(
+def _scan_fasta(  # noqa: C901 - single-pass FASTA state machine
     patterns: list[str],
     fasta_sources: list[FastaSource],
     *,
@@ -562,7 +562,7 @@ def _build_summary(
     )
 
 
-def _store_mulink_feature_mapping(
+def _store_mulink_feature_mapping(  # noqa: C901, PLR0912 - modality topology validation
     mdata: Any,
     targets: dict[str, _TargetInput],
     matches: pd.DataFrame,

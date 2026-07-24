@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.parsers.diann import extract_params
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers.diann import extract_params
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
@@ -82,7 +82,8 @@ def test_diann_matches_proteobench(txt_name: str):
 
 def test_extract_params_rejects_non_diann_file_cleanly(tmp_path: Path):
     # A FragPipe workflow file mis-attached to a DIA-NN submission (real ProteoBench case): no
-    # `diann --` command line and no DIA-NN version banner → a clean ParamsError, NOT InvalidVersion.
+    # `diann --` command line and no DIA-NN version banner → a clean ParamsError, not
+    # InvalidVersion.
     from anndata_proteomics.params.model import ParamsError
 
     bad = tmp_path / "param_0..workflow"

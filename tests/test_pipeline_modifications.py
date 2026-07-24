@@ -12,7 +12,6 @@ import pytest
 from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.rules.schema import ParseRule
 
-
 RULE: dict[str, Any] = {
     "schema_version": "0.1",
     "file_version": "1",

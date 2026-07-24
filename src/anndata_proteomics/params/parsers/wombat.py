@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
 import yaml
 
-from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers._common import read_text
 
 
 def _homogenize_mod_xtandem(mod_str: str) -> str:
@@ -34,7 +34,7 @@ def _homogenize_mod_xtandem(mod_str: str) -> str:
     return f"{residue_part.upper()}[{name}]"
 
 
-def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
+def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
     """Parse a WOMBAT-P YAML configuration into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.wombat.extract_params``.

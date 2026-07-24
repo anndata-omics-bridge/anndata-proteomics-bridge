@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
-Source = Union[str, Path, IO[bytes], IO[str]]
+Source = str | Path | IO[bytes] | IO[str]
 
 
 def read_text(source: Source, *, errors: str = "strict") -> str:

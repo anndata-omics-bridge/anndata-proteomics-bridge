@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from conftest import ConversionFixture
 
 from anndata_proteomics.converters import pipeline as ui

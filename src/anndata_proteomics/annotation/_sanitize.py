@@ -35,7 +35,7 @@ def sanitize_columns(names: list[str]) -> list[str]:
     """
     sanitised = [sanitize_name(n) for n in names]
     groups: dict[str, list[str]] = {}
-    for original, clean in zip(names, sanitised):
+    for original, clean in zip(names, sanitised, strict=False):
         groups.setdefault(clean, []).append(original)
     collisions = {clean: origs for clean, origs in groups.items() if len(set(origs)) > 1}
     if collisions:

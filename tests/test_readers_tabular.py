@@ -36,7 +36,7 @@ def test_read_tsv_basic(tmp_path: Path) -> None:
 def test_read_tsv_strips_utf8_bom(tmp_path: Path) -> None:
     """Some MaxQuant-adjacent exports start with a UTF-8 BOM; utf-8-sig drops it."""
     p = tmp_path / "bom.tsv"
-    p.write_bytes("﻿Sequence\tLength\nABC\t3\n".encode("utf-8"))
+    p.write_bytes("﻿Sequence\tLength\nABC\t3\n".encode())
     df = read_tsv(p)
     assert list(df.columns) == ["Sequence", "Length"]
     assert df.iloc[0]["Sequence"] == "ABC"

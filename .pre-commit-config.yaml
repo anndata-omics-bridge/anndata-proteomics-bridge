@@ -1,40 +1,83 @@
-# Full APB quality gate: Ruff lint/format, Pyright, Deptry, and pytest.
-#   * dev tooling is installed via the `dev` optional-dependency group → `uv run --extra dev`
-#   * no GUI test suite here, so pytest runs the whole suite
-#   * pyright uses the same locked dev environment as pytest and checks the full
-#     configured src/tests scope rather than only changed filenames
-#   * deptry checks the complete dependency boundary rather than changed files
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.12
     hooks:
       - id: ruff
         args: [--fix]
+        stages: [pre-commit]
       - id: ruff-format
+        stages: [pre-commit]
 
   - repo: local
     hooks:
       - id: pyright
-        name: pyright strict
-        entry: uv run --extra dev pyright
+        name: pyright (strict)
+        entry: uv run --frozen --extra dev pyright
         language: system
+        always_run: true
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: deptry
         name: dependency declarations
-        entry: uv run --extra dev deptry .
+        entry: uv run --frozen --extra dev deptry .
         language: system
+        always_run: true
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: forbid-type-checker-ignores
         name: forbid type-checker ignore comments
         entry: '#\s*(type:\s*ignore|pyright:\s*ignore)'
         language: pygrep
         types: [python]
+        stages: [pre-commit]
 
-      - id: pytest
-        name: pytest
-        entry: uv run --extra dev pytest -x -q
+      - id: pytest-coverage
+        name: tests and branch coverage
+        entry: >-
+          uv run --frozen --extra dev pytest
+          --cov=anndata_proteomics
+          --cov-branch
+          --cov-report=xml:coverage.xml
+          --cov-report=term-missing
         language: system
-        types: [python]
+        always_run: true
         pass_filenames: false
+        stages: [pre-push]
+
+      - id: diff-cover
+        name: changed-line coverage
+        entry: uv run --frozen --extra dev python scripts/diff_coverage.py
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: package-smoke
+        name: package smoke
+        entry: uv run --frozen --extra dev python scripts/package_smoke.py
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: mkdocs-strict
+        name: strict documentation build
+        entry: uv run --frozen --group docs mkdocs build --strict
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: dependency-audit
+        name: dependency vulnerability audit
+        entry: >-
+          uv run --frozen --extra dev
+          pip-audit --local --skip-editable --progress-spinner=off
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [manual]

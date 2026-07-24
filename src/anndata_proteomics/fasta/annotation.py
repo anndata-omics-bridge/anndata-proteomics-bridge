@@ -154,7 +154,7 @@ def uniprot_proteinname(fasta_id: str) -> str:
     return match.group(1) if match else fasta_id
 
 
-def fasta_to_dataframe(
+def fasta_to_dataframe(  # noqa: PLR0913 - stable public API
     sources: FastaSource | Iterable[FastaSource],
     *,
     fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
@@ -188,7 +188,7 @@ def fasta_to_dataframe(
     return frame
 
 
-def fasta_to_dataframe_with_config(
+def fasta_to_dataframe_with_config(  # noqa: PLR0913 - stable public API
     sources: FastaSource | Iterable[FastaSource],
     *,
     fasta_config: FastaConfig | ResolvedFastaConfig | None = None,

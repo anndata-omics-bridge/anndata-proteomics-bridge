@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Union
 
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.parsers.alphapept import extract_params as _alphapept_extract
@@ -45,7 +45,7 @@ def get_parser(software: str) -> ParseFn:
     return _REGISTRY[key]
 
 
-def parse_params(path: Union[str, Path], software: str) -> Parameters:
+def parse_params(path: str | Path, software: str) -> Parameters:
     """Convenience: look up a parser and run it on ``path``."""
     return get_parser(software)(path)
 

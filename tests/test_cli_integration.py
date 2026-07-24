@@ -9,13 +9,13 @@ CLI output goes through loguru → stderr; tests assert against `r.stderr`.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
-import json
 from pathlib import Path
 
-from anndata_proteomics.rules.registry import find_rule
 from anndata_proteomics.readers.summary import store_quantification_summary
+from anndata_proteomics.rules.registry import find_rule
 from anndata_proteomics.test_data import find_param_file, find_test_data
 
 # The console script lives next to the python that's running pytest.

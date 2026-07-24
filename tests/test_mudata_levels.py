@@ -15,9 +15,8 @@ from pathlib import Path
 
 import anndata as ad
 import mudata
-from mudata import MuData
-
 from conftest import ConversionFixture
+from mudata import MuData
 
 from anndata_proteomics.converters import pipeline as ui
 from anndata_proteomics.rules.schema import QuantificationLevel

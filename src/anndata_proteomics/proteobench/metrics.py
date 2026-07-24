@@ -54,8 +54,6 @@ def compute_roc_auc(frame: pd.DataFrame) -> float:
     if frame.empty or not required <= set(frame.columns):
         return np.nan
     species_ratios = frame[["species", "log2_expectedRatio"]].drop_duplicates()
-    if species_ratios.empty:
-        return np.nan
     unchanged_index = species_ratios["log2_expectedRatio"].abs().idxmin()
     unchanged = species_ratios.loc[unchanged_index, "species"]
 

@@ -26,7 +26,6 @@ from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.proteobench.config import load_module_settings, load_tool_settings
 from anndata_proteomics.test_data import PROTEOBENCH_TOOL_SETTINGS, TEST_DATA_DIR
 
-
 CONFIGS = {
     "dda_qexactive": {
         "repo_url": "https://github.com/Proteobench/Results_quant_ion_DDA/archive/refs/heads/main.zip"
@@ -226,7 +225,7 @@ def get_raw_data(
 
             os.makedirs(extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_filename, "r") as zip_ref:
-                zip_ref.extractall(extract_dir)
+                _extract_zip(zip_ref, Path(extract_dir))
                 print(f"Extracted contents to: {extract_dir}")
 
             os.remove(zip_filename)
@@ -299,7 +298,7 @@ def catalog(
 
         for jf in json_files:
             try:
-                with open(jf, "r", encoding="utf-8") as f:
+                with open(jf, encoding="utf-8") as f:
                     data = json.load(f)
             except json.JSONDecodeError as e:
                 print(f"  skip {jf.name}: {e}")
@@ -471,7 +470,8 @@ def download(
 
         if len(df_to_download) > 0:
             print(
-                f"[{repo_name}] downloading {len(df_to_download)} dataset(s) (already present: {len(already_present)})"
+                f"[{repo_name}] downloading {len(df_to_download)} dataset(s) "
+                f"(already present: {len(already_present)})"
             )
             new_dirs = get_raw_data(df_to_download, output_directory=str(module_output_dir))
             hash_to_dir.update(new_dirs)

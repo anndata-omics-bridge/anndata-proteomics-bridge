@@ -15,7 +15,6 @@ from anndata_proteomics.modifications.unimod_registry import (
 )
 from anndata_proteomics.rules.schema import ParseRule
 
-
 BASE = {
     "schema_version": "0.1",
     "file_version": "1",

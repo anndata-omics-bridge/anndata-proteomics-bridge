@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
+import anndata as ad
 import numpy as np
 import pandas as pd
 import pytest
-import anndata as ad
+from pydantic import ValidationError
 
 from anndata_proteomics.params.anndata_io import (
     get_search_parameters_path,
@@ -80,7 +83,7 @@ def test_read_rejects_extra_fields():
     adata.uns["anndata_proteomics"] = {
         "search_parameters": '{"software_name": "Sage", "vendor_specific": 42}',
     }
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         read_search_parameters(adata)
 
 
@@ -99,5 +102,5 @@ def test_read_raises_on_corrupt_payload():
     adata.uns["anndata_proteomics"] = {
         "search_parameters": "not-valid-json",
     }
-    with pytest.raises(Exception):
+    with pytest.raises(json.JSONDecodeError):
         read_search_parameters(adata)

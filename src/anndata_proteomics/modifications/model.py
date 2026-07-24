@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from enum import Enum
 import re
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _ACCESSION_RE = re.compile(r"^(UNIMOD|MOD):\d+$", re.IGNORECASE)
 
 
-class ModType(str, Enum):
+class ModType(StrEnum):
     """Whether a modification was searched as fixed, variable, or unknown."""
 
     fixed = "fixed"

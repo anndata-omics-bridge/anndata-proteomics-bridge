@@ -5,7 +5,7 @@ from __future__ import annotations
 from anndata_proteomics.modifications.model import ModificationOccurrence
 
 
-def render_proforma(
+def render_proforma(  # noqa: C901 - ordered ProForma rendering grammar
     stripped: str,
     occurrences: list[ModificationOccurrence],
     unknown_tokens: dict[int, str] | None = None,

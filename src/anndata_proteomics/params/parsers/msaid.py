@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
 import pandas as pd
 
@@ -25,7 +25,7 @@ def _homogenize_mods(raw_mods: str) -> str:
     return ", ".join(mapped)
 
 
-def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
+def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
     """Parse an MSAID parameter CSV into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.msaid.extract_params``.

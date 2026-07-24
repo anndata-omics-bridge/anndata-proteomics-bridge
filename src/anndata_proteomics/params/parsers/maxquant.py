@@ -5,12 +5,12 @@ from __future__ import annotations
 import collections.abc
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
 import pandas as pd
 
-from anndata_proteomics.params.parsers._common import homogenize_paren_mods
 from anndata_proteomics.params.model import MassTolerance, Parameters
+from anndata_proteomics.params.parsers._common import homogenize_paren_mods
 
 XmlValue = str | dict[str, "XmlValue"] | list["XmlValue"] | None
 FlatValue = str | None
@@ -73,7 +73,7 @@ def _read_element(element: ET.Element) -> XmlValue:
     return data or None
 
 
-def _read_xml(source: Union[str, Path, IO[bytes], IO[str]]) -> dict[str, XmlValue]:
+def _read_xml(source: str | Path | IO[bytes] | IO[str]) -> dict[str, XmlValue]:
     tree = ET.parse(source)
     parsed = _read_element(tree.getroot())
     if not isinstance(parsed, dict):
@@ -188,7 +188,7 @@ def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:
 
 
 def extract_params(
-    source: Union[str, Path, IO[bytes], IO[str]],
+    source: str | Path | IO[bytes] | IO[str],
     ms2frac: str = "FTMS",
 ) -> Parameters:
     """Parse a MaxQuant ``mqpar.xml`` into :class:`Parameters`.

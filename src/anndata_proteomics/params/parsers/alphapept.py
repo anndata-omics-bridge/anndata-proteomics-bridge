@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
 import yaml
 
-from anndata_proteomics.params.parsers._common import read_text
 from anndata_proteomics.params.model import MassTolerance, Parameters
+from anndata_proteomics.params.parsers._common import read_text
 
 MODIFICATION_MAPPING = {
     "cC": "C[Carbamidomethyl]",
@@ -28,7 +28,7 @@ def _map_modifications(modifications: list[object]) -> str:
     return ", ".join(mapped)
 
 
-def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
+def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
     """Parse an AlphaPept YAML configuration file into :class:`Parameters`.
 
     Mirrors ``proteobench.io.params.alphapept.extract_params``.

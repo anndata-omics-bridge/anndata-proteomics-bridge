@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
-from anndata_proteomics.params.parsers._common import read_lines
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers._common import read_lines
 
-_Source = Union[str, Path, IO[bytes], IO[str]]
+_Source = str | Path | IO[bytes] | IO[str]
 
 # PEAKS modification tokens -> ProForma-style names (ports ProteoBench's
 # ``peaks.MODIFICATION_MAPPING``). Applied via ``MAP.get(mod, mod)`` so

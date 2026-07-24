@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from anndata_proteomics.modifications.model import (
     ModificationOccurrence,
@@ -92,7 +92,7 @@ def _parse_mass(raw: str) -> float | None:
         return None
 
 
-def _match_entry(
+def _match_entry(  # noqa: C901 - ordered matching policy
     entries: Iterable[MapEntry],
     raw_token: str,
     adjacent_residue: str | None,

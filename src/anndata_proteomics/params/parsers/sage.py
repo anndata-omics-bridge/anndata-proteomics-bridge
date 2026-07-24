@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
+from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.parsers._common import (
     format_tolerance_range,
     lookup_mass_mod,
     read_text,
 )
-from anndata_proteomics.params.model import Parameters
 
 # Mass shift (Da) -> human-readable modification name, matched within MASS_TOLERANCE.
 MASS_TO_MOD_MAPPING = {
@@ -49,7 +49,7 @@ def _parse_variable_mods(mods: dict[str, list[float]]) -> str:
     return ", ".join(results)
 
 
-def extract_params(source: Union[str, Path, IO[bytes], IO[str]]) -> Parameters:
+def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
     """Parse a Sage JSON parameter file into a :class:`Parameters` record.
 
     Accepts a filesystem path or an open file-like object (bytes or text).

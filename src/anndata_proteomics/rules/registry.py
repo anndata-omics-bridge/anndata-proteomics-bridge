@@ -6,9 +6,17 @@ from collections.abc import Iterator
 
 from anndata_proteomics.rules._discovery import (
     RuleLocator as RuleLocator,
+)
+from anndata_proteomics.rules._discovery import (
     document_paths_for_software as document_paths_for_software,
+)
+from anndata_proteomics.rules._discovery import (
     document_vendor as document_vendor,
-    iter_packaged_documents,
+)
+from anndata_proteomics.rules._discovery import (
+    iter_packaged_documents as iter_packaged_documents,
+)
+from anndata_proteomics.rules._discovery import (
     packaged_rules_root as packaged_rules_root,
 )
 from anndata_proteomics.rules.schema import QuantificationLevel

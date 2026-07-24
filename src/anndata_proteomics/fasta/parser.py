@@ -11,7 +11,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import IO, Union
+from typing import IO
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +20,7 @@ class FastaRecord:
     sequence: str
 
 
-FastaSource = Union[str, Path, IO[str]]
+FastaSource = str | Path | IO[str]
 
 
 def iter_fasta(source: FastaSource) -> Iterator[FastaRecord]:

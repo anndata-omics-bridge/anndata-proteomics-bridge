@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
 from anndata_proteomics._matrix_types import is_sparse_matrix
 from anndata_proteomics.proteobench.config import ModuleSettings, SampleSettings, ToolSettings
 from anndata_proteomics.proteobench.mapping import (
@@ -98,7 +99,7 @@ def align_runs(
     return RunDesign(conditions=conditions, raw_files=raw_files, sample_names=sample_names)
 
 
-def compute_intermediate(
+def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestration
     target: Any,
     module_settings: ModuleSettings,
     tool_settings: ToolSettings,
@@ -222,7 +223,7 @@ def compute_intermediate(
     )
 
 
-def _compute_legacy_intermediate(
+def _compute_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
     target: Any,
     *,
     feature_ids: np.ndarray,
@@ -316,7 +317,7 @@ def _compute_legacy_intermediate(
     )
 
 
-def assemble_legacy_intermediate(
+def assemble_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
     derived: pd.DataFrame,
     matrix: Any,
     *,
@@ -497,7 +498,8 @@ def _wide_run_mapping(
         sample = samples.get(sample_name)
         if sample is None:
             raise ValueError(
-                f"per-tool run_mapper references sample_name {sample_name!r} absent from module TOML"
+                "per-tool run_mapper references sample_name "
+                f"{sample_name!r} absent from module TOML"
             )
         match = pattern.match(raw_column)
         observed_name = match.group("sample") if match else _clean_run_name(raw_column, cleanup)

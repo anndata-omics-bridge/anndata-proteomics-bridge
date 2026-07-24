@@ -30,6 +30,7 @@ from loguru import logger
 from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
+from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.annotation import (
     CleavageRule,
     describe_sources,
@@ -38,7 +39,6 @@ from anndata_proteomics.fasta.annotation import (
     resolve_cleavage,
     uniprot_proteinname,
 )
-from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.config import FastaConfig, ResolvedFastaConfig
 from anndata_proteomics.fasta.parser import FastaSource
 from anndata_proteomics.params.anndata_io import read_search_parameters
@@ -62,7 +62,7 @@ _PROTEIN_MATCH_FIELDS = (
 )
 
 
-def annotate_var_from_fasta(
+def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
     obj: Any,
     fasta_sources: FastaSource | Iterable[FastaSource],
     *,
@@ -329,7 +329,7 @@ def _warn_on_mismatch(
         logger.info(f"{len(records_unmatched)} FASTA record(s) matched no var row: {shown}{tail}")
 
 
-def _record_provenance(
+def _record_provenance(  # noqa: PLR0913 - explicit provenance fields
     target: Any,
     *,
     fasta_sources: list[str],
