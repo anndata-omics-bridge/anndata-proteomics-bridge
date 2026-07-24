@@ -20,8 +20,9 @@ SDRF export of search *parameters* is a real deliverable.
    rendered `name`/`source` untouched) — not the full per-vendor rewrite. The byte-for-byte mod
    tests then guarantee parity because the rendered string never changes.
 2. Collapsing FragPipe/Sage `MASS_TO_MOD` into the registry **changes rendered names**
-   (`Pyro-glu` → `Glu->pyro-Glu`; `GG` and `Label:*` are absent from the 6-entry registry), so it
-   needs vendor-name overrides to keep the ProteoBench match. "Delete the mass dict" is not free.
+   (`Pyro-glu` → `Glu->pyro-Glu`). `GG` is present, but `Label:*` entries remain absent from the
+   seven-entry registry, so vendor-name overrides are still required to keep the ProteoBench
+   match. "Delete the mass dict" is not free.
 
 Companion to the archived ProteoBench-sync plan and
 `Archive/TODO_20260620_code-review-june.md` (Actions 4 + 15).
@@ -50,9 +51,9 @@ The design below is retained as the reference for when this is revisited.
   accession-backed metadata for SDRF/QC.
 - **Per-vendor data dicts persist.** `MODIFICATION_MAPPING` (diann/peaks/alphapept/msaid/...),
   `_MASS_TO_MOD` (fragpipe) and `MASS_TO_MOD_MAPPING` (sage) still hold mass/name data the registry
-  could own. `unimod_registry.toml` has only **6 entries** (Acetyl, Carbamidomethyl, Phospho,
-  Glu->pyro-Glu, Gln->pyro-Glu, Oxidation) and exposes `resolve(accession)` only — no `by_name` /
-  `by_code` / `by_mass`.
+  could own. `unimod_registry.toml` has **seven entries** (Acetyl, Carbamidomethyl, Phospho,
+  Glu->pyro-Glu, Gln->pyro-Glu, Oxidation, and GG) and exposes `resolve(accession)` only — no
+  `by_name` / `by_code` / `by_mass`.
 - The token `name` is the whole `residue[Name]` string, not the bare mod name.
 
 So this plan = **resolve, don't re-derive**: feed the already-tokenized vendor mods through a
@@ -200,7 +201,7 @@ existing fields exactly as designed and avoids choosing between sync and correct
 
 | Need | Reuse | New |
 |---|---|---|
-| canonical name/mass/target source | `modifications.unimod_registry` (+ extend TOML beyond 8 entries) | mass index over it |
+| canonical name/mass/target source | `modifications.unimod_registry` (+ extend TOML beyond 7 entries) | mass index over it |
 | typed mod record | `SearchedModification`, `ModType` | — |
 | mass→name lookup | registry `mass_delta` | `ParamModResolver.by_mass` |
 | name/code aliases | — | per-vendor TOML alias tables |
@@ -224,10 +225,11 @@ strings already match ProteoBench today, **every step is regression-guarded by t
 mod-field comparisons** — they must stay byte-for-byte identical while the *types* underneath
 gain accession/target/mass_delta.
 
-1. **Registry + resolver + renderer.** Extend `unimod_registry.toml` past the current 6 entries to
-   cover what the vendor dicts reference: add **GG** (`UNIMOD:121`), the SILAC **`Label:*`** set
-   FragPipe carries (`Label:2H(4)`, `Label:13C(6)`, `Label:13C(6)15N(2)`, `Label:13C(6)15N(4)`),
-   and confirm the two pyro-Glu accessions already present cover FragPipe's `-17.0265`/`-18.0106`.
+1. **Registry + resolver + renderer.** Extend `unimod_registry.toml` past the current seven entries
+   to cover what the vendor dicts reference. **GG** (`UNIMOD:121`) is already present; add the SILAC
+   **`Label:*`** set FragPipe carries (`Label:2H(4)`, `Label:13C(6)`,
+   `Label:13C(6)15N(2)`, `Label:13C(6)15N(4)`), and confirm the two pyro-Glu accessions already
+   present cover FragPipe's `-17.0265`/`-18.0106`.
    Add `ParamModResolver` with `by_accession` (wraps the existing `resolve`), `by_name`, `by_code`,
    and `by_mass` (one-time sorted mass index over `load_registry()`, reusing `lookup_mass_mod`'s
    `1e-3` tolerance). Add `render_param_mods(mods) -> "residue[Name], ..."`.
