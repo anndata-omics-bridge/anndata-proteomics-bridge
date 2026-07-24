@@ -45,7 +45,7 @@ and where to look.
   re-derive", collapse per-vendor mass/name dicts into registry + small alias tables. Items 1/3/4
   land mainly on the **parsing-rule / modified-sequence** path, but they share that registry + alias
   + mass-tolerance machinery — hence unify.
-- **[TODO_proforma.md](TODO_proforma.md)** — the ProForma encoding note and the peptidoform-vs-
+- **[TODO_proforma.md](Archive/TODO_proforma.md)** — the ProForma encoding note and the peptidoform-vs-
   parameter split. Its "Mapping tables in APB" section (parsing-rule `[[modifications.map]]` →
   `unimod_registry.toml`) is the exact surface alphabase's tables would expand, and its
   `unknown_policy` (preserve/drop/error) governs unmatched tokens.
@@ -58,7 +58,7 @@ without changing rendered strings that are currently ProteoBench-matched byte-fo
 
 - [REVIEW_what_we_learn_from_alphapep_base.md](../../REVIEW_what_we_learn_from_alphapep_base.md) — items 1, 3, 4 with evidence.
 - [TODO_modification_homogenization_design.md](TODO_modification_homogenization_design.md) — params-path registry design.
-- [TODO_proforma.md](TODO_proforma.md) — ProForma peptidoform encoding + APB mapping tables.
+- [TODO_proforma.md](Archive/TODO_proforma.md) — ProForma peptidoform encoding + APB mapping tables.
 - `related_work/alphabase/alphabase/constants/const_files/psm_reader.yaml` — `modification_mappings`, `mass_mapped_mods`, `mod_mass_tol`, `fixed_C57`.
 - `related_work/alphabase/alphabase/psm_reader/modification_mapper.py`, `maxquant_reader.py` — how alphabase applies them.
 - APB: `src/anndata_proteomics/modifications/unimod_registry.toml`, `params/_common.py` (`lookup_mass_mod`), the per-vendor `parse_*` JSON files.

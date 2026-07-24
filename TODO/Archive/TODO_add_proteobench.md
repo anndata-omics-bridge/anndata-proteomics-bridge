@@ -1,7 +1,7 @@
-# TODO: add ProteoBench scoring to APB and APB Studio
+# Completed: add ProteoBench HYE scoring to APB and APB Studio
 
-> Approved implementation tracker. The HYE-first implementation is complete;
-> PYE/plasma and additional vendor compatibility remain follow-up work.
+> Archived 2026-07-24. The HYE implementation and declared vendor parity are
+> complete. PYE/plasma remains in `../TODO_proteobench_pye_plasma.md`.
 
 ## Goal
 

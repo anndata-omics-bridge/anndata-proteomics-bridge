@@ -2,6 +2,8 @@
 
 > Completed 2026-07-23 with Deptry 0.25.1. Dependency declarations are clean
 > and enforced for the complete APB package by pre-commit.
+>
+> Archived 2026-07-24 after the complete quality gate passed.
 
 ## Changes
 

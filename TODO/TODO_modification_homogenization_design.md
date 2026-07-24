@@ -23,7 +23,8 @@ SDRF export of search *parameters* is a real deliverable.
    (`Pyro-glu` → `Glu->pyro-Glu`; `GG` and `Label:*` are absent from the 6-entry registry), so it
    needs vendor-name overrides to keep the ProteoBench match. "Delete the mass dict" is not free.
 
-Companion to the archived ProteoBench-sync plan and `TODO_code_review_june.md` (Actions 4 + 15).
+Companion to the archived ProteoBench-sync plan and
+`Archive/TODO_20260620_code-review-june.md` (Actions 4 + 15).
 The design below is retained as the reference for when this is revisited.
 
 ## Current state (2026-06-20) — the baseline this plan builds on

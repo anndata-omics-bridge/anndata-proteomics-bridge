@@ -2,6 +2,8 @@
 
 > Completed 2026-07-23 with Pyright 1.1.411. The configured `src/` and
 > `tests/` scope is green and enforced by pre-commit.
+>
+> Archived 2026-07-24 after the complete quality gate passed.
 
 ## Enforced target
 

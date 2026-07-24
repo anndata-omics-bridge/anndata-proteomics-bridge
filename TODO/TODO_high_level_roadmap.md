@@ -76,15 +76,17 @@ parameter file is missing, incomplete, or belongs to the wrong tool.
 
 Source: [TODO_params_model_review.md](TODO_params_model_review.md)
 
-### 6. Validate identifications against FASTA
+### 6. Validate identifications against FASTA — delivered
 
-Add scalable peptide-presence validation against the searched FASTA database. Preserve the complete
-peptide-protein match evidence so it can support mulink-compatible hierarchy edges and, later, an
-explicitly separate protein-inference effort.
+APB now performs scalable peptide-presence validation against the searched FASTA database and
+preserves complete peptide-protein match evidence for mulink-compatible hierarchy edges.
 
-Protein inference is not part of the first validation milestone.
+Optional protein inference remains a separate active milestone.
 
-Source: workspace `TODO/TODO_aho_cor.md`
+Sources:
+
+- [Archived FASTA validation specification](Archive/TODO_aho_cor.md)
+- [Optional protein inference follow-up](TODO_protein_inference.md)
 
 ## Deferred work
 

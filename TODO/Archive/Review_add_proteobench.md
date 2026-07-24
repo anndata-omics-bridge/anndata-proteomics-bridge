@@ -5,6 +5,9 @@ Plan reviewed: `TODO_add_proteobench.md`. Formulas, `intermediate_hash`
 ProteoBench source. The plan's input contract can be simplified — most of it is
 already solved by existing infrastructure.
 
+> Archived 2026-07-24. The reviewed HYE implementation and parity work are
+> complete; PYE/plasma is tracked separately.
+
 ## Design (settled — not a gap)
 
 - Roles are per-tool `uns['<app>']['column_roles']` (omics-bridge ADR). `convert`
