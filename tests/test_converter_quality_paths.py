@@ -306,6 +306,59 @@ def test_parameter_resolution_distinguishes_missing_from_parse_error(
     assert failed.error == "ValueError: wrong tool"
 
 
+def test_build_mudata_resolves_params_before_materializing_rules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parameters = Parameters(
+        software_version="2.6.0",
+        acquisition_method="DDA",
+    )
+    resolution = pipeline.ParameterResolution(
+        source_path=tmp_path / "params.txt",
+        parameters=parameters,
+        version="2.6.0",
+        version_status="present",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(pipeline, "resolve_parameters", lambda *_args: resolution)
+
+    def convertible_levels(
+        _slug: str,
+        version: str | None,
+        _headers: object,
+        **kwargs: object,
+    ) -> list[QuantificationLevel]:
+        captured["version"] = version
+        captured["search_parameters"] = kwargs["search_parameters"]
+        return ["ion"]
+
+    monkeypatch.setattr(pipeline, "convertible_levels", convertible_levels)
+    monkeypatch.setattr(
+        pipeline,
+        "_select_rule",
+        lambda *_args, **_kwargs: (_long_rule(), "software_version"),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_mudata_from_rules",
+        lambda *_args, **_kwargs: "built",
+    )
+
+    result = pipeline.build_mudata(
+        pd.DataFrame({"Intensity": [1.0]}),
+        "diann",
+        None,
+        params_path=resolution.source_path,
+    )
+
+    assert result == "built"
+    assert captured == {
+        "version": "2.6.0",
+        "search_parameters": parameters,
+    }
+
+
 def test_parse_error_resolution_attaches_error_without_selection_method(
     tmp_path: Path,
 ) -> None:

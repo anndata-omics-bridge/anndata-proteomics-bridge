@@ -9,7 +9,12 @@ from typing import IO
 
 from packaging.version import InvalidVersion, Version
 
-from anndata_proteomics.params.model import MassTolerance, Parameters, ParamsError
+from anndata_proteomics.params.model import (
+    AcquisitionMethod,
+    MassTolerance,
+    Parameters,
+    ParamsError,
+)
 from anndata_proteomics.params.parsers._common import read_lines
 
 _Source = str | Path | IO[bytes] | IO[str]
@@ -63,6 +68,7 @@ _QUANT_MODE = r"(.*?) quantification mode"
 _PROTEIN_INFERENCE = r"Implicit protein grouping: (.*);"
 _NORMALISATION_DISABLED = r"(Normalisation disabled)"
 _MBR_FLAG = r"(MBR enabled)|(reanalyse them)"
+_DDA_LOG_MARKER = "All runs will be analysed as DDA runs"
 
 _PARAM_CMD_DICT = {
     "ident_fdr_psm": "qvalue",
@@ -279,6 +285,16 @@ def _defaults() -> dict[str, object]:
     }
 
 
+def _acquisition_method(
+    lines: list[str],
+    cmd_dict: dict[str, _SettingValue],
+) -> AcquisitionMethod:
+    """Return DIA-NN's acquisition mode from its command line or log marker."""
+    if "dda" in cmd_dict or any(line.strip() == _DDA_LOG_MARKER for line in lines):
+        return "DDA"
+    return "DIA"
+
+
 def _from_cmdline(cmd_dict: dict[str, _SettingValue]) -> dict[str, object]:
     """Settings derived from the ``diann --...`` command line.
 
@@ -390,6 +406,7 @@ def extract_params(source: _Source) -> Parameters:
     out = _defaults()
     out["software_version"] = software_version
     out["search_engine_version"] = software_version
+    out["acquisition_method"] = _acquisition_method(lines, cmd_dict)
     out.update(_from_cmdline(cmd_dict))
     out.update(_from_log_regex(lines, have=set(out)))
     if cfg_used:

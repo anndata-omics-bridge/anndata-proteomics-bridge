@@ -12,12 +12,13 @@ from pydantic import ValidationError
 from anndata_proteomics.params.model import MassTolerance, Parameters, Probability
 
 
-def test_construct_empty_has_all_none():
+def test_construct_empty_uses_unknown_acquisition_method():
     p = Parameters()
     dumped = p.model_dump()
     assert dumped["software_name"] is None
     assert dumped["enzyme"] is None
     assert dumped["scan_window"] is None
+    assert dumped["acquisition_method"] == "unknown"
 
 
 def test_extra_fields_are_rejected():
@@ -62,6 +63,33 @@ def test_from_series_treats_literal_none_string_as_none():
     s = pd.Series({"software_name": "Sage", "ident_fdr_psm": "None"})
     p = Parameters.from_series(s)
     assert p.ident_fdr_psm is None
+
+
+@pytest.mark.parametrize("value", ["DDA", "DIA", "unknown"])
+def test_acquisition_method_accepts_declared_values(value: str):
+    params = Parameters.model_validate({"acquisition_method": value})
+
+    assert params.acquisition_method == value
+
+
+@pytest.mark.parametrize("value", [None, "SWATH", "dda"])
+def test_acquisition_method_rejects_values_outside_vocabulary(value: object):
+    with pytest.raises(ValidationError):
+        Parameters.model_validate({"acquisition_method": value})
+
+
+@pytest.mark.parametrize("value", ["", None, math.nan])
+def test_from_series_defaults_missing_acquisition_method_to_unknown(value: object):
+    params = Parameters.from_series(pd.Series({"acquisition_method": value}))
+
+    assert params.acquisition_method == "unknown"
+
+
+def test_from_series_preserves_meaningful_unknown_acquisition_method():
+    params = Parameters.from_series(pd.Series({"acquisition_method": "unknown"}))
+
+    assert params.acquisition_method == "unknown"
+    assert params.to_series()["acquisition_method"] == "unknown"
 
 
 def test_probability_rejects_invalid_values():

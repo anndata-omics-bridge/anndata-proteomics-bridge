@@ -44,6 +44,55 @@ def _adata(prefix: str = "") -> ad.AnnData:
     return obj
 
 
+def _rule(*, input_shape: str = "long") -> dict[str, object]:
+    if input_shape == "long":
+        intensity_source = "Intensity"
+        quality_source = "Q.Value"
+        obs_source = "Run"
+    else:
+        intensity_source = r"^Intensity_(?P<sample>.+)$"
+        quality_source = r"^Q\.Value_(?P<sample>.+)$"
+        obs_source = "<sample>"
+    return {
+        "schema_version": "0.1",
+        "file_version": "test",
+        "software_name": "Synthetic",
+        "software_version": ".*",
+        "input_shape": input_shape,
+        "quantification_level": "ion",
+        "axis": {
+            "obs_keys": ["Run"],
+            "var_keys": ["Feature"],
+            "x_layer": "intensity",
+        },
+        "columns": {
+            "obs": {"select": {"Run": obs_source}},
+            "var": {
+                "select": {"Feature": "Vendor.Feature", "Other": "Vendor.Other"},
+                "compute": [
+                    {
+                        "name": "Combined",
+                        "from": ["Feature", "Other"],
+                        "how": "coalesce",
+                    }
+                ],
+            },
+        },
+        "layers": [
+            {"name": "intensity", "source": intensity_source},
+            {"name": "quality", "source": quality_source},
+            {
+                "name": "not_materialized",
+                "source": ("Absent" if input_shape == "long" else r"^Absent_(?P<sample>.+)$"),
+            },
+        ],
+    }
+
+
+def _attach_rule(obj: ad.AnnData, *, input_shape: str = "long") -> None:
+    obj.uns["anndata_proteomics"]["rule_json"] = json.dumps(_rule(input_shape=input_shape))
+
+
 def test_quantification_summary_has_known_missingness_and_range() -> None:
     obj = _adata()
 
@@ -68,6 +117,69 @@ def test_quantification_summary_has_known_missingness_and_range() -> None:
     }
     stored = obj.uns["anndata_proteomics"]["descriptive_summary"]
     assert json.loads(stored) == result
+
+
+def test_quantification_summary_records_applied_column_mapping() -> None:
+    obj = _adata()
+    obj.layers["quality"] = np.ones(obj.shape)
+    _attach_rule(obj)
+
+    store_quantification_summary(obj)
+
+    assert describe(obj)["column_mapping"] == {
+        "X": {
+            "layer": "intensity",
+            "source": "Intensity",
+            "source_kind": "column",
+        },
+        "layers": {
+            "intensity": {"source": "Intensity", "source_kind": "column"},
+            "quality": {"source": "Q.Value", "source_kind": "column"},
+        },
+        "obs": {"Run": "Run"},
+        "var": {
+            "Feature": "Vendor.Feature",
+            "Other": "Vendor.Other",
+            "Combined": "computed:coalesce",
+        },
+    }
+
+
+def test_column_mapping_marks_wide_layer_sources_as_patterns() -> None:
+    obj = _adata()
+    _attach_rule(obj, input_shape="wide")
+
+    store_quantification_summary(obj)
+
+    mapping = describe(obj)["column_mapping"]
+    assert mapping["X"] == {
+        "layer": "intensity",
+        "source": r"^Intensity_(?P<sample>.+)$",
+        "source_kind": "pattern",
+    }
+    assert mapping["layers"] == {
+        "intensity": {
+            "source": r"^Intensity_(?P<sample>.+)$",
+            "source_kind": "pattern",
+        }
+    }
+    assert mapping["obs"] == {"Run": "<sample>"}
+
+
+@pytest.mark.parametrize(
+    "rule_json",
+    [None, "{not-json", {}, b"\xff"],
+)
+def test_column_mapping_tolerates_legacy_or_malformed_rule_json(
+    rule_json: object,
+) -> None:
+    obj = _adata()
+    if rule_json is not None:
+        obj.uns["anndata_proteomics"]["rule_json"] = rule_json
+
+    store_quantification_summary(obj)
+
+    assert "column_mapping" not in describe(obj)
 
 
 def test_fasta_stage_adds_proteotypic_count_without_changing_quantification() -> None:
@@ -159,7 +271,7 @@ def test_describe_upgrades_v1_present_run_histogram() -> None:
 
     result = describe(obj)
 
-    assert result["schema_version"] == "4"
+    assert result["schema_version"] == "5"
     layer = result["quantification"]["layers"]["intensity"]
     assert layer["missingness_histogram"] == {
         "0": 2,
@@ -205,6 +317,8 @@ def test_describe_path_targets_one_mudata_modality(tmp_path: Path) -> None:
         {"fasta.id": pd.Categorical(["P1", "P2", None, "P4"])},
         index=protein.var_names,
     )
+    _attach_rule(peptide)
+    _attach_rule(protein)
     with mudata.set_options(pull_on_update=False):
         obj = MuData({"peptide": peptide, "protein": protein}, axis=0)
     obj.obs["condition"] = ["A", "A", "B"]
@@ -221,7 +335,9 @@ def test_describe_path_targets_one_mudata_modality(tmp_path: Path) -> None:
     assert set(whole["modalities"]) == {"peptide", "protein"}
     assert peptide["container_type"] == "anndata"
     assert peptide["quantification"]["level"] == "peptide"
+    assert peptide["column_mapping"]["X"]["source"] == "Intensity"
     assert peptide["annotation"]["group_counts"] == {"condition": 2}
     assert peptide["fasta"]["matched_feature_count"] == 3
     assert protein["annotation"]["group_counts"] == {"condition": 2}
+    assert protein["column_mapping"]["X"]["source"] == "Intensity"
     assert protein["fasta"]["annotated_feature_count"] == 3

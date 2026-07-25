@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.rules._discovery import (
     RuleLocator,
     document_paths_for_software,
@@ -72,7 +73,7 @@ def validate_rule_source(
         raise
     for level in document.levels:
         try:
-            document.effective_rule(level)
+            document.validate_effective_rule_variants(level)
         except ValidationError as exc:
             exc.add_note(f"in {source}; level: {level}")
             raise
@@ -107,6 +108,7 @@ def load_rule_document(path: Path | str) -> ParseRuleDocument:
 def load_rule(
     source: RuleLocator | Path | str,
     level: QuantificationLevel | None = None,
+    search_parameters: Parameters | None = None,
 ) -> ParseRule:
     """Load one effective level from a document or locator.
 
@@ -126,16 +128,19 @@ def load_rule(
             )
         selected_level = next(iter(document.levels))
     try:
-        return document.effective_rule(selected_level)
+        return document.effective_rule(selected_level, search_parameters)
     except KeyError as exc:
         raise RuleDocumentError(
             f"{path} has no level {selected_level!r}; available: {list(document.levels)}"
         ) from exc
 
 
-def load_rules(path: Path | str) -> dict[QuantificationLevel, ParseRule]:
+def load_rules(
+    path: Path | str,
+    search_parameters: Parameters | None = None,
+) -> dict[QuantificationLevel, ParseRule]:
     """Load every effective rule from one document."""
-    return load_rule_document(path).effective_rules()
+    return load_rule_document(path).effective_rules(search_parameters)
 
 
 def _software_version_matches(pattern: str, version: str) -> bool:
@@ -161,6 +166,7 @@ def resolve_rule_locator(
     software: str,
     level: QuantificationLevel,
     version: str | None,
+    search_parameters: Parameters | None = None,
 ) -> RuleLocator | None:
     """Resolve a document-level pair using the existing software-version regexes."""
     candidates: list[tuple[Path, ParseRuleDocument]] = []
@@ -176,7 +182,7 @@ def resolve_rule_locator(
     if len(candidates) == 1:
         return RuleLocator(path=candidates[0][0], level=level)
     if version is None and candidates:
-        rules = [document.effective_rule(level) for _, document in candidates]
+        rules = [document.effective_rule(level, search_parameters) for _, document in candidates]
         if _rules_equivalent_without_version(rules):
             return RuleLocator(path=candidates[0][0], level=level)
     return None
@@ -186,22 +192,34 @@ def load_packaged_rule(
     software: str,
     quantification_level: QuantificationLevel,
     version: str | None = None,
+    search_parameters: Parameters | None = None,
 ) -> ParseRule:
     """Load a packaged effective rule for software, level, and optional version."""
-    locator = resolve_rule_locator(software, quantification_level, version)
+    locator = resolve_rule_locator(
+        software,
+        quantification_level,
+        version,
+        search_parameters,
+    )
     if locator is None:
         raise ValueError(
             f"no packaged rule for software={software!r} "
             f"level={quantification_level!r} version={version!r}"
         )
-    return load_rule(locator)
+    return load_rule(locator, search_parameters=search_parameters)
 
 
 def resolve_rule_for_version(
     software: str,
     quantification_level: QuantificationLevel,
     version: str | None,
+    search_parameters: Parameters | None = None,
 ) -> ParseRule | None:
     """Return the effective level covered by ``version``, or ``None``."""
-    locator = resolve_rule_locator(software, quantification_level, version)
-    return None if locator is None else load_rule(locator)
+    locator = resolve_rule_locator(
+        software,
+        quantification_level,
+        version,
+        search_parameters,
+    )
+    return None if locator is None else load_rule(locator, search_parameters=search_parameters)

@@ -86,6 +86,7 @@ def test_write_serializes_every_parameter_field_and_preserves_null() -> None:
 
     assert set(payload) == set(Parameters.model_fields)
     assert payload["software_version"] is None
+    assert payload["acquisition_method"] == "unknown"
 
 
 def test_read_rejects_extra_fields():
@@ -105,6 +106,7 @@ def test_read_validates_against_current_schema():
     recovered = read_search_parameters(adata)
     assert isinstance(recovered, Parameters)
     assert recovered.software_name == "Sage"
+    assert recovered.acquisition_method == "unknown"
 
 
 def test_read_raises_on_corrupt_payload():

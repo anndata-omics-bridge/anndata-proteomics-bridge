@@ -293,8 +293,10 @@ def test_summary_matrix_and_json_compatibility_helpers() -> None:
 
 def test_summary_payload_input_shapes_and_upgrade_noops() -> None:
     owner = SimpleNamespace(uns={"anndata_proteomics": {}})
+    legacy_owner = SimpleNamespace(uns={"anndata_proteomics": "legacy"})
+    assert summary._stored_rule(legacy_owner) is None
     payload = {
-        "schema_version": "4",
+        "schema_version": "5",
         "container_type": "anndata",
     }
     owner.uns["anndata_proteomics"]["descriptive_summary"] = json.dumps(payload).encode()
@@ -338,6 +340,12 @@ def test_summary_payload_input_shapes_and_upgrade_noops() -> None:
             {"schema_version": "3", "quantification": {"layers": {"x": {}}}}
         )["schema_version"]
         == "4"
+    )
+    assert (
+        summary._upgrade_v4_payload(
+            {"schema_version": "4", "quantification": {"layers": {"x": {}}}}
+        )["schema_version"]
+        == "5"
     )
 
 

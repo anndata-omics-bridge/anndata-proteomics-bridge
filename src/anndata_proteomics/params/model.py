@@ -32,6 +32,7 @@ class ParamsError(Exception):
 
 
 ScalarValue = str | int | float | bool | None
+AcquisitionMethod = Literal["DDA", "DIA", "unknown"]
 ToleranceUnit = Literal["ppm", "Da"]
 ToleranceMode = Literal["absolute", "automatic"]
 
@@ -206,6 +207,7 @@ class Parameters(_Strict):
 
     software_name: str | None = None
     software_version: str | None = None
+    acquisition_method: AcquisitionMethod = "unknown"
     search_engine: str | None = None
     search_engine_version: str | None = None
     ident_fdr_psm: Probability | None = None
@@ -392,6 +394,11 @@ class Parameters(_Strict):
         unparsed: list[UnparsedParameter] = []
         for key, value in series.items():
             name = str(key)
+            if name == "acquisition_method":
+                if _is_missing(value) and not _is_unknown_literal(value):
+                    continue
+                data[name] = "unknown" if _is_unknown_literal(value) else value
+                continue
             normalized = None if _is_missing(value) else value
             if name in fields:
                 data[name] = normalized
@@ -405,6 +412,8 @@ class Parameters(_Strict):
 
     def _legacy_value(self, field: str) -> object:
         value = getattr(self, field)
+        if field == "acquisition_method":
+            return value
         if isinstance(value, Probability):
             return value.value
         if isinstance(value, MassTolerance):
@@ -429,6 +438,10 @@ def _is_missing(value: object) -> bool:
     if isinstance(value, str) and value.strip().lower() in _MISSING_STRINGS:
         return True
     return False
+
+
+def _is_unknown_literal(value: object) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "unknown"
 
 
 def _normalize_unit(unit: str | None) -> ToleranceUnit:

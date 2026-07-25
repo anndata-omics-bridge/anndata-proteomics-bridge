@@ -24,6 +24,7 @@ CASES = [
     "DIANN_cfg_MBR.txt",
     "DIA-NN_cfg_directq.txt",
 ]
+DDA_FIXTURE = PROTEOBENCH_PARAMS / "DIANN_DDA_report.log.txt"
 
 
 def _normalize(value: object) -> object:
@@ -90,6 +91,38 @@ def test_extract_params_rejects_non_diann_file_cleanly(tmp_path: Path):
     bad.write_text("# FragPipe (22.0) runtime properties\nfragpipe.config.bin-msfragger=/x\n")
     with pytest.raises(ParamsError, match="not a DIA-NN parameter file"):
         extract_params(bad)
+
+
+@pytest.mark.parametrize("txt_name", CASES)
+def test_existing_diann_fixtures_are_dia(txt_name: str):
+    txt = PROTEOBENCH_PARAMS / txt_name
+    if not txt.exists():
+        pytest.skip("ProteoBench fixture missing")
+
+    assert extract_params(txt).acquisition_method == "DIA"
+
+
+def test_diann_detects_dda_fixture():
+    assert extract_params(DDA_FIXTURE).acquisition_method == "DDA"
+
+
+def test_diann_detects_dda_command_line_without_log_marker(tmp_path: Path):
+    params_file = tmp_path / "diann.log"
+    params_file.write_text("diann --unimod4 --dda\n")
+
+    assert extract_params(params_file).acquisition_method == "DDA"
+
+
+def test_diann_detects_exact_dda_log_marker_without_flag(tmp_path: Path):
+    params_file = tmp_path / "diann.log"
+    params_file.write_text(
+        "DIA-NN 2.6.0 Enterprise "
+        "(Data-Independent Acquisition by Neural Networks)\n"
+        "diann --unimod4\n"
+        "All runs will be analysed as DDA runs\n"
+    )
+
+    assert extract_params(params_file).acquisition_method == "DDA"
 
 
 @pytest.mark.parametrize("version", ["", "not-a-version"])

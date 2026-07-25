@@ -88,6 +88,49 @@ handling usually belong to a level.
 Editing `base` requires every effective level to remain valid. Editing a level validates
 that merged level. `apb validate` always checks the source document and every level.
 
+## Search-parameter axis overrides
+
+A level may conditionally override its partial `axis` using validated search parameters:
+
+```json
+{
+  "levels": {
+    "ion": {
+      "axis": {
+        "var_keys": ["ProForma_ion"],
+        "x_layer": "Precursor_Normalised"
+      },
+      "search_parameter_overrides": [
+        {
+          "when_search_parameters": {
+            "acquisition_method": "DDA"
+          },
+          "axis": {
+            "x_layer": "Ms1_Normalised"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Conditions use equality over fields declared by the typed `Parameters` model. Unknown
+field names and values that do not validate as the corresponding parameter type are
+rejected. APB merges `base`, then the selected level, then every matching axis override
+in source order. The result is validated and handed to converters as an ordinary flat
+`ParseRule`; the conditional source structure is not stored in the effective rule.
+
+Overrides are level-only: `base` is a plain `RuleFragment`, while level fragments own
+`search_parameter_overrides`. Override bodies intentionally contain only a partial
+`axis`. Object arrays such as layers and computed columns have append semantics in the
+base-to-level merger and therefore cannot safely update an existing named declaration.
+
+`apb validate` checks the default rule and every compatible override combination.
+Ordinary packaged conversion parses search parameters before materialization. Explicit
+`--rule-config` conversion also applies overrides when `--params` is supplied and uses
+the level default when it is not.
+
 ## Effective rule shape
 
 After merging, every effective `ParseRule` has these required fields:
@@ -267,7 +310,8 @@ not an additional fallback rule; a version mismatch is an error.
 `apb convert data.tsv LEVEL --rule-config rules.json` selects one level from an
 external document and writes AnnData. Without `LEVEL`, APB converts every level whose
 required columns match the data and always writes MuData, including when only one
-level matches.
+level matches. Supplying `--params` materializes any matching search-parameter axis
+overrides before column matching and conversion.
 
 ## Adding a vendor, version, or level
 

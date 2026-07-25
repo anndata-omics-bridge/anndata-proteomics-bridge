@@ -16,6 +16,7 @@ import pytest
 from anndata import AnnData
 
 from anndata_proteomics.converters import pipeline as ui
+from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.rules.loader import (
     load_packaged_rule,
     resolve_rule_for_version,
@@ -139,7 +140,11 @@ def test_missing_version_enumerates_multiple_matching_packaged_locators(
     locator = resolve_rule_locator("peaks", "ion", "13")
     assert locator is not None
     monkeypatch.setattr(ui, "iter_packaged_rules", lambda: iter([locator, locator]))
-    monkeypatch.setattr(ui, "load_rule", lambda _locator: rule)
+    monkeypatch.setattr(
+        ui,
+        "load_rule",
+        lambda _locator, search_parameters=None: rule,
+    )
     headers = set(rule.columns.var.select.values()) | {"LFQ_Run_1 Normalized Area"}
 
     with pytest.raises(ValueError, match="2 rules match"):
@@ -201,6 +206,28 @@ def test_convertible_levels_by_version() -> None:
     assert "mudata" in ui.available_targets("diann", _V23, _diann_headers(_V23))
 
 
+def test_pipeline_rule_selection_applies_search_parameter_override() -> None:
+    headers = _diann_headers(_V23)
+
+    dda = ui.select_rule(
+        "diann",
+        "ion",
+        _V23,
+        headers,
+        search_parameters=Parameters(acquisition_method="DDA"),
+    )
+    dia = ui.select_rule(
+        "diann",
+        "ion",
+        _V23,
+        headers,
+        search_parameters=Parameters(acquisition_method="DIA"),
+    )
+
+    assert dda.axis.x_layer == "Ms1_Normalised"
+    assert dia.axis.x_layer == "Precursor_Normalised"
+
+
 def test_select_rule_errors() -> None:
     headers = _diann_headers(_V23)
     # fragment has no rule covering 2.x
@@ -217,13 +244,15 @@ def test_select_rule_errors() -> None:
         assert "don't match" in str(exc)
 
 
-def test_convert_level_passes_params_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    # convert_level must thread params_path through to converters.assemble.convert.
+def test_convert_level_materializes_rule_from_params_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import numpy as np
 
     from anndata_proteomics.converters import assemble
+    from anndata_proteomics.params.model import Parameters
 
-    captured: dict[str, str | Path | None] = {}
+    captured: dict[str, object] = {}
 
     def fake_convert(
         df: pd.DataFrame,
@@ -245,9 +274,21 @@ def test_convert_level_passes_params_path(monkeypatch: pytest.MonkeyPatch) -> No
         headers: Iterable[str],
         *,
         version_status: str | None = None,
+        search_parameters: Parameters | None = None,
     ) -> tuple[ParseRule, str]:
+        captured["search_parameters"] = search_parameters
         return load_packaged_rule("diann", "ion", "1.9.2"), "software_version"
 
+    resolution = ui.ParameterResolution(
+        source_path=Path("/tmp/param_0..txt"),
+        parameters=Parameters(
+            software_version="1.9.2",
+            acquisition_method="DDA",
+        ),
+        version="1.9.2",
+        version_status="present",
+    )
+    monkeypatch.setattr(ui, "resolve_parameters", lambda *_args: resolution)
     monkeypatch.setattr(ui, "_select_rule", fake_select_rule)
     monkeypatch.setattr(assemble, "convert", fake_convert)
 
@@ -260,4 +301,5 @@ def test_convert_level_passes_params_path(monkeypatch: pytest.MonkeyPatch) -> No
     )
 
     assert adata.shape == (1, 1)
-    assert captured["params_path"] == "/tmp/param_0..txt"
+    assert captured["params_path"] is None
+    assert captured["search_parameters"] == resolution.parameters

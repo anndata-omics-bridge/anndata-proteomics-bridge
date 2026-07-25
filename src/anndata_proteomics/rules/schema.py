@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from itertools import combinations
+from typing import Annotated, Any, Literal, override
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from anndata_proteomics.params.model import Parameters
 
 InputShape = Literal["long", "wide"]
 QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein", "fragment"]
@@ -387,7 +390,7 @@ class PartialColumns(_Strict):
 
 
 class RuleFragment(_Strict):
-    """Strict partial ParseRule body used by a document base or one level."""
+    """Strict partial ParseRule body used by a document base."""
 
     input_shape: InputShape | None = None
     axis: PartialAxis | None = None
@@ -403,6 +406,61 @@ class RuleFragment(_Strict):
         return self.model_dump(by_alias=True, exclude_unset=True, mode="json")
 
 
+class SearchParameterOverride(_Strict):
+    """One search-parameter condition and its level-local axis override."""
+
+    when_search_parameters: dict[str, Any] = Field(min_length=1)
+    axis: PartialAxis
+
+    @field_validator("when_search_parameters")
+    @classmethod
+    def _normalize_search_parameter_values(cls, value: dict[str, Any]) -> dict[str, Any]:
+        unknown = sorted(set(value) - Parameters.model_fields.keys())
+        if unknown:
+            raise ValueError(f"unknown search-parameter field(s): {unknown}")
+        normalized = Parameters.model_validate(value)
+        return {name: getattr(normalized, name) for name in value}
+
+    @model_validator(mode="after")
+    def _axis_is_not_empty(self) -> SearchParameterOverride:
+        if not self.axis.model_fields_set:
+            raise ValueError("search-parameter override axis must declare at least one field")
+        return self
+
+    def matches(self, search_parameters: Parameters) -> bool:
+        """Return whether all normalized parameter conditions match."""
+        return all(
+            getattr(search_parameters, name) == expected
+            for name, expected in self.when_search_parameters.items()
+        )
+
+    def as_merge_dict(self) -> dict[str, Any]:
+        """Return the axis fragment in ordinary rule-merge shape."""
+        return {
+            "axis": self.axis.model_dump(
+                by_alias=True,
+                exclude_unset=True,
+                mode="json",
+            )
+        }
+
+
+class LevelRuleFragment(RuleFragment):
+    """Strict level body with non-recursive search-parameter axis overrides."""
+
+    search_parameter_overrides: list[SearchParameterOverride] = Field(default_factory=list)
+
+    @override
+    def as_merge_dict(self) -> dict[str, Any]:
+        """Return the level body without its materialization-time overrides."""
+        return self.model_dump(
+            by_alias=True,
+            exclude={"search_parameter_overrides"},
+            exclude_unset=True,
+            mode="json",
+        )
+
+
 class ParseRuleDocument(_Strict):
     """One self-contained software-version document with shared and level rules."""
 
@@ -411,16 +469,58 @@ class ParseRuleDocument(_Strict):
     software_name: str
     software_version: str
     base: RuleFragment
-    levels: dict[QuantificationLevel, RuleFragment] = Field(min_length=1)
+    levels: dict[QuantificationLevel, LevelRuleFragment] = Field(min_length=1)
 
-    def effective_rule(self, level: QuantificationLevel) -> ParseRule:
+    def effective_rule(
+        self,
+        level: QuantificationLevel,
+        search_parameters: Parameters | None = None,
+    ) -> ParseRule:
         """Merge and validate one level as the effective converter contract."""
         if level not in self.levels:
             raise KeyError(level)
+        level_fragment = self.levels[level]
+        matching_overrides = (
+            [
+                override
+                for override in level_fragment.search_parameter_overrides
+                if override.matches(search_parameters)
+            ]
+            if search_parameters is not None
+            else []
+        )
+        return self._materialize_rule(level, matching_overrides)
+
+    def effective_rules(
+        self,
+        search_parameters: Parameters | None = None,
+    ) -> dict[QuantificationLevel, ParseRule]:
+        """Validate and return every effective level in stable source order."""
+        return {level: self.effective_rule(level, search_parameters) for level in self.levels}
+
+    def validate_effective_rule_variants(self, level: QuantificationLevel) -> None:
+        """Validate the default and every condition-compatible override combination."""
+        if level not in self.levels:
+            raise KeyError(level)
+        self._materialize_rule(level, [])
+        overrides = self.levels[level].search_parameter_overrides
+        for size in range(1, len(overrides) + 1):
+            for selected in combinations(overrides, size):
+                if _search_parameter_conditions_are_compatible(selected):
+                    self._materialize_rule(level, selected)
+
+    def _materialize_rule(
+        self,
+        level: QuantificationLevel,
+        overrides: list[SearchParameterOverride] | tuple[SearchParameterOverride, ...],
+    ) -> ParseRule:
+        """Merge a level and an already-selected override sequence."""
         body = _merge_rule_dicts(
             self.base.as_merge_dict(),
             self.levels[level].as_merge_dict(),
         )
+        for parameter_override in overrides:
+            body = _merge_rule_dicts(body, parameter_override.as_merge_dict())
         return ParseRule.model_validate(
             {
                 "schema_version": self.schema_version,
@@ -432,9 +532,22 @@ class ParseRuleDocument(_Strict):
             }
         )
 
-    def effective_rules(self) -> dict[QuantificationLevel, ParseRule]:
-        """Validate and return every effective level in stable source order."""
-        return {level: self.effective_rule(level) for level in self.levels}
+
+def _search_parameter_conditions_are_compatible(
+    overrides: tuple[SearchParameterOverride, ...],
+) -> bool:
+    """Return whether selected equality conditions can form valid parameters."""
+    combined: dict[str, Any] = {}
+    for parameter_override in overrides:
+        for name, expected in parameter_override.when_search_parameters.items():
+            if name in combined and combined[name] != expected:
+                return False
+            combined[name] = expected
+    try:
+        Parameters.model_validate(combined)
+    except ValidationError:
+        return False
+    return True
 
 
 def _is_array_of_objects(value: list[Any]) -> bool:

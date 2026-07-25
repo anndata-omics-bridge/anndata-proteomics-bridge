@@ -12,10 +12,11 @@ import numpy as np
 
 from anndata_proteomics._matrix_types import is_sparse_matrix
 from anndata_proteomics.params.anndata_io import read_search_parameters
+from anndata_proteomics.rules.schema import ColumnGroup, ParseRule
 
 _NAMESPACE = "anndata_proteomics"
 _SUMMARY_KEY = "descriptive_summary"
-_SCHEMA_VERSION = "4"
+_SCHEMA_VERSION = "5"
 _FASTA_ANNOTATION_KEY = "fasta"
 _FASTA_VALIDATION_KEY = "fasta_validation"
 _FASTA_MATCHED_KEY = "peptide_in_fasta"
@@ -142,6 +143,10 @@ def describe(obj: Any) -> dict[str, Any]:
     payload.setdefault("container_type", "anndata")
     if "quantification" not in payload:
         payload["quantification"] = _quantification_summary(obj)
+    if "column_mapping" not in payload:
+        column_mapping = _column_mapping(obj)
+        if column_mapping is not None:
+            payload["column_mapping"] = column_mapping
     proteobench = obj.uns.get("proteobench")
     if isinstance(proteobench, Mapping) and "scores" in proteobench:
         payload["proteobench"] = _to_json_compatible(proteobench)
@@ -201,6 +206,11 @@ def _store_quantification_summary_anndata(obj: Any) -> None:
             "quantification": _quantification_summary(obj),
         }
     )
+    column_mapping = _column_mapping(obj)
+    if column_mapping is None:
+        payload.pop("column_mapping", None)
+    else:
+        payload["column_mapping"] = column_mapping
     _write_payload(obj, payload)
 
 
@@ -217,6 +227,61 @@ def _quantification_summary(obj: Any) -> dict[str, Any]:
             str(name): _layer_summary(layer, n_obs=obj.n_obs) for name, layer in obj.layers.items()
         },
     }
+
+
+def _column_mapping(obj: Any) -> dict[str, Any] | None:
+    """Describe where the effective rule placed vendor and computed columns."""
+    rule = _stored_rule(obj)
+    if rule is None:
+        return None
+
+    layers_by_name = {layer.name: layer for layer in rule.layers}
+    materialized_layers = {str(name) for name in obj.layers} | {rule.axis.x_layer}
+    layers = {
+        name: {
+            "source": layer.source,
+            "source_kind": "column" if rule.input_shape == "long" else "pattern",
+        }
+        for name, layer in layers_by_name.items()
+        if name in materialized_layers
+    }
+    x_layer = layers_by_name[rule.axis.x_layer]
+    source_kind = "column" if rule.input_shape == "long" else "pattern"
+    return {
+        "X": {
+            "layer": x_layer.name,
+            "source": x_layer.source,
+            "source_kind": source_kind,
+        },
+        "layers": layers,
+        "obs": _column_group_mapping(rule.columns.obs),
+        "var": _column_group_mapping(rule.columns.var),
+    }
+
+
+def _stored_rule(obj: Any) -> ParseRule | None:
+    """Return a valid stored effective rule, or ``None`` for legacy metadata."""
+    namespace = obj.uns.get(_NAMESPACE)
+    if not isinstance(namespace, Mapping):
+        return None
+    raw = namespace.get("rule_json")
+    try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        if isinstance(raw, str):
+            return ParseRule.model_validate_json(raw)
+        if isinstance(raw, Mapping):
+            return ParseRule.model_validate(dict(raw))
+    except (TypeError, UnicodeDecodeError, ValueError):
+        return None
+    return None
+
+
+def _column_group_mapping(group: ColumnGroup) -> dict[str, str]:
+    """Map output column names to their vendor source or compute operation."""
+    mapping = dict(group.select)
+    mapping.update({column.name: f"computed:{column.how}" for column in group.compute})
+    return mapping
 
 
 def _layer_summary(layer: Any, *, n_obs: int) -> dict[str, Any]:
@@ -307,6 +372,9 @@ def _read_payload(obj: Any) -> dict[str, Any]:
     if version == "3":
         payload = _upgrade_v3_payload(payload)
         version = payload["schema_version"]
+    if version == "4":
+        payload = _upgrade_v4_payload(payload)
+        version = payload["schema_version"]
     if version != _SCHEMA_VERSION:
         raise ValueError(f"unsupported descriptive-summary schema version: {version!r}")
     return payload
@@ -359,6 +427,12 @@ def _upgrade_v3_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "third_quartile": None,
                 "max": fivenum.get("max"),
             }
+    payload["schema_version"] = "4"
+    return payload
+
+
+def _upgrade_v4_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Advance legacy summaries; column mapping is unavailable without the object."""
     payload["schema_version"] = _SCHEMA_VERSION
     return payload
 

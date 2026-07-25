@@ -134,6 +134,7 @@ def _column_matching_rule_variants(
     slug: str,
     level: QuantificationLevel,
     headers: Iterable[str],
+    search_parameters: Parameters | None = None,
 ) -> list[ParseRule]:
     """Return packaged variants for ``slug``/``level`` that fit the input headers."""
     header_set = set(headers)
@@ -141,7 +142,7 @@ def _column_matching_rule_variants(
     for locator in iter_packaged_rules():
         if locator.level != level:
             continue
-        rule = load_rule(locator)
+        rule = load_rule(locator, search_parameters=search_parameters)
         if software_slug(rule.software_name) != slug:
             continue
         if _rule_matches_headers(header_set, rule):
@@ -156,13 +157,19 @@ def _select_rule(
     headers: Iterable[str],
     *,
     version_status: ParameterVersionStatus | None = None,
+    search_parameters: Parameters | None = None,
 ) -> tuple[ParseRule, RuleSelectionMethod]:
     """Resolve one rule together with the method used to select it."""
     status = version_status or ("present" if version is not None else "missing")
     header_set = set(headers)
 
     if status == "missing":
-        candidates = _column_matching_rule_variants(slug, level, header_set)
+        candidates = _column_matching_rule_variants(
+            slug,
+            level,
+            header_set,
+            search_parameters,
+        )
         if len(candidates) == 1:
             return candidates[0], "columns"
         if not candidates:
@@ -175,7 +182,12 @@ def _select_rule(
             "software version is missing; provide a version or explicit rule config"
         )
 
-    rule = resolve_rule_for_version(slug, level, version)
+    rule = resolve_rule_for_version(
+        slug,
+        level,
+        version,
+        search_parameters=search_parameters,
+    )
     if rule is None:
         if status == "parse_error":
             raise ValueError(
@@ -201,6 +213,7 @@ def select_rule(
     headers: Iterable[str],
     *,
     version_status: ParameterVersionStatus | None = None,
+    search_parameters: Parameters | None = None,
 ) -> ParseRule:
     """Resolve the rule for (slug, level) at ``version`` and validate it against ``headers``.
 
@@ -213,6 +226,7 @@ def select_rule(
         version,
         headers,
         version_status=version_status,
+        search_parameters=search_parameters,
     )[0]
 
 
@@ -222,6 +236,7 @@ def convertible_levels(
     headers: Iterable[str],
     *,
     version_status: ParameterVersionStatus | None = None,
+    search_parameters: Parameters | None = None,
 ) -> list[QuantificationLevel]:
     """Levels whose version-selected rule both exists and matches this file's columns."""
     header_set = set(headers)
@@ -234,6 +249,7 @@ def convertible_levels(
                 version,
                 header_set,
                 version_status=version_status,
+                search_parameters=search_parameters,
             )
         except (LookupError, ValueError):
             continue
@@ -247,6 +263,7 @@ def available_targets(
     headers: Iterable[str],
     *,
     version_status: ParameterVersionStatus | None = None,
+    search_parameters: Parameters | None = None,
 ) -> list[str]:
     """Convertible levels plus the all-level MuData target when any level resolves."""
     levels = convertible_levels(
@@ -254,6 +271,7 @@ def available_targets(
         version,
         headers,
         version_status=version_status,
+        search_parameters=search_parameters,
     )
     targets = [str(level) for level in levels]
     if levels:
@@ -290,8 +308,15 @@ def convert_level(
 ) -> AnnData:
     from anndata_proteomics.converters.assemble import convert
 
+    if parameter_resolution is None and params_path is not None:
+        parameter_resolution = resolve_parameters(params_path, slug)
+    if version is None and parameter_resolution is not None:
+        version = parameter_resolution.version
     version_status = (
         parameter_resolution.version_status if parameter_resolution is not None else None
+    )
+    search_parameters = (
+        parameter_resolution.parameters if parameter_resolution is not None else None
     )
     rule, selection_method = _select_rule(
         slug,
@@ -299,6 +324,7 @@ def convert_level(
         version,
         df.columns,
         version_status=version_status,
+        search_parameters=search_parameters,
     )
     adata = convert(
         df,
@@ -331,8 +357,15 @@ def build_mudata(
 
     Levels the version doesn't provide (e.g. fragment on DIA-NN 2.x) are skipped, not failed.
     """
+    if parameter_resolution is None and params_path is not None:
+        parameter_resolution = resolve_parameters(params_path, slug)
+    if version is None and parameter_resolution is not None:
+        version = parameter_resolution.version
     version_status = (
         parameter_resolution.version_status if parameter_resolution is not None else None
+    )
+    search_parameters = (
+        parameter_resolution.parameters if parameter_resolution is not None else None
     )
     resolvable = set(
         convertible_levels(
@@ -340,6 +373,7 @@ def build_mudata(
             version,
             df.columns,
             version_status=version_status,
+            search_parameters=search_parameters,
         )
     )
     skipped = [level for level in LEVELS if level not in resolvable]
@@ -358,6 +392,7 @@ def build_mudata(
             version,
             df.columns,
             version_status=version_status,
+            search_parameters=search_parameters,
         )
         for level in LEVELS
         if level in resolvable

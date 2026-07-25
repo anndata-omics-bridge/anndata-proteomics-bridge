@@ -1,8 +1,9 @@
 # Changes
 
-- 2026-07-25: Add `TODO/TODO_acquisition_method_rule_overrides.md` — plan for an
-  `acquisition_method` search-parameter field plus level-scoped
-  `search_parameter_overrides` in `rules.json` (plan only, no code).
+- 2026-07-25: Parse DIA-NN acquisition mode and materialize level-scoped,
+  search-parameter-conditional axis overrides so DIA-NN DDA uses
+  `Ms1_Normalised` in `X` while DIA uses `Precursor_Normalised`; record the
+  effective column mapping in descriptive summaries.
 - 2026-07-25: Document the three `test_data_download` index CSVs (catalog, selection,
   manifest) and the downloaded-submission layout in AGENTS.md, so examples are found by
   querying the manifest instead of globbing the cache.

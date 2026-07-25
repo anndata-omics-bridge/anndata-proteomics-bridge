@@ -66,6 +66,18 @@ The `Parameters` model then applies shared normalization: enzyme names, FDR
 probabilities, mass tolerances, missing values, fixed/variable modifications,
 and min/max ranges.
 
+`Parameters.acquisition_method` is a non-nullable
+`"DDA" | "DIA" | "unknown"` value. It defaults to `"unknown"` so parameter
+payloads written before the field existed remain readable. DIA-NN reports
+`"DDA"` when its command line contains `--dda` or its log states
+`All runs will be analysed as DDA runs`; otherwise a valid DIA-NN parameter
+file reports `"DIA"`, the software default. Other parsers retain `"unknown"`
+until their acquisition markers are explicitly supported.
+
+Rule documents may consume this and other typed search parameters while
+materializing a level. Parameter parsing selects the effective conversion
+rule; converters still receive an ordinary flat `ParseRule`.
+
 ## Input Families
 
 | Vendor | Input | Parser style | Modification style |
@@ -98,7 +110,9 @@ The mapping data remains vendor-specific. Shared mechanics belong in
 `tests/params/` holds parser inputs and ProteoBench-style expected CSV files.
 The parser suites compare `extract_params(...).to_series()` with
 `Parameters.from_series(expected).to_series()`, so both sides pass through the
-same model normalization.
+same model normalization. The literal acquisition value `"unknown"` is
+field-specific data and is preserved even though that token means “missing”
+for older free-text parameter fields.
 
 Current focused coverage: `57` parameter tests.
 

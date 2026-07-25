@@ -18,6 +18,8 @@ from anndata_proteomics.proteobench.intermediate import align_runs, compute_inte
 from anndata_proteomics.proteobench.metrics import build_scores
 from anndata_proteomics.proteobench.resolve import resolve_roles
 from anndata_proteomics.readers.dispatch import read_table
+from anndata_proteomics.readers.summary import describe
+from anndata_proteomics.rules.schema import ParseRule
 
 ROOT = Path(__file__).parents[1]
 FIXTURE = (
@@ -33,6 +35,12 @@ GOLDEN_JSON = (
 )
 MODULE_TOML = ROOT / "test_data_download/annotations/dia_astral.toml"
 REQUIRED = (FIXTURE / "input_file.parquet", FIXTURE / "param_0..txt", GOLDEN_JSON, MODULE_TOML)
+DDA_FIXTURE = (
+    ROOT
+    / "test_data_download/json_dir/Results_quant_ion_DDA_Astral"
+    / "300beac4bd267751972cf484bb1cdee2fda0b3a4"
+)
+DDA_REQUIRED = (DDA_FIXTURE / "input_file.parquet", DDA_FIXTURE / "param_0..txt")
 
 
 @dataclass(frozen=True)
@@ -113,7 +121,7 @@ GOLDEN_CONVERSION_CASES = (
     not all(path.exists() for path in REQUIRED),
     reason="canonical DIA-NN ProteoBench cache is absent",
 )
-def test_diann_astral_ms1_conversion_scores_without_tool_settings() -> None:
+def test_diann_dia_astral_uses_precursor_normalised() -> None:
     target = _load_plain_converted_fixture()
     module = load_module_settings(MODULE_TOML)
     rule, roles = resolve_roles(target, module)
@@ -122,12 +130,17 @@ def test_diann_astral_ms1_conversion_scores_without_tool_settings() -> None:
     result = compute_intermediate(target, module, roles, design)
     expected = pd.read_csv(FIXTURE / "result_performance.csv")
 
-    assert rule.axis.x_layer == "Ms1_Normalised"
-    assert "Precursor_Normalised" in target.layers
-    assert not np.array_equal(
+    assert rule.axis.x_layer == "Precursor_Normalised"
+    assert np.array_equal(
         np.asarray(cast(Any, target.X)),
         np.asarray(cast(Any, target.layers["Precursor_Normalised"])),
+        equal_nan=True,
     )
+    assert describe(target)["column_mapping"]["X"] == {
+        "layer": "Precursor_Normalised",
+        "source": "Precursor.Normalised",
+        "source_kind": "column",
+    }
     assert result.legacy.columns.tolist() == expected.columns.tolist()
     assert result.legacy["precursor ion"].is_unique
 
@@ -138,17 +151,49 @@ def test_diann_astral_ms1_conversion_scores_without_tool_settings() -> None:
         default_cutoff=module.general.default_cutoff_min_feature,
         max_nr_observed=module.general.max_nr_observed,
     )
-    assert scores["nr_feature"] == 110_918
+    assert scores["nr_feature"] == 111_679
     assert scores["proteobench_version"] == golden["proteobench_version"]
     assert len(scores["intermediate_hash"]) == 40
     assert scores["results"].keys() == golden["results"].keys()
     assert {threshold: values["nr_feature"] for threshold, values in scores["results"].items()} == {
-        "1": 110_918,
-        "2": 99_873,
-        "3": 93_579,
-        "4": 86_823,
-        "5": 79_352,
-        "6": 68_667,
+        "1": 111_679,
+        "2": 100_607,
+        "3": 94_507,
+        "4": 87_871,
+        "5": 80_570,
+        "6": 70_101,
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not all(path.exists() for path in DDA_REQUIRED),
+    reason="canonical DIA-NN DDA ProteoBench cache is absent",
+)
+def test_diann_dda_astral_uses_ms1_normalised() -> None:
+    data = read_table(DDA_FIXTURE / "input_file.parquet")
+    params = DDA_FIXTURE / "param_0..txt"
+
+    target = convert_level(
+        data,
+        "diann",
+        "ion",
+        param_version(params, "diann"),
+        params_path=params,
+    )
+
+    metadata = target.uns["anndata_proteomics"]
+    rule = ParseRule.model_validate_json(metadata["rule_json"])
+    assert rule.axis.x_layer == "Ms1_Normalised"
+    assert np.array_equal(
+        np.asarray(cast(Any, target.X)),
+        np.asarray(cast(Any, target.layers["Ms1_Normalised"])),
+        equal_nan=True,
+    )
+    assert describe(target)["column_mapping"]["X"] == {
+        "layer": "Ms1_Normalised",
+        "source": "Ms1.Normalised",
+        "source_kind": "column",
     }
 
 

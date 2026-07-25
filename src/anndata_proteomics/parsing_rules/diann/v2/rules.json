@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1",
-  "file_version": "2",
+  "file_version": "3",
   "software_name": "DIA-NN",
   "software_version": "^2\\..*",
   "base": {
@@ -50,8 +50,18 @@
         "var_keys": [
           "ProForma_ion"
         ],
-        "x_layer": "Ms1_Normalised"
+        "x_layer": "Precursor_Normalised"
       },
+      "search_parameter_overrides": [
+        {
+          "when_search_parameters": {
+            "acquisition_method": "DDA"
+          },
+          "axis": {
+            "x_layer": "Ms1_Normalised"
+          }
+        }
+      ],
       "columns": {
         "var": {
           "select": {

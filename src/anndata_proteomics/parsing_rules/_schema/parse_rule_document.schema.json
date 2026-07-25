@@ -170,6 +170,133 @@
       "title": "Layer",
       "type": "object"
     },
+    "LevelRuleFragment": {
+      "additionalProperties": false,
+      "description": "Strict level body with non-recursive search-parameter axis overrides.",
+      "properties": {
+        "input_shape": {
+          "anyOf": [
+            {
+              "enum": [
+                "long",
+                "wide"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Shape"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialAxis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialColumns"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "column_roles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnRoles"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "layers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Layer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layers"
+        },
+        "sample_name_cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SampleNameCleanup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modifications": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenRegexModifications"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fragments": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "column": "#/$defs/ColumnLabeledFragments",
+                  "positional": "#/$defs/PositionalFragments"
+                },
+                "propertyName": "label_strategy"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PositionalFragments"
+                },
+                {
+                  "$ref": "#/$defs/ColumnLabeledFragments"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fragments"
+        },
+        "search_parameter_overrides": {
+          "items": {
+            "$ref": "#/$defs/SearchParameterOverride"
+          },
+          "title": "Search Parameter Overrides",
+          "type": "array"
+        }
+      },
+      "title": "LevelRuleFragment",
+      "type": "object"
+    },
     "ModificationMapEntry": {
       "additionalProperties": false,
       "description": "User-facing JSON entry: a vendor token plus the Unimod accession.\n\n``name``, ``target``, ``position`` and ``mass_delta`` are NOT carried\non the entry itself \u2014 they are filled at rule-load time from\n``modifications/unimod_registry.toml``. This keeps the per-tool rule files\nfree of duplicated canonical data and guarantees that all tools agree\non what e.g. ``UNIMOD:35`` means.",
@@ -358,7 +485,7 @@
     },
     "RuleFragment": {
       "additionalProperties": false,
-      "description": "Strict partial ParseRule body used by a document base or one level.",
+      "description": "Strict partial ParseRule body used by a document base.",
       "properties": {
         "input_shape": {
           "anyOf": [
@@ -488,6 +615,27 @@
       "title": "SampleNameCleanup",
       "type": "object"
     },
+    "SearchParameterOverride": {
+      "additionalProperties": false,
+      "description": "One search-parameter condition and its level-local axis override.",
+      "properties": {
+        "when_search_parameters": {
+          "additionalProperties": true,
+          "minProperties": 1,
+          "title": "When Search Parameters",
+          "type": "object"
+        },
+        "axis": {
+          "$ref": "#/$defs/PartialAxis"
+        }
+      },
+      "required": [
+        "when_search_parameters",
+        "axis"
+      ],
+      "title": "SearchParameterOverride",
+      "type": "object"
+    },
     "TokenRegexModifications": {
       "additionalProperties": false,
       "description": "Extract vendor modification tokens with a regex and map them to Unimod.\n\n``token_regex`` is the only modification parser with a runtime\nimplementation (see ``modifications.pipeline``), so it is the only\naccepted ``parser`` value.",
@@ -581,7 +729,7 @@
     },
     "levels": {
       "additionalProperties": {
-        "$ref": "#/$defs/RuleFragment"
+        "$ref": "#/$defs/LevelRuleFragment"
       },
       "minProperties": 1,
       "propertyNames": {

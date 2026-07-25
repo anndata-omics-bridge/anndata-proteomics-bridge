@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.converters import pipeline as conversion_pipeline
+from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.scripts import cli
 
 
@@ -40,7 +41,7 @@ def test_rule_config_missing_level_and_no_match(
     frame = pd.DataFrame({"x": [1]})
     document = SimpleNamespace(
         levels={"ion": object()},
-        effective_rules=lambda: {},
+        effective_rules=lambda _search_parameters=None: {},
         software_name="Tool",
     )
     monkeypatch.setattr(cli, "read_table", lambda _path: frame)
@@ -62,6 +63,87 @@ def test_rule_config_missing_level_and_no_match(
     )
 
 
+def test_rule_config_materializes_single_and_mudata_with_parameters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame({"x": [1]})
+    parameters = Parameters(
+        software_name="DIA-NN",
+        software_version="2.6.0",
+        acquisition_method="DDA",
+    )
+    resolution = conversion_pipeline.ParameterResolution(
+        source_path=tmp_path / "params.txt",
+        parameters=parameters,
+        version="2.6.0",
+        version_status="present",
+    )
+    effective_calls: list[tuple[str, Parameters | None]] = []
+    effective_rules_calls: list[Parameters | None] = []
+    rule = object()
+
+    def effective_rule(level: str, search_parameters: Parameters | None = None) -> object:
+        effective_calls.append((level, search_parameters))
+        return rule
+
+    def effective_rules(
+        search_parameters: Parameters | None = None,
+    ) -> dict[str, object]:
+        effective_rules_calls.append(search_parameters)
+        return {"ion": rule}
+
+    document = SimpleNamespace(
+        levels={"ion": object()},
+        effective_rule=effective_rule,
+        effective_rules=effective_rules,
+        software_name="DIA-NN",
+    )
+    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(cli, "load_rule_document", lambda _path: document)
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "resolve_parameters",
+        lambda *_args: resolution,
+    )
+    converted = ad.AnnData(np.ones((1, 1), dtype=np.float32))
+    monkeypatch.setattr(cli, "_run_convert", lambda *_args, **_kwargs: converted)
+
+    assert (
+        cli.convert(
+            tmp_path / "data.tsv",
+            "ion",
+            params=resolution.source_path,
+            rule_config=tmp_path / "rule.json",
+            output=tmp_path / "single",
+        )
+        == 0
+    )
+    assert effective_calls == [("ion", parameters)]
+
+    container = _Container(modalities={"ion": converted})
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "matching_rules",
+        lambda rules, _headers: rules,
+    )
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "build_mudata_from_rules",
+        lambda *_args, **_kwargs: container,
+    )
+    assert (
+        cli.convert(
+            tmp_path / "data.tsv",
+            params=resolution.source_path,
+            rule_config=tmp_path / "rule.json",
+            output=tmp_path / "multi",
+        )
+        == 0
+    )
+    assert effective_rules_calls == [parameters]
+
+
 def test_packaged_level_and_mudata_conversion_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -70,7 +152,11 @@ def test_packaged_level_and_mudata_conversion_paths(
     adata = ad.AnnData(np.ones((1, 1), dtype=np.float32))
     monkeypatch.setattr(cli, "read_table", lambda _path: frame)
     monkeypatch.setattr(conversion_pipeline, "recognize_software", lambda _columns: "diann")
-    resolution = SimpleNamespace(version="2.0", version_status="present")
+    resolution = SimpleNamespace(
+        version="2.0",
+        version_status="present",
+        parameters=Parameters(),
+    )
     monkeypatch.setattr(
         conversion_pipeline,
         "resolve_parameters",
@@ -92,10 +178,20 @@ def test_packaged_level_and_mudata_conversion_paths(
     assert output.with_suffix(".h5ad").exists()
 
     container = _Container(modalities={"ion": adata})
+    target_parameters: list[Parameters | None] = []
+
+    def convertible_levels(
+        *_args: object,
+        search_parameters: Parameters | None = None,
+        **_kwargs: object,
+    ) -> tuple[str, ...]:
+        target_parameters.append(search_parameters)
+        return ("ion",)
+
     monkeypatch.setattr(
         conversion_pipeline,
         "convertible_levels",
-        lambda *_args, **_kwargs: ("ion",),
+        convertible_levels,
     )
     monkeypatch.setattr(conversion_pipeline, "build_mudata", lambda *_args, **_kwargs: container)
     stale = (tmp_path / "multi").with_suffix(".h5ad")
@@ -110,6 +206,7 @@ def test_packaged_level_and_mudata_conversion_paths(
     )
     assert (tmp_path / "multi.h5mu").exists()
     assert not stale.exists()
+    assert target_parameters == [resolution.parameters]
 
     monkeypatch.setattr(
         conversion_pipeline,

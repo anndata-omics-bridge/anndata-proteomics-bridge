@@ -123,6 +123,9 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
         document = load_rule_document(rule_config)
         rule_slug = software_slug(document.software_name)
         parameter_resolution = resolve_parameters(params, rule_slug) if params is not None else None
+        search_parameters = (
+            parameter_resolution.parameters if parameter_resolution is not None else None
+        )
         if level is not None:
             if level not in document.levels:
                 logger.error(
@@ -131,7 +134,7 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
                 return 1
             adata = _run_convert(
                 df,
-                document.effective_rule(level),
+                document.effective_rule(level, search_parameters),
                 params_path=None if parameter_resolution is not None else params,
             )
             if parameter_resolution is not None:
@@ -144,7 +147,10 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
             else:
                 set_rule_selection_method(adata, "rule_config")
             return _write_anndata(adata, output, data)
-        rules = matching_rules(document.effective_rules(), df.columns)
+        rules = matching_rules(
+            document.effective_rules(search_parameters),
+            df.columns,
+        )
         if rules:
             md = build_mudata_from_rules(
                 df,
@@ -195,6 +201,7 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
         version,
         df.columns,
         version_status=parameter_resolution.version_status,
+        search_parameters=parameter_resolution.parameters,
     )
     if levels:
         md = build_mudata(
