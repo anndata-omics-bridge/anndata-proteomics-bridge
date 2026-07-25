@@ -25,10 +25,10 @@ def test_iter_packaged_documents_returns_seven_sorted() -> None:
     assert all(path.name == "rules.json" for path in documents)
 
 
-def test_iter_packaged_rules_returns_twelve_document_levels() -> None:
+def test_iter_packaged_rules_returns_thirteen_document_levels() -> None:
     locators = list(iter_packaged_rules())
-    assert len(locators) == 12
-    assert sum(item.level == "ion" for item in locators) == 6
+    assert len(locators) == 13
+    assert sum(item.level == "ion" for item in locators) == 7
 
 
 def test_diann_has_two_version_documents() -> None:
@@ -43,9 +43,9 @@ def test_find_rule_resolves_existing_version_group() -> None:
     assert find_rule("diann", "protein", "2.3.0").path.parent.name == "v2"
 
 
-def test_find_rule_without_version_resolves_identical_diann_ion() -> None:
-    locator = find_rule("diann", "ion")
-    assert locator.path.parent.name == "v1"
+def test_find_rule_without_version_rejects_nonidentical_diann_ion() -> None:
+    with pytest.raises(RuleNotFound):
+        find_rule("diann", "ion")
 
 
 def test_find_rule_unknown_software() -> None:

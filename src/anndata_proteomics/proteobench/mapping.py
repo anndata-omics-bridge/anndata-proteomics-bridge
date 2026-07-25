@@ -6,15 +6,12 @@ import csv
 import hashlib
 import re
 from dataclasses import dataclass
-from functools import cache, partial
+from functools import cache
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
 from anndata_proteomics.modifications.unimod_registry import load_registry
-from anndata_proteomics.params.anndata_io import read_search_parameters
-from anndata_proteomics.proteobench.config import ModificationParserSettings
 
 _PROTEIN_SEPARATOR = re.compile(r"[;,]")
 _UNIMOD_TAG = re.compile(r"\[(UNIMOD:\d+)\]", flags=re.IGNORECASE)
@@ -93,134 +90,6 @@ def render_proteobench_features(
         # compatibility table without changing APB's canonical feature axis.
         rendered = rendered.str.replace(_FINAL_RESIDUE_MODS, "", regex=True)
     return rendered.str.replace(_UNIMOD_TAG, replace, regex=True)
-
-
-def parse_proteobench_features(
-    raw_features: pd.Series,
-    canonical_features: pd.Series,
-    settings: ModificationParserSettings,
-    *,
-    level: str,
-    target: Any,
-) -> pd.Series:
-    """Reproduce ProteoBench's per-tool modification rendering.
-
-    The source notation retained by APB is used because ProteoBench's historical
-    output preserves tool-specific parsing details, including modification-name
-    case and its ``before_aa = false`` terminal-residue behavior. Canonical APB
-    ProForma identifiers remain unchanged.
-    """
-    pattern = re.compile(settings.pattern)
-
-    def convert(value: Any) -> str:
-        source = "" if pd.isna(value) else str(value)
-        lowered = pattern.sub(lambda match: match.group(0).lower(), source)
-        matches = list(pattern.finditer(lowered))
-        positions = [
-            _count_sequence_characters(
-                lowered[: match.start()],
-                isalpha=settings.isalpha,
-                isupper=settings.isupper,
-            )
-            for match in matches
-        ]
-        modifications = [
-            settings.modification_dict.get(match.group(0), match.group(0)) for match in matches
-        ]
-        by_position = dict(zip(positions, modifications, strict=True))
-        stripped = _strip_sequence(
-            lowered,
-            isalpha=settings.isalpha,
-            isupper=settings.isupper,
-        )
-        rendered = ""
-        for index, amino_acid in enumerate(stripped):
-            if settings.before_aa:
-                rendered += amino_acid
-            modification = by_position.get(index)
-            if modification is not None:
-                if index == 0:
-                    rendered += f"[{modification}]-"
-                else:
-                    rendered += f"[{modification}]"
-            if not settings.before_aa:
-                rendered += amino_acid
-        return rendered
-
-    rendered = raw_features.map(convert)
-    rendered = _apply_unrepresented_fixed_modifications(rendered, settings, target)
-    if level == "ion":
-        charges = canonical_features.astype("string").str.rsplit("/", n=1).str[-1]
-        rendered = rendered.astype("string") + "/" + charges
-    return rendered.astype("string")
-
-
-def _count_sequence_characters(value: str, *, isalpha: bool, isupper: bool) -> int:
-    return len(_strip_sequence(value, isalpha=isalpha, isupper=isupper))
-
-
-def _strip_sequence(value: str, *, isalpha: bool, isupper: bool) -> str:
-    if isalpha and isupper:
-        return "".join(
-            character for character in value if character.isalpha() and character.isupper()
-        )
-    if isalpha:
-        return "".join(character for character in value if character.isalpha())
-    if isupper:
-        return "".join(character for character in value if character.isupper())
-    return value
-
-
-def _apply_unrepresented_fixed_modifications(
-    features: pd.Series,
-    settings: ModificationParserSettings,
-    target: Any,
-) -> pd.Series:
-    """Add fixed residue modifications absent from a tool's result notation."""
-    parameters = read_search_parameters(target)
-    if parameters is None:
-        return features
-    represented_names = set(settings.modification_dict.values())
-    result = features
-    for fixed_modification in parameters.fixed_mods:
-        match = re.fullmatch(r"(?P<targets>[A-Z]+)\[(?P<name>[^]]+)\]", fixed_modification.name)
-        if match is None or match.group("name") in represented_names:
-            continue
-        targets = set(match.group("targets"))
-        name = match.group("name")
-        result = result.map(
-            partial(
-                _add_fixed_residue_modification,
-                targets=targets,
-                name=name,
-            )
-        )
-    return result
-
-
-def _add_fixed_residue_modification(
-    feature: object,
-    *,
-    targets: set[str],
-    name: str,
-) -> str:
-    charge = ""
-    feature_text = str(feature)
-    sequence = feature_text
-    if "/" in feature_text:
-        sequence, suffix = feature_text.rsplit("/", 1)
-        charge = f"/{suffix}"
-    rendered = ""
-    in_brackets = False
-    for character in sequence:
-        rendered += character
-        if character == "[":
-            in_brackets = True
-        elif character == "]":
-            in_brackets = False
-        elif not in_brackets and character in targets:
-            rendered += f"[{name}]"
-    return rendered + charge
 
 
 @cache

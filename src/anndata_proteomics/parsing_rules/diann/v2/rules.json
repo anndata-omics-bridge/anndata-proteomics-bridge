@@ -50,7 +50,7 @@
         "var_keys": [
           "ProForma_ion"
         ],
-        "x_layer": "Precursor_Normalised"
+        "x_layer": "Ms1_Normalised"
       },
       "columns": {
         "var": {
@@ -90,7 +90,14 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Protein_Ids"
+      },
       "layers": [
+        {
+          "name": "Ms1_Normalised",
+          "source": "Ms1.Normalised"
+        },
         {
           "name": "Precursor_Normalised",
           "source": "Precursor.Normalised"

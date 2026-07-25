@@ -75,12 +75,10 @@ _SUBSET_ROWS = 4000  # precursor rows; the fragment level explodes this ~12x
 
 
 def _read_headers(path: Path) -> set[str]:
-    """Column names of a cached input (cheap; tsv via pandas, parquet via the arrow schema)."""
-    import pyarrow.parquet as pq
+    """Column names of a cached input using the production format dispatcher."""
+    from anndata_proteomics.readers.dispatch import read_table_columns
 
-    if path.suffix == ".parquet":
-        return set(pq.read_schema(path).names)
-    return set(pd.read_csv(path, sep="\t", nrows=0).columns)
+    return set(read_table_columns(path))
 
 
 @pytest.fixture(scope="session")

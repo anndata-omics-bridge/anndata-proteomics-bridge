@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -209,3 +210,54 @@ def test_convert_wide_duplicate_modes_are_honored() -> None:
 
     document["axis"]["duplicates"]["mode"] = "aggregate"
     assert convert_wide(df, ParseRule.model_validate(document)).X[0, 0] == 30.0
+
+
+def test_x_layer_alone_defines_observation_axis(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An optional-layer-only token must not become an observation."""
+    df = pd.DataFrame(
+        {
+            "Feature": ["F1"],
+            "S1 Intensity": [10.0],
+            "S1 Auxiliary": [11.0],
+            "Summary Auxiliary": [99.0],
+        }
+    )
+    rule = ParseRule.model_validate(
+        {
+            "schema_version": "0.1",
+            "file_version": "1",
+            "software_name": "Synthetic",
+            "software_version": "1.0",
+            "input_shape": "wide",
+            "quantification_level": "ion",
+            "axis": {
+                "obs_keys": ["sample"],
+                "var_keys": ["Feature"],
+                "x_layer": "Intensity",
+            },
+            "columns": {
+                "obs": {"select": {"sample": "<sample>"}},
+                "var": {"select": {"Feature": "Feature"}},
+            },
+            "layers": [
+                {
+                    "name": "Intensity",
+                    "source": r"^(?P<sample>S\d+) Intensity$",
+                },
+                {
+                    "name": "Auxiliary",
+                    "source": r"^(?P<sample>.+) Auxiliary$",
+                },
+            ],
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        pieces = convert_wide(df, rule)
+
+    assert pieces.obs.index.tolist() == ["S1"]
+    assert pieces.layers["Auxiliary"].shape == (1, 1)
+    assert pieces.layers["Auxiliary"][0, 0] == 11.0
+    assert "Summary" in caplog.text

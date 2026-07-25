@@ -282,6 +282,11 @@ def _attach_search_parameters(adata: ad.AnnData, params_path: str | Path, softwa
             "could not parse %s search parameters from %s: %s", software, params_path, exc
         )
         adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
+        adata.uns["anndata_proteomics"]["search_parameters_version_status"] = "parse_error"
         adata.uns["anndata_proteomics"]["search_parameters_error"] = f"{type(exc).__name__}: {exc}"
         return
     write_search_parameters(adata, params, source_path=str(params_path))
+    version_status = "present" if params.software_version is not None else "missing"
+    adata.uns["anndata_proteomics"]["search_parameters_version_status"] = version_status
+    if version_status == "missing":
+        logger.warning("no software version in search parameters %s", params_path)

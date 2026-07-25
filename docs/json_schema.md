@@ -102,6 +102,7 @@ After merging, every effective `ParseRule` has these required fields:
 | `quantification_level` | Injected from the selected `levels` key. |
 | `axis` | Observation/feature identity and primary layer. |
 | `columns` | Columns selected or computed into `obs` and `var`. |
+| `column_roles` | Optional semantic locations needed by canonical-data consumers. |
 | `layers` | At least one vendor-reported measurement. |
 
 ## Axis
@@ -153,6 +154,22 @@ All computed columns may depend on earlier computed columns. `coalesce` and
 `join_nonempty`. A generic compute may intentionally replace a selected output with
 the same name. ProForma computed columns retain their reserved APB identifier names,
 not input-column aliases.
+
+`column_roles` identifies the APB output column that carries a downstream
+semantic role without repeating the vendor input name. Its currently supported
+field is `protein_accessions`, which must name a declared `var` column:
+
+```json
+{
+  "column_roles": {
+    "protein_accessions": "Protein_Ids"
+  }
+}
+```
+
+Declare the role in the level that owns that column. Consumers resolve it from
+the stored effective rule and continue to use `X` as the quantitative matrix;
+they do not parse the vendor table again.
 
 ## Layers
 

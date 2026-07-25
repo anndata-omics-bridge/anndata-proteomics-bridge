@@ -2,7 +2,7 @@
   "schema_version": "0.1",
   "file_version": "1",
   "software_name": "PEAKS",
-  "software_version": "^13$",
+  "software_version": "^13(?:\\.|\\s|$)",
   "base": {
     "input_shape": "wide",
     "axis": {
@@ -102,22 +102,25 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Accession"
+      },
       "layers": [
         {
           "name": "Normalized_Area",
-          "source": "^(?P<sample>.+) Normalized Area$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? Normalized Area$"
         },
         {
           "name": "Sample_Mz",
-          "source": "^(?P<sample>.+) m/z$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? m/z$"
         },
         {
           "name": "Sample_RT_Mean",
-          "source": "^(?P<sample>.+) RT mean$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? RT mean$"
         },
         {
           "name": "AScore",
-          "source": "^(?P<sample>.+) AScore$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? AScore$"
         }
       ]
     }

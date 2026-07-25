@@ -392,35 +392,24 @@ def test_fasta_annotations_and_cleanup(
 
     monkeypatch.setattr(rawdb, "ANNOTATION_URLS", {"dda": "https://server/module"})
     monkeypatch.setattr(
-        rawdb,
-        "TOOL_SETTINGS_URLS",
-        {("dda", "tool"): "https://server/tool"},
-    )
-    monkeypatch.setattr(
         rawdb.requests,
         "get",
         lambda _url: _Response(content=b"[general]\nlevel='ion'\n"),
     )
     monkeypatch.setattr(rawdb, "load_annotation", lambda _path: pd.DataFrame())
     monkeypatch.setattr(rawdb, "load_module_settings", lambda _path: object())
-    monkeypatch.setattr(rawdb, "load_tool_settings", lambda _path: object())
     annotation_dir = tmp_path / "annotations"
-    settings_dir = tmp_path / "settings"
-    rawdb.annotations(
-        annotation_dir=annotation_dir,
-        tool_settings_dir=settings_dir,
-    )
+    rawdb.annotations(annotation_dir=annotation_dir)
     assert (annotation_dir / "dda.toml").exists()
-    assert (settings_dir / "dda/tool.toml").exists()
     assert not list(annotation_dir.glob(".*.download.toml"))
 
     data_dir = tmp_path / "generated"
-    for name in ("json_dir", "fasta", "annotations", "proteobench_settings"):
+    for name in ("json_dir", "fasta", "annotations"):
         (data_dir / name).mkdir(parents=True, exist_ok=True)
     for name in rawdb.GENERATED_CSV_NAMES:
         (data_dir / name).write_text("x", encoding="utf-8")
     removed = rawdb.clean_generated_data(data_dir)
-    assert len(removed) == 7
+    assert len(removed) == 6
     rawdb.clean(data_dir=data_dir)
     with pytest.raises(ValueError, match="filesystem"):
         rawdb.clean_generated_data(Path("/"))
@@ -431,7 +420,6 @@ def test_annotations_remove_invalid_temporary_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(rawdb, "ANNOTATION_URLS", {"dda": "https://server/module"})
-    monkeypatch.setattr(rawdb, "TOOL_SETTINGS_URLS", {})
     monkeypatch.setattr(
         rawdb.requests,
         "get",

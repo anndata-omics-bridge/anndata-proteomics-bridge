@@ -6,19 +6,24 @@ from pathlib import Path
 
 import pandas as pd
 
-from anndata_proteomics.readers.tabular import read_csv, read_parquet, read_tsv
+from anndata_proteomics.readers.tabular import (
+    detect_text_delimiter,
+    read_csv,
+    read_delimited_columns,
+    read_detected_text,
+    read_parquet,
+    read_tsv,
+)
 
 
 class UnknownFormat(ValueError):
     """Raised when a file extension has no registered reader."""
 
 
-# .txt is treated as tab-delimited because MaxQuant evidence.txt and similar
-# proteomics exports are tab-delimited despite the generic extension.
 EXTENSION_TO_READER = {
     ".csv": read_csv,
     ".tsv": read_tsv,
-    ".txt": read_tsv,
+    ".txt": read_detected_text,
     ".parquet": read_parquet,
 }
 
@@ -35,3 +40,24 @@ def read_table(path: Path | str) -> pd.DataFrame:
             f"unsupported extension {p.suffix!r} for {p}; known: {sorted(EXTENSION_TO_READER)}"
         )
     return reader(p)
+
+
+def read_table_columns(path: Path | str) -> list[str]:
+    """Read only column names using the same format rules as :func:`read_table`."""
+    import pyarrow.parquet as pq
+
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix == ".parquet":
+        return list(pq.read_schema(p).names)
+    if suffix == ".csv":
+        delimiter = ","
+    elif suffix == ".tsv":
+        delimiter = "\t"
+    elif suffix == ".txt":
+        delimiter = detect_text_delimiter(p)
+    else:
+        raise UnknownFormat(
+            f"unsupported extension {p.suffix!r} for {p}; known: {sorted(EXTENSION_TO_READER)}"
+        )
+    return read_delimited_columns(p, delimiter=delimiter)

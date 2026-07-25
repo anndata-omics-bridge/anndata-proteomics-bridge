@@ -58,7 +58,7 @@ def _load(relative: str, level: QuantificationLevel) -> ParseRule:
         ),
         (
             "wombat/rules.json",
-            "peptidoform",
+            "ion",
             "[Acetyl]-PEPTM[Oxidation]IDE",
             "[UNIMOD:1]-PEPTM[UNIMOD:35]IDE",
         ),

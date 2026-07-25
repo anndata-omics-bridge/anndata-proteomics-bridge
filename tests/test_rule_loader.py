@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from anndata_proteomics.rules import loader
 from anndata_proteomics.rules.loader import (
     RuleDocumentError,
     load_packaged_rule,
@@ -147,3 +148,15 @@ def test_load_packaged_rule_uses_existing_version_groups() -> None:
     assert load_packaged_rule("diann", "fragment", "1.9.2").software_version == "^1\\..*"
     with pytest.raises(ValueError, match="no packaged rule"):
         load_packaged_rule("diann", "fragment", "2.3.0")
+
+
+def test_resolve_without_version_accepts_equivalent_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = find_rule("diann", "ion", "1.9.2").path
+    monkeypatch.setattr(loader, "document_paths_for_software", lambda _software: (path, path))
+
+    locator = loader.resolve_rule_locator("diann", "ion", None)
+
+    assert locator is not None
+    assert locator.path == path

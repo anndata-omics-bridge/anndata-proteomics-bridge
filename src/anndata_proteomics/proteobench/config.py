@@ -1,4 +1,4 @@
-"""Typed readers for ProteoBench module and per-tool TOML settings."""
+"""Typed reader for ProteoBench module settings."""
 
 from __future__ import annotations
 
@@ -80,57 +80,9 @@ class ModuleSettings(_SettingsModel):
         return self
 
 
-class ToolGeneral(_SettingsModel):
-    """Filtering and run-name settings from a per-tool TOML."""
-
-    contaminant_flag: str | None = None
-    decoy_flag: bool | int | str | None = None
-    run_name_cleanup: str = ""
-
-
-class ModificationParserSettings(_SettingsModel):
-    """Feature-label behavior needed for ProteoBench compatibility."""
-
-    parse_column: str = Field(min_length=1)
-    before_aa: bool
-    isalpha: bool = True
-    isupper: bool = True
-    pattern: str = r"\[([^]]+)\]"
-    modification_dict: dict[str, str] = Field(default_factory=dict)
-
-
-class ToolSettings(_SettingsModel):
-    """ProteoBench raw-vendor column interpretation for one tool."""
-
-    mapper: dict[str, str]
-    general: ToolGeneral
-    run_mapper: dict[str, str] = Field(default_factory=dict)
-    condition_mapper: dict[str, str] = Field(default_factory=dict)
-    modifications_parser: ModificationParserSettings | None = None
-
-    @model_validator(mode="after")
-    def _require_proteins(self) -> ToolSettings:
-        protein_sources = [source for source, role in self.mapper.items() if role == "Proteins"]
-        if len(protein_sources) != 1:
-            raise ValueError(
-                "per-tool [mapper] must map exactly one raw column to 'Proteins'; "
-                f"found {protein_sources}"
-            )
-        return self
-
-    def source_for(self, role: str) -> str | None:
-        """Return the raw vendor source mapped to a ProteoBench role."""
-        return next((source for source, mapped in self.mapper.items() if mapped == role), None)
-
-
 def load_module_settings(path: str | Path) -> ModuleSettings:
     """Load the scoring subset of a ProteoBench module TOML."""
     return ModuleSettings.model_validate(_load_toml(path))
-
-
-def load_tool_settings(path: str | Path) -> ToolSettings:
-    """Load the column/filtering subset of a ProteoBench per-tool TOML."""
-    return ToolSettings.model_validate(_load_toml(path))
 
 
 def _load_toml(path: str | Path) -> dict[str, Any]:

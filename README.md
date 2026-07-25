@@ -26,6 +26,7 @@ Convert proteomics quantification output into **AnnData / MuData** using declara
 | MaxQuant | ion | long | 2.6.7.0 |
 | FragPipe | ion | wide | 22.1-build02 |
 | PEAKS | ion | wide | 13 |
+| WOMBAT | ion | wide | 0.9.11 |
 | WOMBAT | peptidoform | wide | 0.9.11 |
 
 *Shape* = how the vendor lays out the table: **long** (one row per run × feature) or **wide** (samples as columns, one row per feature). *Version* is matched against the software version parsed from the parameter file; DIA-NN ships version-specific rules (`v1/`, `v2/`).
@@ -71,7 +72,7 @@ integration tests. Build it with the dedicated CLI:
 apb-testdata catalog
 apb-testdata select
 apb-testdata download
-apb-testdata annotations  # module TOMLs plus golden-verified per-tool scoring TOMLs
+apb-testdata annotations  # ProteoBench module annotation/scoring TOMLs
 apb-testdata fasta
 ```
 
@@ -152,27 +153,28 @@ quantified rows or FASTA records.
 ### Compute ProteoBench scores
 
 ```bash
-apb proteobench data.h5mu module_settings.toml parse_settings_diann.toml
+apb proteobench data.h5mu module_settings.toml
 # writes data.proteobench.h5mu
 ```
 
 The module TOML is the experiment-design contract: it supplies the scoring
-level, run-to-condition samples, species mapping, and expected ratios. The
-per-tool ProteoBench TOML resolves vendor source columns through the conversion
-rule stored in the object. Neither `apb annotate` nor `apb fasta` is required;
-running either before or after scoring preserves the other enrichments.
+level, run-to-condition samples, species mapping, and expected ratios.
+Vendor-specific interpretation is already complete in the converted object's
+`X`, canonical feature columns, and stored parsing rule. Neither `apb annotate`
+nor `apb fasta` is required; running either before or after scoring preserves
+the other enrichments.
 
 For a standalone AnnData, the module level must match the object. For MuData,
 only that modality is scored. Feature-aligned means, standard deviations, CVs,
 observation counts, species assignments, epsilon, and precision values are
 stored in `varm['proteobench']`. Compatible JSON field names and threshold
-layout are retained in `uns['proteobench']['scores']`; resolved source roles and
+layout are retained in `uns['proteobench']['scores']`; resolved canonical roles and
 compact protein-mapper provenance live beside it in `column_roles` and
 `protein_mapping`.
 
 The managed test-data registry currently advertises golden-verified settings
 for DIA-NN AIF, Astral, diaPASEF, ZenoTOF, and single-cell ion modules, plus the
-WOMBAT DDA peptidoform module. The library validates any supplied ProteoBench
+WOMBAT DDA ion and peptidoform modules. The library validates any supplied ProteoBench
 TOMLs, but combinations outside that list are not claimed as golden-compatible.
 
 ### Inspect / maintain rules

@@ -1,6 +1,6 @@
 {
   "schema_version": "0.1",
-  "file_version": "1",
+  "file_version": "2",
   "software_name": "WOMBAT",
   "software_version": "^0\\.9\\.11$",
   "base": {
@@ -18,7 +18,32 @@
         "select": {
           "sample": "<sample>"
         }
+      },
+      "var": {
+        "select": {
+          "modified_peptide": "modified_peptide",
+          "protein_group": "protein_group"
+        },
+        "compute": [
+          {
+            "name": "ProForma_peptidoform",
+            "from": [
+              "modified_peptide"
+            ],
+            "how": "proforma_sequence"
+          },
+          {
+            "name": "ProForma_peptide",
+            "from": [
+              "modified_peptide"
+            ],
+            "how": "stripped_sequence"
+          }
+        ]
       }
+    },
+    "column_roles": {
+      "protein_accessions": "protein_group"
     },
     "modifications": {
       "source_column": "modified_peptide",
@@ -45,33 +70,26 @@
     }
   },
   "levels": {
-    "peptidoform": {
+    "ion": {
       "axis": {
         "var_keys": [
-          "ProForma_peptidoform"
+          "ProForma_ion"
         ],
         "x_layer": "Abundance"
       },
       "columns": {
         "var": {
           "select": {
-            "modified_peptide": "modified_peptide",
-            "protein_group": "protein_group"
+            "charge": "charge"
           },
           "compute": [
             {
-              "name": "ProForma_peptidoform",
+              "name": "ProForma_ion",
               "from": [
-                "modified_peptide"
+                "ProForma_peptidoform",
+                "charge"
               ],
-              "how": "proforma_sequence"
-            },
-            {
-              "name": "ProForma_peptide",
-              "from": [
-                "modified_peptide"
-              ],
-              "how": "stripped_sequence"
+              "how": "proforma_ion"
             }
           ]
         }
@@ -80,10 +98,25 @@
         {
           "name": "Abundance",
           "source": "^abundance_(?P<sample>.+)$"
+        }
+      ]
+    },
+    "peptidoform": {
+      "axis": {
+        "var_keys": [
+          "ProForma_peptidoform"
+        ],
+        "x_layer": "Abundance"
+      },
+      "layers": [
+        {
+          "name": "Abundance",
+          "source": "^abundance_(?P<sample>.+)$"
         },
         {
           "name": "Number_Of_Psms",
-          "source": "^number_of_psms_(?P<sample>.+)$"
+          "source": "^number_of_psms_(?P<sample>.+)$",
+          "required": true
         }
       ]
     }

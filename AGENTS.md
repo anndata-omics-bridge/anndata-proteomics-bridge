@@ -70,6 +70,21 @@ generated with `apb-testdata catalog/select/download/fasta`, consumed by the
 integration tests, and gitignored. Do not add parallel `benchmark_data/`,
 `examples/`, or test-data download scripts.
 
+**Start here instead of searching the cache** — these three CSVs index everything
+that is catalogued, selected, and actually on disk:
+
+| File | Contents |
+| --- | --- |
+| `test_data_download/raw_file_db_full.csv` | Catalog of every ProteoBench submission: `module`, `repo_name`, `intermediate_hash`, `software_name`, `software_version`, `nr_feature` |
+| `test_data_download/raw_file_db_selected.csv` | The subset selected for download (same columns) |
+| `test_data_download/raw_file_db_downloaded.csv` | Manifest of what is on disk: the same columns plus `input_file_path`, `input_file_size_bytes`, `status` |
+
+Downloaded submissions live at
+`test_data_download/json_dir/<Results_repo>/<intermediate_hash>/`, each holding the
+vendor result (`input_file.*`), the vendor parameter file (`param_0..txt`),
+`result_performance.csv`, and `comment.txt`. To find an example for one
+vendor/module combination, query the manifest CSV — do not glob the tree.
+
 ## Coding Rules
 
 - **Keep `__init__.py` files empty** (a single module docstring is acceptable). Put classes/functions in separate modules and import them directly from those modules.

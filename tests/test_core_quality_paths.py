@@ -102,22 +102,6 @@ def test_data_lookup_empty_and_present_paths(
     assert test_data.find_fasta(test_data_dir=tmp_path) is None
     assert test_data.find_fasta(module="unknown", test_data_dir=tmp_path) is None
     assert test_data.find_fasta(module="dda_qexactive", test_data_dir=tmp_path) is None
-    assert (
-        test_data.find_proteobench_tool_settings(
-            module="unknown",
-            vendor="unknown",
-            test_data_dir=tmp_path,
-        )
-        is None
-    )
-    assert (
-        test_data.find_proteobench_tool_settings(
-            module="dia_aif",
-            vendor="diann",
-            test_data_dir=tmp_path,
-        )
-        is None
-    )
 
     index = tmp_path / "raw_file_db_downloaded.csv"
     index.write_text(
@@ -129,18 +113,6 @@ def test_data_lookup_empty_and_present_paths(
     monkeypatch.setattr(test_data, "DOWNLOADED_DB", index)
     assert test_data.find_test_data("Tool") is None
     assert test_data._module_for_dataset(tmp_path / "unmatched", test_data_dir=tmp_path) is None
-
-    settings = tmp_path / "proteobench_settings" / "dia_aif" / "diann.toml"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("[mapper]\n", encoding="utf-8")
-    assert (
-        test_data.find_proteobench_tool_settings(
-            module="dia_aif",
-            vendor="diann",
-            test_data_dir=tmp_path,
-        )
-        == settings
-    )
 
     monkeypatch.setattr(test_data, "PARAM_FIXTURE_DIR", tmp_path)
     assert test_data.find_param_file("unknown") is None

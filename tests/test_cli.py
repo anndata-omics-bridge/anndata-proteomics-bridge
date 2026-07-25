@@ -103,7 +103,7 @@ def test_validate_no_args_walks_packaged(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_validate_single_path_happy(capsys: pytest.CaptureFixture[str]) -> None:
-    path = find_rule("diann", "ion").path
+    path = find_rule("diann", "ion", "2.0.0").path
     rc = validate(path)
     err = capsys.readouterr().err
     assert rc == 0
@@ -122,7 +122,7 @@ def test_validate_single_path_bad(tmp_path: Path, capsys: pytest.CaptureFixture[
 
 
 def test_validate_multiple_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    good = find_rule("wombat", "peptidoform").path
+    good = find_rule("wombat", "ion", "0.9.11").path
     bad = tmp_path / "bad.json"
     bad.write_text("[[")
     rc = validate(good, bad)
@@ -133,14 +133,15 @@ def test_validate_multiple_paths(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert "2 document(s) checked, 1 failed" in err
 
 
-def test_list_shows_twelve_document_levels(capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_shows_thirteen_document_levels(capsys: pytest.CaptureFixture[str]) -> None:
     rc = list_rules()
     err = capsys.readouterr().err
     assert rc == 0
     lines = [line for line in err.splitlines() if line.strip()]
-    assert len(lines) == 12
+    assert len(lines) == 13
     assert "diann" in err
     assert "wombat" in err
+    assert "ion" in err
     assert "peptidoform" in err
 
 
@@ -177,7 +178,15 @@ def test_convert_with_explicit_rule_config_writes_h5ad(
     output = output_base.with_suffix(".h5ad")
     stale = output_base.with_suffix(".h5mu")
     stale.write_text("stale")
-    rc = convert(data_path, "ion", rule_config=rule_path, output=output_base)
+    params_path = tmp_path / "params.txt"
+    params_path.write_text("unregistered tool parameters")
+    rc = convert(
+        data_path,
+        "ion",
+        params=params_path,
+        rule_config=rule_path,
+        output=output_base,
+    )
     err = capsys.readouterr().err
     assert rc == 0
     assert output.exists()
@@ -185,7 +194,16 @@ def test_convert_with_explicit_rule_config_writes_h5ad(
     assert "wrote" in err
     import anndata as ad
 
-    assert "descriptive_summary" in ad.read_h5ad(output).uns["anndata_proteomics"]
+    metadata = ad.read_h5ad(output).uns["anndata_proteomics"]
+    assert "descriptive_summary" in metadata
+    assert metadata["rule_selection_method"] == "rule_config"
+    assert metadata["search_parameters_version_status"] == "parse_error"
+
+    without_params = tmp_path / "without_params"
+    assert convert(data_path, "ion", rule_config=rule_path, output=without_params) == 0
+    no_params_metadata = ad.read_h5ad(without_params.with_suffix(".h5ad")).uns["anndata_proteomics"]
+    assert no_params_metadata["rule_selection_method"] == "rule_config"
+    assert "search_parameters_version_status" not in no_params_metadata
 
 
 def test_convert_with_multilevel_rule_config_writes_h5mu(tmp_path: Path) -> None:
@@ -212,7 +230,13 @@ def test_convert_with_multilevel_rule_config_writes_h5mu(tmp_path: Path) -> None
     assert rc == 0
     output = output_base.with_suffix(".h5mu")
     assert output.exists()
-    assert list(mudata.read_h5mu(output).mod) == ["ion", "protein"]
+    result = mudata.read_h5mu(output)
+    assert list(result.mod) == ["ion", "protein"]
+    assert result.uns["anndata_proteomics"]["rule_selection_method"] == "rule_config"
+    assert all(
+        modality.uns["anndata_proteomics"]["rule_selection_method"] == "rule_config"
+        for modality in result.mod.values()
+    )
 
 
 def test_convert_with_single_level_rule_config_writes_one_modality_h5mu(

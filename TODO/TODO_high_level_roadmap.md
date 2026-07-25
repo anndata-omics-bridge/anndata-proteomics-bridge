@@ -22,7 +22,7 @@ Resolve the known FragPipe and PEAKS corpus failures and verify the results at a
 successful conversion must have correct samples, feature identities, quantitative layers, and
 provenance—not merely avoid an exception.
 
-Source: [TODO_failures_260702.md](TODO_failures_260702.md)
+Source: [TODO_fragpipe_peaks_version_coverage.md](TODO_fragpipe_peaks_version_coverage.md)
 
 ### 2. Formalize the vendor-column contract
 
@@ -86,7 +86,7 @@ Optional protein inference remains a separate active milestone.
 Sources:
 
 - [Archived FASTA validation specification](Archive/TODO_aho_cor.md)
-- [Optional protein inference follow-up](TODO_protein_inference.md)
+- [Protein inference CLI follow-up](TODO_protein_inference_cli.md)
 
 ## Deferred work
 

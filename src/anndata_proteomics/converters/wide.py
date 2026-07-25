@@ -123,14 +123,13 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     headers = list(df.columns)
 
-    # Sample tokens — collect across all layers (union), preserve insertion order.
-    sample_order: list[str] = []
-    seen: set[str] = set()
-    for layer in rule.layers:
-        for _, sample in _matching_columns(headers, layer.source):
-            if sample not in seen:
-                sample_order.append(sample)
-                seen.add(sample)
+    # The x-layer defines the observation axis. Optional auxiliary layers may expose
+    # summary columns or malformed tokens; those must not expand the run axis.
+    x_layer = next(layer for layer in rule.layers if layer.name == rule.axis.x_layer)
+    sample_order = list(
+        dict.fromkeys(sample for _, sample in _matching_columns(headers, x_layer.source))
+    )
+    sample_set = set(sample_order)
 
     if not sample_order:
         raise ValueError(
@@ -142,9 +141,24 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     layers: dict[str, np.ndarray] = {}
     for layer in rule.layers:
-        if not rule.layer_required(layer) and not _matching_columns(headers, layer.source):
+        layer_matches = _matching_columns(headers, layer.source)
+        extra_samples = list(
+            dict.fromkeys(sample for _, sample in layer_matches if sample not in sample_set)
+        )
+        if extra_samples:
+            logger.warning(
+                "ignoring layer %r sample token(s) outside x-layer axis: %s",
+                layer.name,
+                extra_samples,
+            )
+        axis_matches = [
+            (column, sample) for column, sample in layer_matches if sample in sample_set
+        ]
+        if not rule.layer_required(layer) and not axis_matches:
             logger.info(
-                "skipping optional layer %r: no headers matched %r", layer.name, layer.source
+                "skipping optional layer %r: no x-layer samples matched %r",
+                layer.name,
+                layer.source,
             )
             continue
         layers[layer.name] = _gather_layer_matrix(

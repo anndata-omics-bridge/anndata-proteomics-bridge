@@ -8,7 +8,7 @@ Subcommands:
 - summary <path>             print a stored descriptive summary
 - annotate <data> <json>     join sample annotations onto obs
 - fasta <data> <fasta...>    annotate proteins and validate peptide identifications
-- proteobench <data> <module.toml> <tool.toml>  compute quantitative benchmark scores
+- proteobench <data> <module.toml>  compute quantitative benchmark scores
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def export_schema_cmd() -> int:
 
 
 @app.command
-def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
+def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statuses
     data: Path,
     level: QuantificationLevel | None = None,
     *,
@@ -98,13 +98,15 @@ def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
     Without --output, the result is written next to the input using the input stem.
     """
     from anndata_proteomics.converters.pipeline import (
+        attach_parameter_resolution,
         build_mudata,
         build_mudata_from_rules,
         convert_level,
         convertible_levels,
         matching_rules,
-        param_version,
         recognize_software,
+        resolve_parameters,
+        set_rule_selection_method,
         software_slug,
     )
 
@@ -119,13 +121,28 @@ def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
     # --rule-config: explicit software-version document, bypassing packaged selection.
     if rule_config is not None:
         document = load_rule_document(rule_config)
+        rule_slug = software_slug(document.software_name)
+        parameter_resolution = resolve_parameters(params, rule_slug) if params is not None else None
         if level is not None:
             if level not in document.levels:
                 logger.error(
                     f"{rule_config} has no level {level!r}; available: {list(document.levels)}"
                 )
                 return 1
-            adata = _run_convert(df, document.effective_rule(level), params_path=params)
+            adata = _run_convert(
+                df,
+                document.effective_rule(level),
+                params_path=None if parameter_resolution is not None else params,
+            )
+            if parameter_resolution is not None:
+                attach_parameter_resolution(
+                    adata,
+                    parameter_resolution,
+                    selection_method="rule_config",
+                    warn_missing=True,
+                )
+            else:
+                set_rule_selection_method(adata, "rule_config")
             return _write_anndata(adata, output, data)
         rules = matching_rules(document.effective_rules(), df.columns)
         if rules:
@@ -133,7 +150,9 @@ def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
                 df,
                 rules,
                 params_path=params,
-                software=software_slug(document.software_name),
+                parameter_resolution=parameter_resolution,
+                rule_selection_method="rule_config",
+                software=rule_slug,
             )
             out = _output_path(output, data, ".h5mu")
             _write_atomically(out, md.write_h5mu)
@@ -153,16 +172,38 @@ def convert(  # noqa: PLR0911 - CLI maps validation failures to exit statuses
     if params is None:
         logger.error("pass --params (it gives the software version) or --rule-config PATH")
         return 1
-    version = param_version(params, slug)
-    logger.info(f"vendor={slug} software_version={version!r}")
+    parameter_resolution = resolve_parameters(params, slug)
+    version = parameter_resolution.version
+    logger.info(
+        f"vendor={slug} software_version={version!r} "
+        f"version_status={parameter_resolution.version_status}"
+    )
 
     if level is not None:
-        adata = convert_level(df, slug, level, version, params_path=params)
+        adata = convert_level(
+            df,
+            slug,
+            level,
+            version,
+            params_path=params,
+            parameter_resolution=parameter_resolution,
+        )
         return _write_anndata(adata, output, data)
 
-    levels = convertible_levels(slug, version, df.columns)
+    levels = convertible_levels(
+        slug,
+        version,
+        df.columns,
+        version_status=parameter_resolution.version_status,
+    )
     if levels:
-        md = build_mudata(df, slug, version, params_path=params)
+        md = build_mudata(
+            df,
+            slug,
+            version,
+            params_path=params,
+            parameter_resolution=parameter_resolution,
+        )
         out = _output_path(output, data, ".h5mu")
         _write_atomically(out, md.write_h5mu)
         _remove_stale_sibling(out, ".h5ad")
@@ -369,20 +410,16 @@ def fasta(  # noqa: PLR0913 - stable CLI option surface
 def proteobench(
     data: Path,
     module_settings: Path,
-    tool_settings: Path,
     *,
     output: Path | None = None,
 ) -> int:
     """Compute ProteoBench scores without requiring annotation or FASTA stages.
 
-    The module TOML supplies the sample design and species ratios. The per-tool
-    TOML resolves raw vendor columns retained by APB conversion. The default
+    The module TOML supplies the sample design and species ratios. Vendor-specific
+    interpretation is already complete in the converted APB object. The default
     output is ``<stem>.proteobench<suffix>`` beside the input.
     """
-    from anndata_proteomics.proteobench.config import (
-        load_module_settings,
-        load_tool_settings,
-    )
+    from anndata_proteomics.proteobench.config import load_module_settings
     from anndata_proteomics.proteobench.pipeline import score_quantification
     from anndata_proteomics.readers.result import load_converted_result
 
@@ -390,7 +427,6 @@ def proteobench(
     score_quantification(
         obj,
         load_module_settings(module_settings),
-        load_tool_settings(tool_settings),
     )
 
     out = output or data.with_name(f"{data.stem}.proteobench{data.suffix}")

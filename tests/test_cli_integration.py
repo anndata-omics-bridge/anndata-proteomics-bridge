@@ -41,7 +41,7 @@ def test_cli_validate_no_args_returns_zero() -> None:
 
 
 def test_cli_validate_path_happy() -> None:
-    p = find_rule("diann", "ion").path
+    p = find_rule("diann", "ion", "2.0.0").path
     r = _run("validate", str(p))
     assert r.returncode == 0, r.stderr
     assert "PASS" in r.stderr
@@ -56,11 +56,11 @@ def test_cli_validate_path_bad(tmp_path: Path) -> None:
     assert "1 failed" in r.stderr
 
 
-def test_cli_list_outputs_twelve_document_levels() -> None:
+def test_cli_list_outputs_thirteen_document_levels() -> None:
     r = _run("list")
     assert r.returncode == 0, r.stderr
     lines = [line for line in r.stderr.splitlines() if line.strip()]
-    assert len(lines) == 12
+    assert len(lines) == 13
     assert "diann" in r.stderr
     assert "wombat" in r.stderr
 
@@ -115,7 +115,7 @@ def test_cli_convert_with_rule_config_writes_h5ad(tmp_path: Path) -> None:
     data_file = find_test_data("WOMBAT")
     if data_file is None or not data_file.exists():
         pytest.skip("no WOMBAT test data available")
-    rule = find_rule("wombat", "peptidoform").path
+    rule = find_rule("wombat", "peptidoform", "0.9.11").path
     out_base = tmp_path / "wombat"
     out = out_base.with_suffix(".h5ad")
     r = _run(

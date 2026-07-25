@@ -8,7 +8,6 @@ from anndata_proteomics.scripts.extract_raw_file_db import (
     ANNOTATION_URLS,
     GENERATED_CSV_NAMES,
     PROTEOBENCH_SETTINGS_REVISION,
-    TOOL_SETTINGS_URLS,
     _download_module_jsons,
     _feature_count,
     annotations,
@@ -27,7 +26,7 @@ def test_feature_count_supports_legacy_proteobench_field() -> None:
 
 
 def test_clean_generated_data_removes_only_known_artifacts(tmp_path: Path) -> None:
-    for directory in ("json_dir", "fasta", "annotations", "proteobench_settings"):
+    for directory in ("json_dir", "fasta", "annotations"):
         path = tmp_path / directory
         path.mkdir()
         (path / "generated").touch()
@@ -38,13 +37,12 @@ def test_clean_generated_data_removes_only_known_artifacts(tmp_path: Path) -> No
 
     removed = clean_generated_data(tmp_path)
 
-    assert len(removed) == 7
+    assert len(removed) == 6
     assert keep.exists()
     assert not any((tmp_path / name).exists() for name in GENERATED_CSV_NAMES)
     assert not (tmp_path / "json_dir").exists()
     assert not (tmp_path / "fasta").exists()
     assert not (tmp_path / "annotations").exists()
-    assert not (tmp_path / "proteobench_settings").exists()
 
 
 def test_clean_generated_data_is_idempotent(tmp_path: Path) -> None:
@@ -183,13 +181,6 @@ raw_file = "run2"
 sample_name = "B1"
 condition = "B"
 """
-    tool_content = b"""
-[mapper]
-Protein = "Proteins"
-[general]
-contaminant_flag = "Cont_"
-decoy_flag = true
-"""
 
     class Response:
         def __init__(self, content: bytes) -> None:
@@ -203,26 +194,22 @@ decoy_flag = true
 
     def get(url: str) -> Response:
         requested.append(url)
-        content = annotation_content if url in ANNOTATION_URLS.values() else tool_content
-        return Response(content)
+        return Response(annotation_content)
 
     monkeypatch.setattr(
         "anndata_proteomics.scripts.extract_raw_file_db.requests.get",
         get,
     )
 
-    settings_dir = tmp_path / "tool-settings"
-    annotations(annotation_dir=tmp_path, tool_settings_dir=settings_dir)
+    annotations(annotation_dir=tmp_path)
 
-    assert requested == [*ANNOTATION_URLS.values(), *TOOL_SETTINGS_URLS.values()]
+    assert requested == [*ANNOTATION_URLS.values()]
     assert {path.name for path in tmp_path.glob("*.toml")} == {
         f"{module}.toml" for module in ANNOTATION_URLS
     }
-    assert len(list(settings_dir.glob("*/*.toml"))) == len(TOOL_SETTINGS_URLS)
     assert not list(tmp_path.glob(".*.download.toml"))
 
 
 def test_settings_urls_use_intermediate_format_contract_revision() -> None:
     assert PROTEOBENCH_SETTINGS_REVISION == "2738c47f8d621f0ee1fa4a6d3d358846f2bfa261"
     assert all(PROTEOBENCH_SETTINGS_REVISION in url for url in ANNOTATION_URLS.values())
-    assert all(PROTEOBENCH_SETTINGS_REVISION in url for url in TOOL_SETTINGS_URLS.values())

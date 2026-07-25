@@ -78,6 +78,16 @@ def test_write_then_read_typed_value_roundtrip():
     assert get_search_parameters_path(adata) == "/tmp/diann.log.txt"
 
 
+def test_write_serializes_every_parameter_field_and_preserves_null() -> None:
+    adata = _empty_adata()
+    write_search_parameters(adata, Parameters(software_name="PEAKS"))
+
+    payload = json.loads(adata.uns["anndata_proteomics"]["search_parameters"])
+
+    assert set(payload) == set(Parameters.model_fields)
+    assert payload["software_version"] is None
+
+
 def test_read_rejects_extra_fields():
     adata = _empty_adata()
     adata.uns["anndata_proteomics"] = {

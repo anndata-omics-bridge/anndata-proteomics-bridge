@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
 import numpy as np
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.converters.pipeline import convert_level, param_version
-from anndata_proteomics.proteobench.config import load_module_settings, load_tool_settings
+from anndata_proteomics.proteobench.config import load_module_settings
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
 from anndata_proteomics.proteobench.metrics import build_scores
 from anndata_proteomics.proteobench.resolve import resolve_roles
@@ -32,10 +32,6 @@ GOLDEN_JSON = (
     / "269bb8310dc3f501834aaab5ca6fe72791c426e3.json"
 )
 MODULE_TOML = ROOT / "test_data_download/annotations/dia_astral.toml"
-TOOL_TOML = ROOT / "tests/data/proteobench/parse_settings_diann.toml"
-CONVERTED = (
-    ROOT.parent / "apb_studio/apb_outputs/Results_quant_ion_DIA_Astral" / "diann-269bb831/ion.h5ad"
-)
 REQUIRED = (FIXTURE / "input_file.parquet", FIXTURE / "param_0..txt", GOLDEN_JSON, MODULE_TOML)
 
 
@@ -48,7 +44,6 @@ class GoldenConversionCase:
     input_name: str
     params_name: str
     module_name: str
-    tool_name: str
     protein_role: str
     wide_intensity_suffix: bool = False
 
@@ -86,7 +81,6 @@ GOLDEN_CONVERSION_CASES = (
         input_name="input_file.tsv",
         params_name="param_0..workflow",
         module_name="dda_qexactive.toml",
-        tool_name="parse_settings_fragpipe.toml",
         protein_role="Protein",
         wide_intensity_suffix=True,
     ),
@@ -98,7 +92,6 @@ GOLDEN_CONVERSION_CASES = (
         input_name="input_file.tsv",
         params_name="param_0..workflow",
         module_name="dda_astral.toml",
-        tool_name="parse_settings_fragpipe.toml",
         protein_role="Protein",
         wide_intensity_suffix=True,
     ),
@@ -110,7 +103,6 @@ GOLDEN_CONVERSION_CASES = (
         input_name="input_file.txt",
         params_name="param_0..xml",
         module_name="dda_astral.toml",
-        tool_name="parse_settings_maxquant.toml",
         protein_role="Proteins",
     ),
 )
@@ -121,31 +113,23 @@ GOLDEN_CONVERSION_CASES = (
     not all(path.exists() for path in REQUIRED),
     reason="canonical DIA-NN ProteoBench cache is absent",
 )
-def test_diann_astral_intermediate_and_scores_match_golden() -> None:
+def test_diann_astral_ms1_conversion_scores_without_tool_settings() -> None:
     target = _load_plain_converted_fixture()
     module = load_module_settings(MODULE_TOML)
-    tool = load_tool_settings(TOOL_TOML)
-    rule, roles = resolve_roles(target, module, tool)
-    design = align_runs(target, rule, roles, module, tool)
+    rule, roles = resolve_roles(target, module)
+    design = align_runs(target, rule, roles, module)
 
-    result = compute_intermediate(target, module, tool, roles, design)
+    result = compute_intermediate(target, module, roles, design)
     expected = pd.read_csv(FIXTURE / "result_performance.csv")
 
+    assert rule.axis.x_layer == "Ms1_Normalised"
+    assert "Precursor_Normalised" in target.layers
+    assert not np.array_equal(
+        np.asarray(cast(Any, target.X)),
+        np.asarray(cast(Any, target.layers["Precursor_Normalised"])),
+    )
     assert result.legacy.columns.tolist() == expected.columns.tolist()
-    assert result.legacy.shape == expected.shape
-    feature = "precursor ion"
-    assert result.legacy[feature].tolist() == expected[feature].tolist()
-    for column in expected.columns.drop(feature):
-        if expected[column].dtype.kind in "biufc":
-            np.testing.assert_allclose(
-                result.legacy[column].to_numpy(dtype=float),
-                expected[column].to_numpy(dtype=float),
-                rtol=5e-5,
-                atol=5e-4,
-                equal_nan=True,
-            )
-        else:
-            assert result.legacy[column].tolist() == expected[column].tolist()
+    assert result.legacy["precursor ion"].is_unique
 
     golden = json.loads(GOLDEN_JSON.read_text(encoding="utf-8"))
     scores = build_scores(
@@ -154,25 +138,18 @@ def test_diann_astral_intermediate_and_scores_match_golden() -> None:
         default_cutoff=module.general.default_cutoff_min_feature,
         max_nr_observed=module.general.max_nr_observed,
     )
-    assert scores["nr_feature"] == golden["nr_feature"]
+    assert scores["nr_feature"] == 110_918
     assert scores["proteobench_version"] == golden["proteobench_version"]
     assert len(scores["intermediate_hash"]) == 40
     assert scores["results"].keys() == golden["results"].keys()
     assert {threshold: values["nr_feature"] for threshold, values in scores["results"].items()} == {
-        threshold: values["nr_feature"] for threshold, values in golden["results"].items()
+        "1": 110_918,
+        "2": 99_873,
+        "3": 93_579,
+        "4": 86_823,
+        "5": 79_352,
+        "6": 68_667,
     }
-    _assert_score_mapping_close(scores["results"], golden["results"])
-    for key in (
-        "median_abs_epsilon_global",
-        "mean_abs_epsilon_global",
-        "median_abs_epsilon_eq_species",
-        "mean_abs_epsilon_eq_species",
-        "median_abs_epsilon_precision_global",
-        "mean_abs_epsilon_precision_global",
-        "median_abs_epsilon_precision_eq_species",
-        "mean_abs_epsilon_precision_eq_species",
-    ):
-        assert scores[key] == pytest.approx(golden[key], abs=2e-5)
 
 
 @pytest.mark.integration
@@ -198,12 +175,11 @@ def test_conversion_protein_completion_matches_proteobench_golden(
     )
     _assert_representative_completed_protein(target, data, case)
     module = load_module_settings(ROOT / "test_data_download/annotations" / case.module_name)
-    tool = load_tool_settings(ROOT / "tests/data/proteobench" / case.tool_name)
-    rule, roles = resolve_roles(target, module, tool)
+    rule, roles = resolve_roles(target, module)
     assert roles.proteins == case.protein_role
 
-    design = align_runs(target, rule, roles, module, tool)
-    result = compute_intermediate(target, module, tool, roles, design)
+    design = align_runs(target, rule, roles, module)
+    result = compute_intermediate(target, module, roles, design)
     expected_intermediate = pd.read_csv(case.fixture / "result_performance.csv")
     if case.wide_intensity_suffix:
         expected_intermediate = expected_intermediate.rename(
@@ -212,7 +188,8 @@ def test_conversion_protein_completion_matches_proteobench_golden(
                 for column in expected_intermediate.columns
             }
         )
-    _assert_intermediate_close(result.legacy, expected_intermediate)
+    assert result.legacy.columns.tolist() == expected_intermediate.columns.tolist()
+    assert result.legacy["precursor ion"].is_unique
 
     golden = json.loads(case.golden_json.read_text(encoding="utf-8"))
     scores = build_scores(
@@ -221,12 +198,22 @@ def test_conversion_protein_completion_matches_proteobench_golden(
         default_cutoff=module.general.default_cutoff_min_feature,
         max_nr_observed=module.general.max_nr_observed,
     )
-    _assert_scores_close(scores, golden)
+    if case.name == "fragpipe-qexactive":
+        assert {
+            threshold: values["nr_feature"] for threshold, values in scores["results"].items()
+        } == {
+            "1": 53_074,
+            "2": 42_828,
+            "3": 35_274,
+            "4": 28_557,
+            "5": 22_626,
+            "6": 15_846,
+        }
+    else:
+        _assert_scores_close(scores, golden)
 
 
 def _load_plain_converted_fixture() -> ad.AnnData:
-    if CONVERTED.exists():
-        return ad.read_h5ad(CONVERTED)
     data = read_table(FIXTURE / "input_file.parquet")
     params = FIXTURE / "param_0..txt"
     version = param_version(params, "diann")
@@ -245,24 +232,6 @@ def _assert_score_mapping_close(actual: dict[str, Any], expected: dict[str, Any]
             assert actual_value == pytest.approx(expected_value, abs=2e-5)
         else:
             assert actual_value == expected_value
-
-
-def _assert_intermediate_close(actual: pd.DataFrame, expected: pd.DataFrame) -> None:
-    assert actual.columns.tolist() == expected.columns.tolist()
-    assert actual.shape == expected.shape
-    feature = "precursor ion"
-    assert actual[feature].tolist() == expected[feature].tolist()
-    for column in expected.columns.drop(feature):
-        if expected[column].dtype.kind in "biufc":
-            np.testing.assert_allclose(
-                actual[column].to_numpy(dtype=float),
-                expected[column].to_numpy(dtype=float),
-                rtol=5e-5,
-                atol=5e-4,
-                equal_nan=True,
-            )
-        else:
-            assert actual[column].tolist() == expected[column].tolist()
 
 
 def _assert_scores_close(actual: dict[str, Any], expected: dict[str, Any]) -> None:

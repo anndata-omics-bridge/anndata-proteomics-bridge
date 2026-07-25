@@ -23,8 +23,8 @@ from bs4 import BeautifulSoup
 from cyclopts import App
 
 from anndata_proteomics.annotation.loader import load_annotation
-from anndata_proteomics.proteobench.config import load_module_settings, load_tool_settings
-from anndata_proteomics.test_data import PROTEOBENCH_TOOL_SETTINGS, TEST_DATA_DIR
+from anndata_proteomics.proteobench.config import load_module_settings
+from anndata_proteomics.test_data import TEST_DATA_DIR
 
 CONFIGS = {
     "dda_qexactive": {
@@ -123,10 +123,6 @@ ANNOTATION_URLS = {
     "dia_diapasef": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/diaPASEF/module_settings.toml",
     "dia_zenotof": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/ZenoTOF/module_settings.toml",
     "dia_singlecell": f"{_PROTEOBENCH_SETTINGS_ROOT}/DIA/ion/lowinput/module_settings.toml",
-}
-TOOL_SETTINGS_URLS = {
-    key: f"{_PROTEOBENCH_SETTINGS_ROOT}/{relative_path}"
-    for key, relative_path in PROTEOBENCH_TOOL_SETTINGS.items()
 }
 
 
@@ -533,9 +529,8 @@ def fasta(*, fasta_dir: Path = TEST_DATA_DIR / "fasta") -> None:
 def annotations(
     *,
     annotation_dir: Path = TEST_DATA_DIR / "annotations",
-    tool_settings_dir: Path | None = None,
 ) -> None:
-    """Download ProteoBench module and audited per-tool scoring TOMLs."""
+    """Download ProteoBench module settings used for annotation and scoring."""
     annotation_dir = annotation_dir.resolve()
     annotation_dir.mkdir(parents=True, exist_ok=True)
     for module, url in ANNOTATION_URLS.items():
@@ -552,27 +547,6 @@ def annotations(
         finally:
             temporary.unlink(missing_ok=True)
     print(f"Downloaded {len(ANNOTATION_URLS)} module annotations to {annotation_dir}")
-
-    settings_dir = (
-        tool_settings_dir.resolve()
-        if tool_settings_dir is not None
-        else annotation_dir.parent / "proteobench_settings"
-    )
-    for (module, vendor), url in TOOL_SETTINGS_URLS.items():
-        destination_dir = settings_dir / module
-        destination_dir.mkdir(parents=True, exist_ok=True)
-        destination = destination_dir / f"{vendor}.toml"
-        temporary = destination_dir / f".{vendor}.download.toml"
-        print(f"Downloading {module}/{vendor}: {url}")
-        response = requests.get(url)
-        response.raise_for_status()
-        temporary.write_bytes(response.content)
-        try:
-            load_tool_settings(temporary)
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-    print(f"Downloaded {len(TOOL_SETTINGS_URLS)} tool settings to {settings_dir}")
 
 
 @app.command
@@ -597,7 +571,6 @@ def clean_generated_data(test_data_dir: Path) -> list[Path]:
         test_data_dir / "json_dir",
         test_data_dir / "fasta",
         test_data_dir / "annotations",
-        test_data_dir / "proteobench_settings",
     ]
     targets.extend(test_data_dir / name for name in GENERATED_CSV_NAMES)
     removed = []

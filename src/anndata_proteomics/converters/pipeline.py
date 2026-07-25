@@ -8,9 +8,12 @@ axis. No GUI / marimo / test-data-cache dependency — this is plain library cod
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from anndata import AnnData
@@ -18,11 +21,14 @@ from mudata import MuData
 
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.params.anndata_io import write_search_parameters
+from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.registry import parse_params
 from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.loader import load_rule, resolve_rule_for_version
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
+
+logger = logging.getLogger(__name__)
 
 # Quantification levels, coarse to fine. Not every vendor exposes every level.
 LEVELS: tuple[QuantificationLevel, ...] = (
@@ -41,6 +47,25 @@ _PREFIX = {
     "peptide": "pep:",
     "protein": "prt:",
 }
+
+ParameterVersionStatus = Literal["present", "missing", "parse_error"]
+RuleSelectionMethod = Literal[
+    "software_version",
+    "columns",
+    "version_unavailable",
+    "rule_config",
+]
+
+
+@dataclass(frozen=True)
+class ParameterResolution:
+    """One parameter parse with version availability kept distinct from parse errors."""
+
+    source_path: Path
+    parameters: Parameters | None
+    version: str | None
+    version_status: ParameterVersionStatus
+    error: str | None = None
 
 
 def software_slug(software_name: str) -> str:
@@ -69,10 +94,104 @@ def param_version(param_path: Path | None, slug: str) -> str | None:
     """Software version parsed from the param file, or None if absent/unparseable."""
     if param_path is None:
         return None
+    return resolve_parameters(param_path, slug).version
+
+
+def resolve_parameters(param_path: Path | str, slug: str) -> ParameterResolution:
+    """Parse parameters once while distinguishing a missing version from parse failure."""
+    source_path = Path(param_path)
     try:
-        return parse_params(param_path, software=slug).software_version
-    except Exception:  # noqa: BLE001 — any parse failure means "version unknown"
-        return None
+        parameters = parse_params(source_path, software=slug)
+    except Exception as exc:  # noqa: BLE001 — retain best-effort conversion policy
+        return ParameterResolution(
+            source_path=source_path,
+            parameters=None,
+            version=None,
+            version_status="parse_error",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    version = parameters.software_version
+    return ParameterResolution(
+        source_path=source_path,
+        parameters=parameters,
+        version=version,
+        version_status="present" if version is not None else "missing",
+    )
+
+
+def _rule_matches_headers(headers: Iterable[str], rule: ParseRule) -> bool:
+    """Return whether all input columns required by ``rule`` are available."""
+    header_set = set(headers)
+    label_column = (
+        rule.fragments.label_column
+        if rule.fragments is not None and rule.fragments.label_strategy == "column"
+        else None
+    )
+    return matches(header_set, rule) and (label_column is None or label_column in header_set)
+
+
+def _column_matching_rule_variants(
+    slug: str,
+    level: QuantificationLevel,
+    headers: Iterable[str],
+) -> list[ParseRule]:
+    """Return packaged variants for ``slug``/``level`` that fit the input headers."""
+    header_set = set(headers)
+    candidates = []
+    for locator in iter_packaged_rules():
+        if locator.level != level:
+            continue
+        rule = load_rule(locator)
+        if software_slug(rule.software_name) != slug:
+            continue
+        if _rule_matches_headers(header_set, rule):
+            candidates.append(rule)
+    return candidates
+
+
+def _select_rule(
+    slug: str,
+    level: QuantificationLevel,
+    version: str | None,
+    headers: Iterable[str],
+    *,
+    version_status: ParameterVersionStatus | None = None,
+) -> tuple[ParseRule, RuleSelectionMethod]:
+    """Resolve one rule together with the method used to select it."""
+    status = version_status or ("present" if version is not None else "missing")
+    header_set = set(headers)
+
+    if status == "missing":
+        candidates = _column_matching_rule_variants(slug, level, header_set)
+        if len(candidates) == 1:
+            return candidates[0], "columns"
+        if not candidates:
+            raise ValueError(
+                f"{slug} {level}: no rule matches the file columns while software "
+                "version is missing"
+            )
+        raise ValueError(
+            f"{slug} {level}: {len(candidates)} rules match the file columns while "
+            "software version is missing; provide a version or explicit rule config"
+        )
+
+    rule = resolve_rule_for_version(slug, level, version)
+    if rule is None:
+        if status == "parse_error":
+            raise ValueError(
+                f"{slug} {level}: parameter parsing failed and no unversioned/equivalent "
+                "rule can be selected"
+            )
+        raise ValueError(f"{slug} {level}: no rule covers software version {version!r}")
+    if not _rule_matches_headers(header_set, rule):
+        raise ValueError(
+            f"{slug} {level}: file columns don't match the rule for software version "
+            f"{version!r} — verify the version / provide the right param file"
+        )
+    method: RuleSelectionMethod = (
+        "version_unavailable" if status == "parse_error" else "software_version"
+    )
+    return rule, method
 
 
 def select_rule(
@@ -80,49 +199,62 @@ def select_rule(
     level: QuantificationLevel,
     version: str | None,
     headers: Iterable[str],
+    *,
+    version_status: ParameterVersionStatus | None = None,
 ) -> ParseRule:
     """Resolve the rule for (slug, level) at ``version`` and validate it against ``headers``.
 
-    Raises ValueError if no rule variant covers the version, or if the file's columns don't match
-    the version-selected rule (no silent fallback — the caller fixes the version / param file).
+    A genuinely missing version selects the unique column-compatible variant. A present,
+    uncovered version remains a hard failure.
     """
-    rule = resolve_rule_for_version(slug, level, version)
-    if rule is None:
-        raise ValueError(f"{slug} {level}: no rule covers software version {version!r}")
-    header_set = set(headers)
-    label_col = (
-        rule.fragments.label_column
-        if rule.fragments is not None and rule.fragments.label_strategy == "column"
-        else None
-    )
-    if not matches(header_set, rule) or (label_col is not None and label_col not in header_set):
-        raise ValueError(
-            f"{slug} {level}: file columns don't match the rule for software version "
-            f"{version!r} — verify the version / provide the right param file"
-        )
-    return rule
+    return _select_rule(
+        slug,
+        level,
+        version,
+        headers,
+        version_status=version_status,
+    )[0]
 
 
 def convertible_levels(
     slug: str,
     version: str | None,
     headers: Iterable[str],
+    *,
+    version_status: ParameterVersionStatus | None = None,
 ) -> list[QuantificationLevel]:
     """Levels whose version-selected rule both exists and matches this file's columns."""
     header_set = set(headers)
     out = []
     for level in LEVELS:
         try:
-            select_rule(slug, level, version, header_set)
+            select_rule(
+                slug,
+                level,
+                version,
+                header_set,
+                version_status=version_status,
+            )
         except (LookupError, ValueError):
             continue
         out.append(level)
     return out
 
 
-def available_targets(slug: str, version: str | None, headers: Iterable[str]) -> list[str]:
+def available_targets(
+    slug: str,
+    version: str | None,
+    headers: Iterable[str],
+    *,
+    version_status: ParameterVersionStatus | None = None,
+) -> list[str]:
     """Convertible levels plus the all-level MuData target when any level resolves."""
-    levels = convertible_levels(slug, version, headers)
+    levels = convertible_levels(
+        slug,
+        version,
+        headers,
+        version_status=version_status,
+    )
     targets = [str(level) for level in levels]
     if levels:
         targets.append(MUDATA)
@@ -137,12 +269,7 @@ def matching_rules(
     header_set = set(headers)
     matched = {}
     for level, rule in rules.items():
-        label_column = (
-            rule.fragments.label_column
-            if rule.fragments is not None and rule.fragments.label_strategy == "column"
-            else None
-        )
-        if matches(header_set, rule) and (label_column is None or label_column in header_set):
+        if _rule_matches_headers(header_set, rule):
             matched[level] = rule
     return matched
 
@@ -158,12 +285,35 @@ def convert_level(
     version: str | None,
     *,
     params_path: Path | str | None = None,
+    parameter_resolution: ParameterResolution | None = None,
     log: Callable[[str], None] = _noop,
 ) -> AnnData:
     from anndata_proteomics.converters.assemble import convert
 
-    rule = select_rule(slug, level, version, df.columns)
-    adata = convert(df, rule, params_path=params_path)
+    version_status = (
+        parameter_resolution.version_status if parameter_resolution is not None else None
+    )
+    rule, selection_method = _select_rule(
+        slug,
+        level,
+        version,
+        df.columns,
+        version_status=version_status,
+    )
+    adata = convert(
+        df,
+        rule,
+        params_path=None if parameter_resolution is not None else params_path,
+    )
+    if parameter_resolution is not None:
+        attach_parameter_resolution(
+            adata,
+            parameter_resolution,
+            selection_method=selection_method,
+            warn_missing=True,
+        )
+    else:
+        set_rule_selection_method(adata, selection_method)
     log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
     return adata
 
@@ -174,28 +324,54 @@ def build_mudata(
     version: str | None,
     *,
     params_path: Path | str | None = None,
+    parameter_resolution: ParameterResolution | None = None,
     log: Callable[[str], None] = _noop,
 ) -> MuData:
     """Build a MuData over the levels whose version-selected rule fits this file (shared run axis).
 
     Levels the version doesn't provide (e.g. fragment on DIA-NN 2.x) are skipped, not failed.
     """
-    resolvable = set(convertible_levels(slug, version, df.columns))
+    version_status = (
+        parameter_resolution.version_status if parameter_resolution is not None else None
+    )
+    resolvable = set(
+        convertible_levels(
+            slug,
+            version,
+            df.columns,
+            version_status=version_status,
+        )
+    )
     skipped = [level for level in LEVELS if level not in resolvable]
     if skipped:
         log(f"skipping levels not provided by software version {version!r}: {skipped}")
     if not resolvable:
         raise ValueError(f"{slug}: no level resolves for software version {version!r}")
 
-    rules: dict[QuantificationLevel, ParseRule] = {
-        level: select_rule(slug, level, version, df.columns)
+    selections: dict[
+        QuantificationLevel,
+        tuple[ParseRule, RuleSelectionMethod],
+    ] = {
+        level: _select_rule(
+            slug,
+            level,
+            version,
+            df.columns,
+            version_status=version_status,
+        )
         for level in LEVELS
         if level in resolvable
     }
+    rules: dict[QuantificationLevel, ParseRule] = {
+        level: selection[0] for level, selection in selections.items()
+    }
+    selection_method = next(iter(selections.values()))[1]
     return build_mudata_from_rules(
         df,
         rules,
         params_path=params_path,
+        parameter_resolution=parameter_resolution,
+        rule_selection_method=selection_method,
         software=slug,
         log=log,
     )
@@ -206,6 +382,8 @@ def build_mudata_from_rules(
     rules: Mapping[QuantificationLevel, ParseRule],
     *,
     params_path: Path | str | None = None,
+    parameter_resolution: ParameterResolution | None = None,
+    rule_selection_method: RuleSelectionMethod | None = None,
     software: str | None = None,
     log: Callable[[str], None] = _noop,
 ) -> MuData:
@@ -221,7 +399,20 @@ def build_mudata_from_rules(
         log(f"converting level: {level}")
         from anndata_proteomics.converters.assemble import convert
 
-        adata = convert(df.copy(), rules[level], params_path=params_path)
+        adata = convert(
+            df.copy(),
+            rules[level],
+            params_path=None if parameter_resolution is not None else params_path,
+        )
+        if parameter_resolution is not None:
+            attach_parameter_resolution(
+                adata,
+                parameter_resolution,
+                selection_method=rule_selection_method,
+                warn_missing=False,
+            )
+        elif rule_selection_method is not None:
+            set_rule_selection_method(adata, rule_selection_method)
         log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
@@ -229,9 +420,57 @@ def build_mudata_from_rules(
     # frames); each modality keeps its own obs/var. Silences the 0.3 FutureWarning.
     with mudata.set_options(pull_on_update=False):
         md = MuData(mods, axis=0)
-    if params_path is not None and software is not None:
+    if parameter_resolution is not None:
+        attach_parameter_resolution(
+            md,
+            parameter_resolution,
+            selection_method=rule_selection_method,
+            warn_missing=True,
+        )
+    elif params_path is not None and software is not None:
         params = parse_params(params_path, software=software)
         write_search_parameters(md, params, source_path=str(params_path))
+    if rule_selection_method is not None:
+        set_rule_selection_method(md, rule_selection_method)
     store_quantification_summary(md)
     log(f"  MuData: {md.n_obs} obs × {sum(a.n_vars for a in mods.values())} var, {len(mods)} mods")
     return md
+
+
+def set_rule_selection_method(
+    target: AnnData | MuData,
+    selection_method: RuleSelectionMethod,
+) -> None:
+    """Store rule-selection provenance on one AnnData or MuData container."""
+    target.uns.setdefault("anndata_proteomics", {})
+    target.uns["anndata_proteomics"]["rule_selection_method"] = selection_method
+
+
+def attach_parameter_resolution(
+    target: AnnData | MuData,
+    resolution: ParameterResolution,
+    *,
+    selection_method: RuleSelectionMethod | None,
+    warn_missing: bool,
+) -> None:
+    """Attach one already-parsed parameter result and refresh stored summaries."""
+    target.uns.setdefault("anndata_proteomics", {})
+    metadata = target.uns["anndata_proteomics"]
+    metadata["search_parameters_version_status"] = resolution.version_status
+    metadata["search_parameters_path"] = str(resolution.source_path)
+    if selection_method is not None:
+        metadata["rule_selection_method"] = selection_method
+    if resolution.parameters is not None:
+        write_search_parameters(
+            target,
+            resolution.parameters,
+            source_path=str(resolution.source_path),
+        )
+    elif resolution.error is not None:
+        metadata["search_parameters_error"] = resolution.error
+    if resolution.version_status == "missing" and warn_missing:
+        logger.warning(
+            "no software version in search parameters %s; selected rule by columns",
+            resolution.source_path,
+        )
+    store_quantification_summary(target)

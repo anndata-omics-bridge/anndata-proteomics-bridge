@@ -1,5 +1,14 @@
 # Changes
 
+- 2026-07-25: Add `TODO/TODO_acquisition_method_rule_overrides.md` — plan for an
+  `acquisition_method` search-parameter field plus level-scoped
+  `search_parameter_overrides` in `rules.json` (plan only, no code).
+- 2026-07-25: Document the three `test_data_download` index CSVs (catalog, selection,
+  manifest) and the downloaded-submission layout in AGENTS.md, so examples are found by
+  querying the manifest instead of globbing the cache.
+- 2026-07-25: Add WOMBAT's native modified-sequence-plus-charge ion level and
+  distinguish it from WOMBAT's charge-free peptidoform export by reported
+  PSM-count columns.
 - 2026-07-23: Align local and GitHub quality gates with the FGCZ Python
   reference: staged Ruff/Pyright/Deptry/coverage hooks, wheel inspection,
   strict docs, dependency audit, typed-package marker, and CI/Pages/security

@@ -90,6 +90,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Protein_Ids"
+      },
       "layers": [
         {
           "name": "Precursor_Normalised",

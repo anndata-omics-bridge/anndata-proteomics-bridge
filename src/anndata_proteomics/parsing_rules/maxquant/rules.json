@@ -108,6 +108,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Proteins"
+      },
       "layers": [
         {
           "name": "Intensity",

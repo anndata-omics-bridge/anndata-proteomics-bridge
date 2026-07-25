@@ -110,6 +110,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "PG_ProteinAccessions"
+      },
       "layers": [
         {
           "name": "FG_Quantity",

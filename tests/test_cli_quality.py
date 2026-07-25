@@ -70,7 +70,12 @@ def test_packaged_level_and_mudata_conversion_paths(
     adata = ad.AnnData(np.ones((1, 1), dtype=np.float32))
     monkeypatch.setattr(cli, "read_table", lambda _path: frame)
     monkeypatch.setattr(conversion_pipeline, "recognize_software", lambda _columns: "diann")
-    monkeypatch.setattr(conversion_pipeline, "param_version", lambda *_args: "2.0")
+    resolution = SimpleNamespace(version="2.0", version_status="present")
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "resolve_parameters",
+        lambda *_args: resolution,
+    )
     monkeypatch.setattr(conversion_pipeline, "convert_level", lambda *_args, **_kwargs: adata)
     params = tmp_path / "params.txt"
     params.write_text("params", encoding="utf-8")
@@ -90,7 +95,7 @@ def test_packaged_level_and_mudata_conversion_paths(
     monkeypatch.setattr(
         conversion_pipeline,
         "convertible_levels",
-        lambda *_args: ("ion",),
+        lambda *_args, **_kwargs: ("ion",),
     )
     monkeypatch.setattr(conversion_pipeline, "build_mudata", lambda *_args, **_kwargs: container)
     stale = (tmp_path / "multi").with_suffix(".h5ad")
@@ -106,7 +111,11 @@ def test_packaged_level_and_mudata_conversion_paths(
     assert (tmp_path / "multi.h5mu").exists()
     assert not stale.exists()
 
-    monkeypatch.setattr(conversion_pipeline, "convertible_levels", lambda *_args: ())
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "convertible_levels",
+        lambda *_args, **_kwargs: (),
+    )
     assert cli.convert(tmp_path / "data.tsv", params=params) == 1
 
 
@@ -175,7 +184,6 @@ def test_proteobench_output_guards_and_writer(
     obj = _Container()
     monkeypatch.setattr(result, "load_converted_result", lambda _path: obj)
     monkeypatch.setattr(config, "load_module_settings", lambda _path: object())
-    monkeypatch.setattr(config, "load_tool_settings", lambda _path: object())
     monkeypatch.setattr(pipeline, "score_quantification", lambda *_args: obj)
     data = tmp_path / "data.h5ad"
     data.write_text("input", encoding="utf-8")
@@ -183,14 +191,12 @@ def test_proteobench_output_guards_and_writer(
         cli.proteobench(
             data,
             tmp_path / "module.toml",
-            tmp_path / "tool.toml",
             output=tmp_path / "wrong.h5mu",
         )
     with pytest.raises(ValueError, match="differ"):
         cli.proteobench(
             data,
             tmp_path / "module.toml",
-            tmp_path / "tool.toml",
             output=data,
         )
     output = tmp_path / "scored.h5ad"
@@ -198,7 +204,6 @@ def test_proteobench_output_guards_and_writer(
         cli.proteobench(
             data,
             tmp_path / "module.toml",
-            tmp_path / "tool.toml",
             output=output,
         )
         == 0

@@ -119,6 +119,13 @@ def test_long_example_validates():
     assert rule.axis.duplicates.mode == "error"
 
 
+def test_column_role_must_name_a_declared_var_column() -> None:
+    invalid = copy.deepcopy(LONG_EXAMPLE)
+    invalid["column_roles"] = {"protein_accessions": "Missing_Proteins"}
+    with pytest.raises(ValidationError, match="must name a declared var column"):
+        _parse(invalid)
+
+
 def test_wide_example_validates():
     rule = _parse(WIDE_EXAMPLE)
     assert rule.input_shape == "wide"
@@ -235,6 +242,7 @@ def test_json_schema_export_has_expected_top_level_properties():
         "quantification_level",
         "axis",
         "columns",
+        "column_roles",
         "layers",
         "sample_name_cleanup",
         "modifications",

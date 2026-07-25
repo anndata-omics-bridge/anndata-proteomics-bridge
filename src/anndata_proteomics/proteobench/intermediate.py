@@ -11,10 +11,9 @@ import numpy as np
 import pandas as pd
 
 from anndata_proteomics._matrix_types import is_sparse_matrix
-from anndata_proteomics.proteobench.config import ModuleSettings, SampleSettings, ToolSettings
+from anndata_proteomics.proteobench.config import ModuleSettings, SampleSettings
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
-    parse_proteobench_features,
     render_proteobench_features,
 )
 from anndata_proteomics.proteobench.resolve import ResolvedRoles
@@ -51,7 +50,6 @@ def align_runs(
     rule: ParseRule,
     roles: ResolvedRoles,
     module_settings: ModuleSettings,
-    tool_settings: ToolSettings,
 ) -> RunDesign:
     """Align converted observations to module samples without requiring annotation."""
     obs_column = roles.raw_file or rule.axis.obs_keys[0]
@@ -60,12 +58,12 @@ def align_runs(
         if obs_column in target.obs.columns
         else target.obs_names.astype(str).tolist()
     )
-    cleanup = _cleanup_pattern(tool_settings)
+    cleanup = _DEFAULT_RUN_CLEANUP
     by_raw = {
         _clean_run_name(sample.raw_file, cleanup): sample for sample in module_settings.samples
     }
     by_sample_name = {sample.sample_name: sample for sample in module_settings.samples}
-    wide = _wide_run_mapping(rule, module_settings, tool_settings, cleanup)
+    wide = _wide_run_mapping(rule, module_settings, cleanup)
 
     matched: list[tuple[SampleSettings, str]] = []
     for value in observed:
@@ -102,7 +100,6 @@ def align_runs(
 def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestration
     target: Any,
     module_settings: ModuleSettings,
-    tool_settings: ToolSettings,
     roles: ResolvedRoles,
     design: RunDesign,
 ) -> IntermediateResult:
@@ -119,25 +116,15 @@ def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestratio
     reported_proteins = target.var[roles.proteins].astype("string").fillna("")
     mapping_result = map_reported_proteins(reported_proteins)
     proteins = mapping_result.proteins
-    if tool_settings.modifications_parser is not None:
-        assert roles.modification_source is not None
-        compatibility_features = parse_proteobench_features(
-            target.var[roles.modification_source],
-            target.var[roles.feature],
-            tool_settings.modifications_parser,
-            level=module_settings.general.level,
-            target=target,
-        )
-    else:
-        compatibility_features = render_proteobench_features(target.var[roles.feature])
+    compatibility_features = render_proteobench_features(target.var[roles.feature])
     compatibility_feature_ids = compatibility_features.to_numpy(dtype=str)
     species_flags = {
         species: proteins.str.contains(flag, regex=True, na=False).to_numpy(dtype=bool)
         for flag, species in module_settings.species_mapper.items()
     }
     unique = np.sum(np.vstack(list(species_flags.values())), axis=0, dtype=np.int64)
-    contaminants = _contaminants(proteins, tool_settings)
-    decoys = _decoys(target, roles, tool_settings)
+    contaminants = _contaminants(proteins)
+    decoys = np.zeros(target.n_vars, dtype=bool)
 
     matrix = target.X
     source_dtype = np.float32 if _is_float32_backed(matrix) else np.float64
@@ -485,34 +472,19 @@ def _empirical_centers(
 def _wide_run_mapping(
     rule: ParseRule,
     module_settings: ModuleSettings,
-    tool_settings: ToolSettings,
     cleanup: re.Pattern[str],
 ) -> dict[str, tuple[SampleSettings, str]]:
-    if rule.input_shape != "wide" or not tool_settings.run_mapper:
+    if rule.input_shape != "wide":
         return {}
     x_layer = next(layer for layer in rule.layers if layer.name == rule.axis.x_layer)
     pattern = re.compile(x_layer.source)
-    samples = {sample.sample_name: sample for sample in module_settings.samples}
     result: dict[str, tuple[SampleSettings, str]] = {}
-    for raw_column, sample_name in tool_settings.run_mapper.items():
-        sample = samples.get(sample_name)
-        if sample is None:
-            raise ValueError(
-                "per-tool run_mapper references sample_name "
-                f"{sample_name!r} absent from module TOML"
-            )
+    for sample in module_settings.samples:
+        raw_column = sample.raw_file
         match = pattern.match(raw_column)
         observed_name = match.group("sample") if match else _clean_run_name(raw_column, cleanup)
         result[observed_name] = (sample, _clean_run_name(raw_column, cleanup, strip_path=False))
     return result
-
-
-def _cleanup_pattern(tool_settings: ToolSettings) -> re.Pattern[str]:
-    custom = tool_settings.general.run_name_cleanup
-    try:
-        return re.compile(custom) if custom else _DEFAULT_RUN_CLEANUP
-    except re.error as exc:
-        raise ValueError(f"invalid per-tool run_name_cleanup regex {custom!r}: {exc}") from exc
 
 
 def _clean_run_name(
@@ -543,17 +515,8 @@ def _validate_existing_annotations(
             raise ValueError(f"existing obs[{column!r}] disagrees with the required module TOML")
 
 
-def _contaminants(proteins: pd.Series, tool_settings: ToolSettings) -> np.ndarray:
-    flag = tool_settings.general.contaminant_flag
-    if not flag:
-        return np.zeros(len(proteins), dtype=bool)
-    return proteins.str.contains(flag, regex=True, na=False).to_numpy(dtype=bool)
-
-
-def _decoys(target: Any, roles: ResolvedRoles, tool_settings: ToolSettings) -> np.ndarray:
-    if roles.reverse is None:
-        return np.zeros(target.n_vars, dtype=bool)
-    return target.var[roles.reverse].to_numpy() == tool_settings.general.decoy_flag
+def _contaminants(proteins: pd.Series) -> np.ndarray:
+    return proteins.str.contains("Cont_", regex=False, na=False).to_numpy(dtype=bool)
 
 
 def _is_float32_backed(matrix: Any) -> bool:

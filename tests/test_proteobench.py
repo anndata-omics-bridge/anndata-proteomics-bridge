@@ -22,18 +22,13 @@ from anndata_proteomics.annotation.validate_fasta import validate_peptides_again
 from anndata_proteomics.proteobench import intermediate, mapping, metrics, resolve
 from anndata_proteomics.proteobench.config import (
     ExpectedRatio,
-    ModificationParserSettings,
     ModuleGeneral,
     ModuleSettings,
     SampleSettings,
-    ToolGeneral,
-    ToolSettings,
     load_module_settings,
-    load_tool_settings,
 )
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
 from anndata_proteomics.proteobench.mapping import (
-    parse_proteobench_features,
     render_proteobench_features,
 )
 from anndata_proteomics.proteobench.metrics import build_scores, compute_roc_auc
@@ -62,17 +57,6 @@ def _module_settings() -> ModuleSettings:
     )
 
 
-def _tool_settings() -> ToolSettings:
-    return ToolSettings(
-        mapper={
-            "Run": "Raw file",
-            "Protein.Ids": "Proteins",
-            "Precursor.Normalised": "Intensity",
-        },
-        general=ToolGeneral(contaminant_flag="Cont_", decoy_flag=True),
-    )
-
-
 def _rule() -> ParseRule:
     return ParseRule.model_validate(
         {
@@ -91,6 +75,7 @@ def _rule() -> ParseRule:
                 "obs": {"select": {"Run": "Run"}},
                 "var": {"select": {"Protein_Ids": "Protein.Ids"}},
             },
+            "column_roles": {"protein_accessions": "Protein_Ids"},
             "layers": [{"name": "Precursor_Normalised", "source": "Precursor.Normalised"}],
         }
     )
@@ -137,10 +122,9 @@ def _adata(*, sparse_x: bool = False) -> ad.AnnData:
 
 def _intermediate(adata: ad.AnnData):
     module = _module_settings()
-    tool = _tool_settings()
-    rule, roles = resolve_roles(adata, module, tool)
-    design = align_runs(adata, rule, roles, module, tool)
-    return compute_intermediate(adata, module, tool, roles, design)
+    rule, roles = resolve_roles(adata, module)
+    design = align_runs(adata, rule, roles, module)
+    return compute_intermediate(adata, module, roles, design)
 
 
 def test_matrix_intermediate_matches_hand_computed_values() -> None:
@@ -202,32 +186,6 @@ def test_legacy_feature_rendering_can_match_before_aa_false_parser() -> None:
     ]
 
 
-def test_raw_modification_parser_preserves_proteobench_tool_semantics() -> None:
-    target = _adata()
-    raw = pd.Series(["n[42.0106]PEPTIDEC[57.0215]", "M[15.9949]PEPTIDE"])
-    canonical = pd.Series(["[UNIMOD:1]-PEPTIDEC[UNIMOD:4]/2", "M[UNIMOD:35]PEPTIDE/3"])
-    settings = ModificationParserSettings(
-        parse_column="Modified Sequence",
-        before_aa=False,
-        pattern=r"(?<=\[).+?(?=\])",
-        modification_dict={
-            "42.0106": "Acetyl",
-            "57.0215": "Carbamidomethyl",
-            "15.9949": "Oxidation",
-        },
-    )
-
-    rendered = parse_proteobench_features(
-        raw,
-        canonical,
-        settings,
-        level="ion",
-        target=target,
-    )
-
-    assert rendered.tolist() == ["[Acetyl]-PEPTIDEC/2", "M[Oxidation]PEPTIDE/3"]
-
-
 def test_scores_keep_proteobench_names_and_thresholds() -> None:
     result = _intermediate(_adata())
     scores = build_scores(result.legacy, result.intermediate_hash)
@@ -260,7 +218,7 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
     adata.obs["condition"] = ["A", "A", "B", "B"]
     adata.varm["fasta"] = pd.DataFrame({"accession": ["x"] * adata.n_vars}, index=adata.var_names)
 
-    returned = score_quantification(adata, _module_settings(), _tool_settings())
+    returned = score_quantification(adata, _module_settings())
     assert returned is adata
     assert "proteobench" in adata.varm
     assert adata.uns["proteobench"]["column_roles"]["Proteins"] == "var:Protein_Ids"
@@ -293,14 +251,14 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
 
 def test_pipeline_refuses_collisions_and_conflicting_annotations() -> None:
     adata = _adata()
-    score_quantification(adata, _module_settings(), _tool_settings())
+    score_quantification(adata, _module_settings())
     with pytest.raises(ValueError, match="refusing to overwrite"):
-        score_quantification(adata, _module_settings(), _tool_settings())
+        score_quantification(adata, _module_settings())
 
     conflicting = _adata()
     conflicting.obs["condition"] = ["B", "A", "B", "B"]
     with pytest.raises(ValueError, match="disagrees"):
-        score_quantification(conflicting, _module_settings(), _tool_settings())
+        score_quantification(conflicting, _module_settings())
 
 
 def test_annotation_fasta_and_scoring_are_order_independent() -> None:
@@ -318,10 +276,10 @@ def test_annotation_fasta_and_scoring_are_order_independent() -> None:
     enrich_first = _adata()
     annotate_obs(enrich_first, annotation)
     validate_peptides_against_fasta(enrich_first, fasta, backend="ahocorapy")
-    score_quantification(enrich_first, _module_settings(), _tool_settings())
+    score_quantification(enrich_first, _module_settings())
 
     score_first = _adata()
-    score_quantification(score_first, _module_settings(), _tool_settings())
+    score_quantification(score_first, _module_settings())
     annotate_obs(score_first, annotation)
     validate_peptides_against_fasta(score_first, fasta, backend="ahocorapy")
 
@@ -336,27 +294,24 @@ def test_annotation_fasta_and_scoring_are_order_independent() -> None:
     assert enrich_first.obs["condition"].tolist() == score_first.obs["condition"].tolist()
 
 
-def test_role_resolution_reports_unretained_protein_source() -> None:
+def test_role_resolution_reports_missing_canonical_protein_column() -> None:
     adata = _adata()
-    tool = _tool_settings().model_copy(
-        update={"mapper": {"Missing.Proteins": "Proteins", "Run": "Raw file"}}
-    )
-    with pytest.raises(ValueError, match="does not retain"):
-        resolve_roles(adata, _module_settings(), tool)
+    rule_document = _rule().model_dump(mode="json", by_alias=True)
+    rule_document["column_roles"]["protein_accessions"] = "Missing_Proteins"
+    rule_document["columns"]["var"]["select"]["Missing_Proteins"] = "Missing.Proteins"
+    adata.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
+    with pytest.raises(ValueError, match="missing var column"):
+        resolve_roles(adata, _module_settings())
 
 
 def test_config_defaults_match_golden_json_projection(tmp_path: Path) -> None:
     module_path = tmp_path / "module.toml"
     module_path.write_text(_module_toml())
-    tool_path = tmp_path / "tool.toml"
-    tool_path.write_text(_tool_toml())
 
     module = load_module_settings(module_path)
-    tool = load_tool_settings(tool_path)
 
     assert module.general.default_cutoff_min_feature == 1
     assert module.general.max_nr_observed == 6
-    assert tool.source_for("Proteins") == "Protein.Ids"
 
 
 def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(
@@ -366,14 +321,11 @@ def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(
     _adata().write_h5ad(input_path)
     module_path = tmp_path / "module.toml"
     module_path.write_text(_module_toml())
-    tool_path = tmp_path / "tool.toml"
-    tool_path.write_text(_tool_toml())
     output_path = tmp_path / "scored.h5ad"
 
     result = proteobench_cmd(
         input_path,
         module_path,
-        tool_path,
         output=output_path,
     )
 
@@ -396,14 +348,11 @@ def test_cli_scores_only_the_module_modality_in_mudata(tmp_path: Path) -> None:
     container.write_h5mu(input_path)
     module_path = tmp_path / "module.toml"
     module_path.write_text(_module_toml())
-    tool_path = tmp_path / "tool.toml"
-    tool_path.write_text(_tool_toml())
     output_path = tmp_path / "scored.h5mu"
 
     proteobench_cmd(
         input_path,
         module_path,
-        tool_path,
         output=output_path,
     )
 
@@ -447,18 +396,6 @@ condition = "B"
 """
 
 
-def _tool_toml() -> str:
-    return """
-[mapper]
-Run = "Raw file"
-"Protein.Ids" = "Proteins"
-"Precursor.Normalised" = "Intensity"
-[general]
-contaminant_flag = "Cont_"
-decoy_flag = true
-"""
-
-
 def test_configuration_models_reject_inconsistent_contracts() -> None:
     with pytest.raises(ValidationError, match="must not exceed"):
         ModuleGeneral(
@@ -498,27 +435,15 @@ def test_configuration_models_reject_inconsistent_contracts() -> None:
         with pytest.raises(ValidationError):
             ModuleSettings.model_validate(document)
 
-    with pytest.raises(ValidationError, match="exactly one"):
-        ToolSettings(mapper={}, general=ToolGeneral())
-    with pytest.raises(ValidationError, match="exactly one"):
-        ToolSettings(
-            mapper={"one": "Proteins", "two": "Proteins"},
-            general=ToolGeneral(),
-        )
-
 
 def test_role_target_and_optional_role_validation() -> None:
     roles = resolve.ResolvedRoles(
         proteins="Protein_Ids",
         feature="ProForma_ion",
         raw_file=None,
-        reverse="Reverse",
-        modification_source="Modified",
     )
     stored = roles.as_dict()
     assert stored["Raw file"] == "obs_names"
-    assert stored["Reverse"] == "var:Reverse"
-    assert stored["Modification source"] == "var:Modified"
 
     with pytest.raises(ValueError, match="no 'ion' modality"):
         resolve.resolve_target(SimpleNamespace(mod={}), "ion")
@@ -530,79 +455,44 @@ def test_role_target_and_optional_role_validation() -> None:
     missing_rule = _adata()
     missing_rule.uns["anndata_proteomics"]["rule_json"] = {}
     with pytest.raises(ValueError, match="no string"):
-        resolve_roles(missing_rule, _module_settings(), _tool_settings())
+        resolve_roles(missing_rule, _module_settings())
 
     wrong_rule = _rule().model_copy(update={"quantification_level": "peptidoform"})
     wrong = _adata()
     wrong.uns["anndata_proteomics"]["rule_json"] = wrong_rule.model_dump_json(by_alias=True)
     with pytest.raises(ValueError, match="stored rule level"):
-        resolve_roles(wrong, _module_settings(), _tool_settings())
+        resolve_roles(wrong, _module_settings())
 
     no_feature = _adata()
     no_feature.var = cast(pd.DataFrame, no_feature.var).drop(columns=["ProForma_ion"])
     with pytest.raises(ValueError, match="lacks var"):
-        resolve_roles(no_feature, _module_settings(), _tool_settings())
+        resolve_roles(no_feature, _module_settings())
 
-    no_run = _adata()
-    no_run.obs = cast(pd.DataFrame, no_run.obs).drop(columns=["Run"])
-    with pytest.raises(ValueError, match="missing obs column"):
-        resolve_roles(no_run, _module_settings(), _tool_settings())
-
-    reverse_tool = _tool_settings().model_copy(
-        update={"mapper": {**_tool_settings().mapper, "Reverse.Raw": "Reverse"}}
-    )
-    with pytest.raises(ValueError, match="Reverse"):
-        resolve_roles(_adata(), _module_settings(), reverse_tool)
-
-    modification_tool = _tool_settings().model_copy(
-        update={
-            "modifications_parser": ModificationParserSettings(
-                parse_column="Modified.Sequence",
-                before_aa=True,
-            )
-        }
-    )
-    with pytest.raises(ValueError, match="parse modifications"):
-        resolve_roles(_adata(), _module_settings(), modification_tool)
-
-    with pytest.raises(ValueError, match="more than one output"):
-        resolve._invert_unique({"one": "raw", "two": "raw"}, axis="var")
-
-    intensity_tool = _tool_settings().model_copy(
-        update={
-            "mapper": {
-                **_tool_settings().mapper,
-                "Other.Intensity": "Intensity",
-                "Precursor.Normalised": "Unused",
-            }
-        }
-    )
-    with pytest.raises(ValueError, match="APB X comes"):
-        resolve._validate_intensity(_rule(), intensity_tool)
-    resolve._validate_intensity(
-        _rule(),
-        _tool_settings().model_copy(update={"mapper": {"Protein.Ids": "Proteins"}}),
-    )
+    no_roles = _adata()
+    rule_document = _rule().model_dump(mode="json", by_alias=True)
+    rule_document["column_roles"] = None
+    no_roles.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
+    with pytest.raises(ValueError, match="no column_roles"):
+        resolve_roles(no_roles, _module_settings())
 
 
 def test_alignment_and_intermediate_identity_guards() -> None:
     module = _module_settings()
-    tool = _tool_settings()
-    rule, roles = resolve_roles(_adata(), module, tool)
+    rule, roles = resolve_roles(_adata(), module)
 
     unknown = _adata()
     unknown.obs["Run"] = ["unknown", "run_A2", "run_B1", "run_B2"]
     with pytest.raises(ValueError, match="does not match"):
-        align_runs(unknown, rule, roles, module, tool)
+        align_runs(unknown, rule, roles, module)
 
     repeated = _adata()
     repeated.obs["Run"] = ["run_A1", "run_A1", "run_B1", "run_B2"]
     with pytest.raises(ValueError, match="one-to-one"):
-        align_runs(repeated, rule, roles, module, tool)
+        align_runs(repeated, rule, roles, module)
 
     incomplete = _adata()[[0, 1, 2], :].copy()
     with pytest.raises(ValueError, match="alignment is incomplete"):
-        align_runs(incomplete, rule, roles, module, tool)
+        align_runs(incomplete, rule, roles, module)
 
     duplicate_names = _adata()
     duplicate_names.var_names = ["duplicate"] * duplicate_names.n_vars
@@ -610,9 +500,8 @@ def test_alignment_and_intermediate_identity_guards() -> None:
         compute_intermediate(
             duplicate_names,
             module,
-            tool,
             roles,
-            align_runs(_adata(), rule, roles, module, tool),
+            align_runs(_adata(), rule, roles, module),
         )
 
     duplicate_features = _adata()
@@ -626,9 +515,8 @@ def test_alignment_and_intermediate_identity_guards() -> None:
         compute_intermediate(
             duplicate_features,
             module,
-            tool,
             feature_roles,
-            align_runs(duplicate_features, rule, roles, module, tool),
+            align_runs(duplicate_features, rule, roles, module),
         )
 
     colliding_module = module.model_copy(
@@ -647,7 +535,6 @@ def test_alignment_and_intermediate_identity_guards() -> None:
             rule,
             roles,
             colliding_module,
-            tool,
         )
 
     wide_rule = rule.model_copy(
@@ -658,22 +545,21 @@ def test_alignment_and_intermediate_identity_guards() -> None:
     )
     wide_target = _adata()
     wide_target.obs["Run"] = ["A1", "A2", "B1", "B2"]
-    wide_tool = tool.model_copy(
+    wide_module = module.model_copy(
         update={
-            "run_mapper": {
-                "abundance_A1": "A1",
-                "abundance_A2": "A2",
-                "abundance_B1": "B1",
-                "abundance_B2": "B2",
-            }
+            "samples": [
+                SampleSettings(raw_file="abundance_A1", sample_name="A1", condition="A"),
+                SampleSettings(raw_file="abundance_A2", sample_name="A2", condition="A"),
+                SampleSettings(raw_file="abundance_B1", sample_name="B1", condition="B"),
+                SampleSettings(raw_file="abundance_B2", sample_name="B2", condition="B"),
+            ]
         }
     )
     wide_design = align_runs(
         wide_target,
         wide_rule,
         roles,
-        module,
-        wide_tool,
+        wide_module,
     )
     assert wide_design.raw_files == (
         "abundance_A1",
@@ -681,54 +567,6 @@ def test_alignment_and_intermediate_identity_guards() -> None:
         "abundance_B1",
         "abundance_B2",
     )
-
-
-def test_valid_optional_roles_and_modification_compatibility_rendering() -> None:
-    target = _adata()
-    target.var["Reverse"] = [False] * target.n_vars
-    target.var["Modified_Sequence"] = [
-        "[ox]H",
-        "Y",
-        "E",
-        "C",
-        "M[ox]",
-        "N",
-    ]
-    rule_document = _rule().model_dump(mode="json", by_alias=True)
-    rule_document["columns"]["var"]["select"].update(
-        {
-            "Reverse": "Reverse.Raw",
-            "Modified_Sequence": "Modified.Sequence",
-        }
-    )
-    target.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
-    tool = _tool_settings().model_copy(
-        update={
-            "mapper": {
-                **_tool_settings().mapper,
-                "Reverse.Raw": "Reverse",
-            },
-            "modifications_parser": ModificationParserSettings(
-                parse_column="Modified.Sequence",
-                before_aa=True,
-                pattern=r"\[([^]]+)\]",
-                modification_dict={"[ox]": "Oxidation"},
-            ),
-        }
-    )
-
-    rule, roles = resolve_roles(target, _module_settings(), tool)
-    result = compute_intermediate(
-        target,
-        _module_settings(),
-        tool,
-        roles,
-        align_runs(target, rule, roles, _module_settings(), tool),
-    )
-
-    assert roles.reverse == "Reverse"
-    assert roles.modification_source == "Modified_Sequence"
-    assert "H[Oxidation]-/2" in result.legacy["precursor ion"].tolist()
 
 
 def test_intermediate_low_level_edge_paths() -> None:
@@ -746,10 +584,7 @@ def test_intermediate_low_level_edge_paths() -> None:
         np.asarray([False]),
     )
     assert np.isnan(centers["median"]).all()
-    assert intermediate._contaminants(
-        pd.Series(["P1"]),
-        _tool_settings().model_copy(update={"general": ToolGeneral(contaminant_flag=None)}),
-    ).tolist() == [False]
+    assert intermediate._contaminants(pd.Series(["P1", "Cont_P2"])).tolist() == [False, True]
     assert intermediate._is_float32_backed(np.asarray([np.nan])) is False
     assert (
         intermediate._clean_run_name(
@@ -758,52 +593,29 @@ def test_intermediate_low_level_edge_paths() -> None:
         )
         == "run"
     )
-    with pytest.raises(ValueError, match="invalid per-tool"):
-        intermediate._cleanup_pattern(
-            _tool_settings().model_copy(update={"general": ToolGeneral(run_name_cleanup="[")})
-        )
-
-    reverse_target = _adata()
-    reverse_target.var["Reverse"] = [True, False, True, False, True, False]
-    reverse_roles = resolve.ResolvedRoles(
-        proteins="Protein_Ids",
-        feature="ProForma_ion",
-        raw_file="Run",
-        reverse="Reverse",
-    )
-    assert intermediate._decoys(
-        reverse_target,
-        reverse_roles,
-        _tool_settings(),
-    ).tolist() == [True, False, True, False, True, False]
-
     from anndata_proteomics.rules.loader import load_rule
     from anndata_proteomics.rules.registry import find_rule
 
-    wide_rule = load_rule(find_rule("wombat", "peptidoform"))
-    wide_tool = _tool_settings().model_copy(
-        update={"run_mapper": {"abundance_A1": "A1", "unmatched.raw": "A2"}}
+    wide_rule = load_rule(find_rule("wombat", "ion", "0.9.11"))
+    wide_module = _module_settings().model_copy(
+        update={
+            "samples": [
+                SampleSettings(raw_file="abundance_A1", sample_name="A1", condition="A"),
+                SampleSettings(raw_file="unmatched.raw", sample_name="A2", condition="A"),
+                SampleSettings(raw_file="abundance_B1", sample_name="B1", condition="B"),
+                SampleSettings(raw_file="abundance_B2", sample_name="B2", condition="B"),
+            ]
+        }
     )
     mapping_result = intermediate._wide_run_mapping(
         wide_rule,
-        _module_settings(),
-        wide_tool,
+        wide_module,
         intermediate._DEFAULT_RUN_CLEANUP,
     )
-    assert set(mapping_result) == {"A1", "unmatched"}
-    bad_tool = wide_tool.model_copy(update={"run_mapper": {"abundance_unknown": "missing"}})
-    with pytest.raises(ValueError, match="absent from module"):
-        intermediate._wide_run_mapping(
-            wide_rule,
-            _module_settings(),
-            bad_tool,
-            intermediate._DEFAULT_RUN_CLEANUP,
-        )
+    assert set(mapping_result) == {"A1", "unmatched", "B1", "B2"}
 
 
-def test_mapping_helpers_cover_empty_tokens_modes_and_fixed_mods(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_mapping_helpers_cover_empty_tokens() -> None:
     mapped_accession = mapping.map_reported_proteins(pd.Series(["Cont_P00722"]))
     assert mapped_accession.proteins.tolist() == ["sp|Cont_P00722|BGAL_ECOLI"]
     assert mapped_accession.matched_token_occurrences == 1
@@ -811,64 +623,6 @@ def test_mapping_helpers_cover_empty_tokens_modes_and_fixed_mods(
     mapped = mapping.map_reported_proteins(pd.Series([";P1_UNKNOWN,,"]))
     assert mapped.proteins.tolist() == ["P1_UNKNOWN"]
     assert mapped.unmatched_token_occurrences == 1
-
-    assert mapping._strip_sequence("A1bC", isalpha=True, isupper=True) == "AC"
-    assert mapping._strip_sequence("A1bC", isalpha=True, isupper=False) == "AbC"
-    assert mapping._strip_sequence("A1bC", isalpha=False, isupper=True) == "AC"
-    assert mapping._strip_sequence("A1bC", isalpha=False, isupper=False) == "A1bC"
-    rendered_peptidoform = parse_proteobench_features(
-        pd.Series(["A[ox]C"]),
-        pd.Series(["A[UNIMOD:35]C"]),
-        ModificationParserSettings(
-            parse_column="Modified",
-            before_aa=True,
-            pattern=r"\[([^]]+)\]",
-            modification_dict={"[ox]": "Oxidation"},
-        ),
-        level="peptidoform",
-        target=_adata(),
-    )
-    assert rendered_peptidoform.tolist() == ["AC[Oxidation]"]
-    assert (
-        mapping._add_fixed_residue_modification(
-            "AC[Existing]D",
-            targets={"C", "D"},
-            name="Fixed",
-        )
-        == "AC[Fixed][Existing]D[Fixed]"
-    )
-
-    fixed_mods = [
-        SimpleNamespace(name="C[Carbamidomethyl]"),
-        SimpleNamespace(name="invalid"),
-        SimpleNamespace(name="M[Represented]"),
-    ]
-    monkeypatch.setattr(
-        mapping,
-        "read_search_parameters",
-        lambda _target: SimpleNamespace(fixed_mods=fixed_mods),
-    )
-    settings = ModificationParserSettings(
-        parse_column="Modified",
-        before_aa=True,
-        modification_dict={"x": "Represented"},
-    )
-    rendered = mapping._apply_unrepresented_fixed_modifications(
-        pd.Series(["AC/2"]),
-        settings,
-        object(),
-    )
-    assert rendered.tolist() == ["AC[Carbamidomethyl]/2"]
-    monkeypatch.setattr(mapping, "read_search_parameters", lambda _target: None)
-    original = pd.Series(["AC"])
-    assert (
-        mapping._apply_unrepresented_fixed_modifications(
-            original,
-            settings,
-            object(),
-        )
-        is original
-    )
 
 
 def test_metric_and_pipeline_edge_paths() -> None:
@@ -890,4 +644,4 @@ def test_metric_and_pipeline_edge_paths() -> None:
     collision = _adata()
     collision.uns["proteobench"] = {"scores": {}}
     with pytest.raises(ValueError, match=r"\['scores'\]"):
-        score_quantification(collision, _module_settings(), _tool_settings())
+        score_quantification(collision, _module_settings())

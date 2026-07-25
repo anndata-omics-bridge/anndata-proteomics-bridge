@@ -81,7 +81,6 @@ Recommended action:
 Likely required/non-empty candidates to review first:
 
 - `software_name`
-- `software_version`
 - `search_engine`
 - `search_engine_version`
 - `enzyme`
@@ -90,6 +89,13 @@ These are the fields most directly tied to dispatch/version selection and
 downstream FASTA digestion. Some vendors may force a deliberate policy decision:
 either parser-specific defaults are legitimate, or the parser should fail if the
 parameter file cannot provide the required value.
+
+`software_version` is a confirmed exception, not a required-field candidate. Two
+supported PEAKS parameter files genuinely omit it; see
+[`TODO_fragpipe_peaks_version_coverage.md`](TODO_fragpipe_peaks_version_coverage.md).
+Keep it optional-but-observed: parameter JSON always writes the key with `null`,
+while `search_parameters_version_status` and rule-selection provenance distinguish
+missing data from parse errors.
 
 ### Medium: enzyme aliases need vendor provenance
 

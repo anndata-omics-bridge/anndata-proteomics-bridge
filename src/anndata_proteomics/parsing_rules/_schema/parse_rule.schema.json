@@ -144,6 +144,22 @@
       "title": "ColumnLabeledFragments",
       "type": "object"
     },
+    "ColumnRoles": {
+      "additionalProperties": false,
+      "description": "Semantic locations needed by downstream canonical-data consumers.",
+      "properties": {
+        "protein_accessions": {
+          "minLength": 1,
+          "title": "Protein Accessions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protein_accessions"
+      ],
+      "title": "ColumnRoles",
+      "type": "object"
+    },
     "Columns": {
       "additionalProperties": false,
       "properties": {
@@ -405,6 +421,17 @@
     },
     "columns": {
       "$ref": "#/$defs/Columns"
+    },
+    "column_roles": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ColumnRoles"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "layers": {
       "items": {

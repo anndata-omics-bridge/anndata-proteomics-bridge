@@ -81,6 +81,88 @@ def test_rule_software_version_regex_must_match_params_version() -> None:
         load_packaged_rule("diann", "ion", "3.0.0")
 
 
+@pytest.mark.parametrize("version", ["22.0", "22.1-build02", "23.0"])
+def test_fragpipe_known_major_versions_resolve(version: str) -> None:
+    assert resolve_rule_for_version("fragpipe", "ion", version) is not None
+
+
+def test_fragpipe_unknown_major_stays_uncovered() -> None:
+    assert resolve_rule_for_version("fragpipe", "ion", "24.0") is None
+
+
+@pytest.mark.parametrize("version", ["13", "13 20250515", "13 20250520", "13.1"])
+def test_peaks_known_major_versions_resolve(version: str) -> None:
+    assert resolve_rule_for_version("peaks", "ion", version) is not None
+
+
+def test_peaks_unknown_major_stays_uncovered() -> None:
+    assert resolve_rule_for_version("peaks", "ion", "14.0") is None
+
+
+def test_genuinely_missing_version_selects_unique_rule_by_columns() -> None:
+    rule = load_packaged_rule("peaks", "ion")
+    headers = set(rule.columns.var.select.values())
+    headers.add("LFQ_Run_1 Normalized Area")
+
+    selected = ui.select_rule(
+        "peaks",
+        "ion",
+        None,
+        headers,
+        version_status="missing",
+    )
+
+    assert selected.software_name == "PEAKS"
+
+
+def test_missing_version_rejects_zero_or_multiple_column_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ui, "_column_matching_rule_variants", lambda *_args: [])
+    with pytest.raises(ValueError, match="no rule matches"):
+        ui.select_rule("peaks", "ion", None, [], version_status="missing")
+
+    rule = load_packaged_rule("peaks", "ion")
+    monkeypatch.setattr(
+        ui,
+        "_column_matching_rule_variants",
+        lambda *_args: [rule, rule],
+    )
+    with pytest.raises(ValueError, match="2 rules match"):
+        ui.select_rule("peaks", "ion", None, [], version_status="missing")
+
+
+def test_missing_version_enumerates_multiple_matching_packaged_locators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule = load_packaged_rule("peaks", "ion")
+    locator = resolve_rule_locator("peaks", "ion", "13")
+    assert locator is not None
+    monkeypatch.setattr(ui, "iter_packaged_rules", lambda: iter([locator, locator]))
+    monkeypatch.setattr(ui, "load_rule", lambda _locator: rule)
+    headers = set(rule.columns.var.select.values()) | {"LFQ_Run_1 Normalized Area"}
+
+    with pytest.raises(ValueError, match="2 rules match"):
+        ui.select_rule("peaks", "ion", None, headers, version_status="missing")
+
+    monkeypatch.setattr(ui, "iter_packaged_rules", lambda: iter([locator]))
+    with pytest.raises(ValueError, match="no rule matches"):
+        ui.select_rule("peaks", "ion", None, [], version_status="missing")
+
+
+def test_parse_error_does_not_gain_missing_version_variant_fallback() -> None:
+    headers = _headers_for(load_packaged_rule("diann", "protein", _V19))
+
+    with pytest.raises(ValueError, match="parameter parsing failed"):
+        ui.select_rule(
+            "diann",
+            "protein",
+            None,
+            headers,
+            version_status="parse_error",
+        )
+
+
 def test_resolve_flat_vendor_and_unknown() -> None:
     maxquant = resolve_rule_locator("maxquant", "ion", None)
     assert maxquant is not None
@@ -161,10 +243,12 @@ def test_convert_level_passes_params_path(monkeypatch: pytest.MonkeyPatch) -> No
         level: QuantificationLevel,
         version: str | None,
         headers: Iterable[str],
-    ) -> ParseRule:
-        return load_packaged_rule("diann", "ion", "1.9.2")
+        *,
+        version_status: str | None = None,
+    ) -> tuple[ParseRule, str]:
+        return load_packaged_rule("diann", "ion", "1.9.2"), "software_version"
 
-    monkeypatch.setattr(ui, "select_rule", fake_select_rule)
+    monkeypatch.setattr(ui, "_select_rule", fake_select_rule)
     monkeypatch.setattr(assemble, "convert", fake_convert)
 
     adata = ui.convert_level(

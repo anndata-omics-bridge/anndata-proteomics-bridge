@@ -81,6 +81,12 @@ class Columns(_Strict):
     var: ColumnGroup
 
 
+class ColumnRoles(_Strict):
+    """Semantic locations needed by downstream canonical-data consumers."""
+
+    protein_accessions: str = Field(min_length=1)
+
+
 class Layer(_Strict):
     """A quantitative layer fed by one ``source``.
 
@@ -208,6 +214,7 @@ class ParseRule(_Strict):
     quantification_level: QuantificationLevel
     axis: Axis
     columns: Columns
+    column_roles: ColumnRoles | None = None
     layers: list[Layer] = Field(min_length=1)
     sample_name_cleanup: SampleNameCleanup | None = None
     modifications: Modifications | None = None
@@ -265,6 +272,18 @@ class ParseRule(_Strict):
             raise ValueError(f"axis.obs_keys must be declared in columns.obs: {missing_obs}")
         if missing_var:
             raise ValueError(f"axis.var_keys must be declared in columns.var: {missing_var}")
+        return self
+
+    @model_validator(mode="after")
+    def _column_roles_are_declared(self) -> ParseRule:
+        if (
+            self.column_roles is not None
+            and self.column_roles.protein_accessions not in self.columns.var.names
+        ):
+            raise ValueError(
+                "column_roles.protein_accessions must name a declared var column; "
+                f"got {self.column_roles.protein_accessions!r}"
+            )
         return self
 
     @model_validator(mode="after")
@@ -373,6 +392,7 @@ class RuleFragment(_Strict):
     input_shape: InputShape | None = None
     axis: PartialAxis | None = None
     columns: PartialColumns | None = None
+    column_roles: ColumnRoles | None = None
     layers: list[Layer] | None = None
     sample_name_cleanup: SampleNameCleanup | None = None
     modifications: Modifications | None = None

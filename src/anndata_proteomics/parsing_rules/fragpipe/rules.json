@@ -2,7 +2,7 @@
   "schema_version": "0.1",
   "file_version": "1",
   "software_name": "FragPipe",
-  "software_version": "^22\\.1-build02$",
+  "software_version": "^2[23]\\.",
   "base": {
     "input_shape": "wide",
     "axis": {
@@ -108,6 +108,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Protein"
+      },
       "layers": [
         {
           "name": "Intensity",
@@ -118,15 +121,15 @@
         },
         {
           "name": "Spectral_Count",
-          "source": "^(?P<sample>.+) Spectral Count$"
+          "source": "^(?P<sample>.+?)(?:_[12])? Spectral Count$"
         },
         {
           "name": "Apex_Retention_Time",
-          "source": "^(?P<sample>.+) Apex Retention Time$"
+          "source": "^(?P<sample>.+?)(?:_[12])? Apex Retention Time$"
         },
         {
           "name": "Match_Type",
-          "source": "^(?P<sample>.+) Match Type$",
+          "source": "^(?P<sample>.+?)(?:_[12])? Match Type$",
           "encoding_mode": "factor",
           "categories": {
             "unmatched": 0,

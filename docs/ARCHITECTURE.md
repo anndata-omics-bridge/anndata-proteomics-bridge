@@ -50,13 +50,12 @@ flowchart TD
     valfasta -. MuData .-> mulink[varp feature_mapping: peptide feature to protein feature]
 
     moduletoml[/ProteoBench module TOML/] --> pbscore[proteobench.score_quantification]
-    tooltoml[/ProteoBench per-tool TOML/] --> pbscore
     adata --> pbscore
     pbscore --> pbvarm[varm proteobench: feature statistics]
     pbscore --> pbuns[uns proteobench: roles, mapping provenance, scores]
 
     classDef io fill:#eef2ff,stroke:#9aa7d8;
-    class config,data,paramfile,fastafile,moduletoml,tooltoml io;
+    class config,data,paramfile,fastafile,moduletoml io;
 ```
 
 More detailed diagrams are in [parsing_architecture.md](parsing_architecture.md).
@@ -74,7 +73,7 @@ Search-parameter parser details are in [parameter_parsers.md](parameter_parsers.
 | `params/` | Typed search-parameter model, parser registry, AnnData storage helpers, and vendor parsers under `params/parsers/`. |
 | `annotation/` | `obs` annotation, FASTA-derived protein `varm['fasta']`, peptide `varm['fasta_validation']`, and MuLink-compatible `varp['feature_mapping']`. |
 | `fasta/` | FASTA parsing, typed decoy/contaminant configuration, protein metadata, and enzyme-aware theoretical peptide counts. |
-| `proteobench/` | Typed module/per-tool TOMLs, role resolution, matrix-native HYE intermediates, compatible metrics, and storage orchestration. |
+| `proteobench/` | Typed module TOMLs, canonical role resolution, matrix-native HYE intermediates, compatible metrics, and storage orchestration. |
 | `prozor` dependency | Backend-neutral Aho--Corasick matching and reusable protein-inference primitives; APB owns FASTA parsing and AnnData/MuData storage. |
 | `scripts/` | The installed `apb` CLI. |
 
@@ -92,7 +91,7 @@ src/anndata_proteomics/parsing_rules/
   maxquant/rules.json        # ion
   peaks/rules.json           # ion
   spectronaut/rules.json     # ion, fragment, protein
-  wombat/rules.json          # peptidoform
+  wombat/rules.json          # ion, peptidoform
 ```
 
 `rules.registry.resolve_rule_locator()` selects a software-version document by its
@@ -117,7 +116,7 @@ The CLI subcommands are:
 | `apb convert <data> [level] --params <param-file>` | Convert vendor data to `.h5mu` or a selected `.h5ad` level. |
 | `apb annotate <data> <annotations.toml/csv/tsv>` | Join external sample metadata onto `obs`. |
 | `apb fasta <data> <proteome.fasta>` | Annotate proteins and, by default, validate every peptide-derived modality against FASTA. |
-| `apb proteobench <data> <module.toml> <tool.toml>` | Score the module-selected ion/peptidoform modality without requiring annotation or FASTA. |
+| `apb proteobench <data> <module.toml>` | Score the module-selected ion/peptidoform modality without requiring annotation or FASTA. |
 
 ## Search Parameters
 

@@ -11,7 +11,7 @@ from anndata_proteomics.rules.loader import load_packaged_rule
 
 
 def test_to_anndata_shape_and_uns() -> None:
-    rule = load_packaged_rule("diann", "ion")
+    rule = load_packaged_rule("diann", "ion", "2.0.0")
     obs = pd.DataFrame({"Run": ["S1", "S2"]}, index=["S1", "S2"])
     var = pd.DataFrame({"Modified_Sequence": ["P1", "P2", "P3"]}, index=["P1_2", "P2_2", "P3_3"])
     X = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
