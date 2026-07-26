@@ -39,6 +39,12 @@ TODO/*.html
 *.csv
 !examples/*.csv
 !src/anndata_proteomics/proteobench/mapper.csv
+!tests/params/alphapept_0.4.9.csv
+!tests/params/alphapept_0.4.9_unnormalized.csv
+!tests/params/metamorpheus_parameters.csv
+!tests/params/sage_parameterfile.csv
+!tests/params/sage_results.csv
+!tests/params/wombat_params.csv
 
 # OS
 .DS_Store
