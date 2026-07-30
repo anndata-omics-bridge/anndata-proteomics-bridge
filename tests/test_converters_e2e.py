@@ -11,14 +11,34 @@ Skips when the test_data_download cache (gitignored) is absent.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from anndata_proteomics.converters.assemble import convert
+from anndata_proteomics.converters.pipeline import software_slug
 from anndata_proteomics.converters.recognize import matches
+from anndata_proteomics.params.registry import parse_params
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.rules.loader import load_rule
+from anndata_proteomics.rules.loader import load_rule, load_rule_document
 from anndata_proteomics.rules.registry import RuleLocator, iter_packaged_rules
 from anndata_proteomics.test_data import find_test_data
+
+
+def _level_available_for(locator: RuleLocator, data_file: Path) -> bool:
+    """Whether ``locator.level`` is offered for the parameters beside ``data_file``.
+
+    Ungated levels are always available. A gated level needs the cached parameter file that
+    sits next to the vendor input; if there is none, the level cannot be confirmed.
+    """
+    document = load_rule_document(locator.path)
+    if not document.levels[locator.level].requires_search_parameters:
+        return True
+    param_paths = sorted(data_file.parent.glob("param_0.*"))
+    if not param_paths:
+        return False
+    slug = software_slug(document.software_name)
+    return document.level_is_available(locator.level, parse_params(param_paths[0], slug))
 
 
 @pytest.mark.parametrize(
@@ -34,9 +54,15 @@ def test_end_to_end_conversion(locator: RuleLocator) -> None:
         # subset in test_diann_levels.py instead.
         pytest.skip("fragment level converted on a subset in test_diann_levels.py")
 
-    data_file = find_test_data(rule.software_name)
+    data_file = find_test_data(rule.software_name, rule.software_version)
     if data_file is None or not data_file.exists():
-        pytest.skip(f"no test data for {rule.software_name!r}")
+        pytest.skip(f"no test data for {rule.software_name!r} {rule.software_version!r}")
+
+    if not _level_available_for(locator, data_file):
+        # A parameter-gated level (Sage's charge-collapsed vs charge-resolved lfq.tsv) is not
+        # selectable from version or headers, so the first cached file for this vendor may be
+        # the other level's. Production resolves this through the parsed parameters; so do we.
+        pytest.skip(f"cached {rule.software_name} file is not {locator.level}-level")
 
     df = read_table(data_file)
     if not matches(list(df.columns), rule):

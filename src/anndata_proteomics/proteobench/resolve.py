@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from anndata_proteomics.proteobench.config import ModuleSettings
 from anndata_proteomics.rules.schema import ParseRule
+
+# The feature axis is the level's identity: `var_names` is built from the rule's `axis.var_keys`
+# (one key as-is, several joined), so it is the ProteoBench feature at every quantification level.
+FEATURE_AXIS = "var_names"
 
 
 @dataclass(frozen=True)
@@ -14,43 +17,35 @@ class ResolvedRoles:
     """Concrete APB locations used by ProteoBench scoring."""
 
     proteins: str
-    feature: str
-    raw_file: str | None
+    feature: str = FEATURE_AXIS
     intensity: str = "X"
 
     def as_dict(self) -> dict[str, str]:
         """Return a storage-safe ProteoBench-role mapping."""
         roles = {
             "Proteins": f"var:{self.proteins}",
-            "feature": f"var:{self.feature}",
+            "feature": self.feature,
             "Intensity": self.intensity,
-            "Raw file": f"obs:{self.raw_file}" if self.raw_file else "obs_names",
+            "Sample name": "obs:sample_name",
+            "Condition": "obs:condition",
         }
         return roles
 
 
-def resolve_target(obj: Any, level: str) -> Any:
-    """Resolve the AnnData modality selected by a module level."""
+def resolve_targets(obj: Any) -> list[Any]:
+    """Return every quantitative AnnData a container holds.
+
+    Scores are per level and belong in that level's own AnnData, so a MuData is scored modality by
+    modality rather than through one modality selected by the module settings.
+    """
     if hasattr(obj, "mod"):
-        if level not in obj.mod:
-            raise ValueError(
-                f"MuData has no {level!r} modality; available modalities: {list(obj.mod)}"
-            )
-        return obj.mod[level]
-
-    metadata = obj.uns.get("anndata_proteomics") or {}
-    actual_level = metadata.get("quantification_level")
-    if actual_level != level:
-        raise ValueError(
-            f"module level {level!r} does not match AnnData quantification level {actual_level!r}"
-        )
-    return obj
+        if not obj.mod:
+            raise ValueError("MuData has no modality to score")
+        return list(obj.mod.values())
+    return [obj]
 
 
-def resolve_roles(
-    target: Any,
-    module_settings: ModuleSettings,
-) -> tuple[ParseRule, ResolvedRoles]:
+def resolve_roles(target: Any) -> tuple[ParseRule, ResolvedRoles]:
     """Resolve canonical scoring locations from the stored APB conversion rule."""
     metadata = target.uns.get("anndata_proteomics") or {}
     rule_json = metadata.get("rule_json")
@@ -60,12 +55,6 @@ def resolve_roles(
             "uns['anndata_proteomics']['rule_json']; rerun apb convert"
         )
     rule = ParseRule.model_validate_json(rule_json)
-    if rule.quantification_level != module_settings.general.level:
-        raise ValueError(
-            f"module level {module_settings.general.level!r} does not match stored rule level "
-            f"{rule.quantification_level!r}"
-        )
-
     if rule.column_roles is None:
         raise ValueError(
             "stored APB rule has no column_roles; rerun conversion with a rule "
@@ -77,19 +66,4 @@ def resolve_roles(
             f"stored APB rule maps protein accessions to missing var column {proteins!r}"
         )
 
-    feature = {
-        "ion": "ProForma_ion",
-        "peptidoform": "ProForma_peptidoform",
-    }[module_settings.general.level]
-    if feature not in target.var.columns:
-        raise ValueError(f"converted {module_settings.general.level} object lacks var[{feature!r}]")
-
-    raw_file = next(
-        (column for column in rule.axis.obs_keys if column in target.obs.columns),
-        None,
-    )
-    return rule, ResolvedRoles(
-        proteins=proteins,
-        feature=feature,
-        raw_file=raw_file,
-    )
+    return rule, ResolvedRoles(proteins=proteins)

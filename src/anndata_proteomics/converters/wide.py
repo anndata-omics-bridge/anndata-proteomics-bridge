@@ -11,7 +11,7 @@ import pandas as pd
 from anndata_proteomics.converters._axis import build_axis_frame, build_index
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
-from anndata_proteomics.converters.numeric import coerce_numeric
+from anndata_proteomics.converters.numeric import coerce_numeric, warn_if_all_missing
 from anndata_proteomics.rules.schema import Layer, ParseRule
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def _gather_layer_matrix(
 def _coerce_layer_series(series: pd.Series, layer: Layer) -> pd.Series:
     if layer.encoding_mode == "factor":
         return encode_factor(series, layer.categories)
-    return coerce_numeric(series, layer.missing_values)
+    return coerce_numeric(series, layer.missing_values, layer.value_pattern)
 
 
 def _raise_on_duplicate_features(df: pd.DataFrame, rule: ParseRule) -> None:
@@ -169,6 +169,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
             list(rule.axis.var_keys),
             rule.axis.duplicates.mode,
         )
+        warn_if_all_missing(layers[layer.name], layer.name)
 
     obs_names = _apply_sample_cleanup(sample_order, rule)
     obs_index = pd.Index(obs_names, name="sample")

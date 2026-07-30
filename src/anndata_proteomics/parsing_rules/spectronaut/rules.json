@@ -251,6 +251,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "PG_ProteinAccessions"
+      },
       "layers": [
         {
           "name": "F_PeakArea",
@@ -300,6 +303,9 @@
             "PG_Qvalue": "PG.Qvalue"
           }
         }
+      },
+      "column_roles": {
+        "protein_accessions": "PG_ProteinAccessions"
       },
       "layers": [
         {

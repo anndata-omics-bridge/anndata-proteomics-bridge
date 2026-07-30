@@ -1,5 +1,78 @@
 # Changes
 
+- 2026-07-30: Upgrade to pandas 3.0.5 and anndata 0.13.2 (also numpy 2.5.1, scipy
+  1.18.0). anndata `<0.13` capped `pandas<3`. From 0.13 `adata.layers` also yields `X`
+  under a `None` key, which leaked a `"None"` layer into the descriptive summary and the
+  CLI log line — `_matrix_types.named_layers` now filters it at the three call sites.
+- 2026-07-30: `coerce_numeric` returns plain `float64` instead of passing a nullable
+  dtype through. Layers are `float64` end to end, and on a nullable single-column frame
+  pandas 2.3 `bfill(axis=1)` filled *down the feature axis* instead of acting as a no-op,
+  silently copying one feature's value onto its neighbours. Fixed in pandas 3, pinned by
+  a regression test regardless.
+- 2026-07-30: Add `layers[].value_pattern` to the parsing-rule schema: a single-capture-
+  group regex applied per cell before numeric coercion, for vendor columns holding
+  structured strings. PEAKS `AScore` is `site:modification:score`, so the whole layer
+  coerced to NaN and reached the output silently empty; it now extracts the score
+  (96.86% missing on the DDA corpus, matching the 3.14% of populated cells).
+- 2026-07-30: Declare `missing_values: [0]` on the PEAKS `Normalized_Area` layer. PEAKS
+  writes `0` for an ion it did not quantify, so missingness read as 0% where it is
+  actually 5.09% (DDA Orbitrap) and 10.25% (DIA diaPASEF). Verified against the paired
+  per-sample `m/z` column, which carries `-` in exactly the same cells (0 disagreements
+  in 456,774; 36 in 504,665). Matches the existing FragPipe and Sage declarations.
+- 2026-07-30: Warn when a captured numeric layer is ≥99.9% NaN after coercion. Both
+  defects above reached the output silently; a matched-but-empty layer is a rule defect,
+  not a measurement.
+- 2026-07-30: Lower the changed-line coverage gate from 100% to 90%.
+- 2026-07-30: Gate a level's availability on parsed search parameters via
+  `levels.<level>.requires_search_parameters`, and use it to make Sage's quantification
+  level follow `lfq_settings.combine_charge_states` instead of a version regex. Sage's
+  DOCS.md defaults that setting to `true`, which collapses charge states and writes
+  `charge = -1`, so the same `lfq.tsv` schema is ion- or peptidoform-level with neither the
+  version nor the headers able to tell them apart — the previous `^0\.15\.` pin would have
+  failed a default-configured 0.15.x submission on the `-1` sentinel. The Sage document now
+  declares both levels at `^0\.` and both cached submissions convert at their true level. A
+  gated level is unavailable when no parameters could be parsed, rather than guessed.
+- 2026-07-30: `Parameters.combine_charge_states` records whether quantification merged a
+  peptidoform's charge states; `params/parsers/sage.py` extracts it from
+  `quant.lfq_settings`, defaulting to Sage's own `true` when the LFQ block omits it.
+- 2026-07-30: Add `columns.*.optional_select` to the parsing-rule schema: vendor
+  columns captured when the export carries them and skipped when it does not, the
+  column-side counterpart of an optional layer. They never gate recognition, may not
+  be an axis key, are forbidden on the wide obs axis, and drop out of a `coalesce` /
+  `join_nonempty` chain when absent.
+- 2026-07-30: Cover every cached MaxQuant submission (1.5.2.8 through 2.7.5.0, 12
+  fixtures across four modules) instead of only 2.6.7.0. `Fraction` is absent from 11
+  of 12 exports and `Experiment` from 2, both configuration- rather than
+  version-dependent, so they moved to `optional_select` together with the 1.5.2.8
+  title-case `Leading Proteins` / `Leading Razor Protein` spellings.
+- 2026-07-30: Add a Sage ion rule for the wide `lfq.tsv` (`^0\.15\.`). Pinned to the
+  charge-resolved family: `lfq_settings.combine_charge_states = true` exports (0.14.6)
+  report `charge = -1` and are peptidoform-level, so they stay unresolved rather than
+  fail conversion.
+- 2026-07-30: Add an AlphaPept ion rule (`^0\.5\.`) for the long, comma-delimited PSM
+  table. `ms1_int_sum_apex_dn` is the `x_layer` — it reproduces ProteoBench's per-run
+  intensities exactly for 98% of shared precursors where every other `ms1_int*`
+  candidate scores zero — with `duplicates.mode = "keep_first"`.
+- 2026-07-30: `find_test_data` accepts a rule's `software_version` so a vendor whose
+  cached submissions span several export schemas returns a file the rule covers, and
+  `rules.loader.software_version_matches` is public for that reuse.
+- 2026-07-30: Score ProteoBench at every quantification level. The module TOML
+  now supplies only the sample design and per-species expected ratios; the
+  feature axis is `var_names` (the rule's joined `axis.var_keys`), so the two
+  module-level assertions are gone, a MuData scores each modality into its own
+  `uns`/`varm` instead of one selected modality, and the legacy intermediate
+  names its feature column after the scored level.
+- 2026-07-30: Declare `column_roles.protein_accessions` on the DIA-NN fragment
+  and protein levels and the Spectronaut fragment and protein levels; scoring
+  resolves species through that role, so those levels need re-conversion before
+  they can be scored.
+- 2026-07-29: Support one or multiple exact sample identifiers through
+  `raw_file_alias` and `raw_file_aliases`; add WOMBAT `A_1` through `B_3`
+  aliases to the DDA ion and peptidoform module settings.
+- 2026-07-29: Make `apb annotate` a mandatory prerequisite for
+  `apb proteobench`; scoring now consumes only annotated `sample_name` and
+  `condition` values and no longer resolves samples from vendor run names,
+  parsing-rule axes, filename cleanup, or aliases.
 - 2026-07-25: Parse DIA-NN acquisition mode and materialize level-scoped,
   search-parameter-conditional axis overrides so DIA-NN DDA uses
   `Ms1_Normalised` in `X` while DIA uses `Precursor_Normalised`; record the

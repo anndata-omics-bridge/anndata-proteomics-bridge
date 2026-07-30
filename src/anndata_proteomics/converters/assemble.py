@@ -130,7 +130,9 @@ def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:
     later computes (ProForma_*) consume — everything else is dead weight once exploded.
     """
     needed: set[str] = set(rule.columns.obs.select.values())
+    needed |= set(rule.columns.obs.optional_select.values())
     needed |= set(rule.columns.var.select.values())
+    needed |= set(rule.columns.var.optional_select.values())
     needed |= {layer.source for layer in rule.layers}
     if rule.modifications is not None:
         needed |= {rule.modifications.source_column, rule.modifications.output_column}
@@ -152,28 +154,65 @@ def _materialize_columns(df: pd.DataFrame, rule: ParseRule) -> pd.DataFrame:
     return out
 
 
-def _materialize_column_group(df: pd.DataFrame, group: ColumnGroup) -> None:
+def _materialize_column_group(df: pd.DataFrame, group: ColumnGroup) -> frozenset[str]:
+    """Materialize one group's columns; return the optional names whose source was absent.
+
+    A ``select`` source must be present. An ``optional_select`` source that this export does
+    not carry is skipped, and its name is reported so ``_compute_column`` can tell a
+    legitimately absent optional source from a broken rule.
+    """
     for name, source in group.select.items():
         if source == "<sample>":
             continue
         if source not in df.columns:
             raise ValueError(f"cannot select column {name!r}; source {source!r} is missing")
         df[name] = df[source]
+    skipped: set[str] = set()
+    for name, source in group.optional_select.items():
+        if source in df.columns:
+            df[name] = df[source]
+        else:
+            skipped.add(name)
     for column in group.compute:
-        df[column.name] = _compute_column(df, column)
+        df[column.name] = _compute_column(df, column, allow_missing=frozenset(skipped))
+    return frozenset(skipped)
 
 
-def _compute_column(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
+def _compute_generic_column(
+    df: pd.DataFrame,
+    column: ColumnCompute,
+    allow_missing: frozenset[str],
+) -> pd.Series:
+    """Compute a ``coalesce`` / ``join_nonempty`` column over its present sources.
+
+    Sources named in ``allow_missing`` are skipped ``optional_select`` columns and drop out
+    of the chain. Anything else missing is a broken rule and still raises.
+    """
+    sources = [key for key in column.from_ if key not in allow_missing]
+    missing = [key for key in sources if key not in df.columns]
+    if missing:
+        raise ValueError(
+            f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
+        )
+    if not sources:
+        raise ValueError(
+            f"cannot compute column {column.name!r}; every source column is an "
+            f"optional_select absent from this input: {list(column.from_)}"
+        )
+    if column.how == "coalesce":
+        return _coalesce_columns(df, sources)
+    assert column.separator is not None
+    return _join_nonempty_columns(df, sources, column.separator)
+
+
+def _compute_column(
+    df: pd.DataFrame,
+    column: ColumnCompute,
+    *,
+    allow_missing: frozenset[str] = frozenset(),
+) -> pd.Series:
     if column.how in {"coalesce", "join_nonempty"}:
-        missing = [key for key in column.from_ if key not in df.columns]
-        if missing:
-            raise ValueError(
-                f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
-            )
-        if column.how == "coalesce":
-            return _coalesce_columns(df, column.from_)
-        assert column.separator is not None
-        return _join_nonempty_columns(df, column.from_, column.separator)
+        return _compute_generic_column(df, column, allow_missing)
     if column.how in {"proforma_sequence", "stripped_sequence"}:
         source_key = column.how
         if source_key not in df.columns:

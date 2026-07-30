@@ -25,8 +25,9 @@ def load_annotation(path: Path | str) -> AnnotationTable:
     """Load a ProteoBench TOML or a delimited sample-annotation table.
 
     ProteoBench ``module_settings.toml`` files expose their table as top-level
-    ``[[samples]]`` records. APB's earlier annotation-only TOMLs used
-    ``[[obs.samples]]`` and may additionally set ``obs.match_on`` and
+    ``[[samples]]`` records. A sample may declare exact fallback identifiers as
+    ``raw_file_alias`` or ``raw_file_aliases``. APB's earlier annotation-only
+    TOMLs used ``[[obs.samples]]`` and may additionally set ``obs.match_on`` and
     ``obs.key_field``; both TOML shapes remain readable. CSV and TSV inputs use
     the conventional ``raw_file`` join column and match it against ``obs_names``.
     """

@@ -10,6 +10,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+from anndata_proteomics.rules.loader import software_version_matches
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEST_DATA_DIR = REPO_ROOT / "test_data_download"
 DOWNLOADED_DB = TEST_DATA_DIR / "raw_file_db_downloaded.csv"
@@ -52,27 +54,41 @@ PARAM_FIXTURE_DIR = REPO_ROOT / "tests" / "params"
 
 # One canonical sample per packaged tool, keyed by the rule's software_name.
 _PROTEOBENCH_PARAM_FIXTURES: dict[str, str] = {
+    "AlphaPept": "alphapept_0.4.9.yaml",
     "DIA-NN": "DIANN_output_20240229_report.log.txt",
     "FragPipe": "fragpipe.workflow",
     "MaxQuant": "mqpar_mq2.6.2.0_1mc_MBR.xml",
     "PEAKS": "PEAKS_parameters_DDA.txt",
+    "Sage": "sage_parameterfile.json",
     "Spectronaut": "Spectronaut_dynamic.txt",
     "WOMBAT": "wombat_params.yaml",
 }
 
 
-def find_test_data(software_name: str) -> Path | None:
+def find_test_data(software_name: str, version_pattern: str | None = None) -> Path | None:
     """Return the first cached input for `software_name`, or None if absent.
 
     Matches rows where `status == "ok"`. Returns None when the cache index
     file does not exist (cache not regenerated yet).
+
+    Pass a rule's ``software_version`` as ``version_pattern`` to restrict the result to a
+    submission that rule actually covers. Without it, a vendor whose cached submissions
+    span several export schemas can return a file no packaged rule was written for — e.g.
+    Sage's charge-collapsed 0.14.6 ``lfq.tsv``, which the charge-resolved ion rule cannot
+    convert.
     """
     if not DOWNLOADED_DB.exists():
         return None
     with open(DOWNLOADED_DB) as f:
         for row in csv.DictReader(f):
-            if row["software_name"] == software_name and row.get("status") == "ok":
-                return TEST_DATA_DIR / "json_dir" / row["input_file_path"]
+            if row["software_name"] != software_name or row.get("status") != "ok":
+                continue
+            if version_pattern is not None and not software_version_matches(
+                version_pattern,
+                row["software_version"],
+            ):
+                continue
+            return TEST_DATA_DIR / "json_dir" / row["input_file_path"]
     return None
 
 

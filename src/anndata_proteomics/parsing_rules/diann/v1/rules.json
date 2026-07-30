@@ -164,6 +164,9 @@
           ]
         }
       },
+      "column_roles": {
+        "protein_accessions": "Protein_Group"
+      },
       "layers": [
         {
           "name": "Fragment_Quant_Raw",
@@ -203,6 +206,9 @@
             "Genes": "Genes"
           }
         }
+      },
+      "column_roles": {
+        "protein_accessions": "Protein_Ids"
       },
       "layers": [
         {

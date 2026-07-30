@@ -100,7 +100,7 @@ def test_var_fasta_duplicate_accession_precedence_and_no_mismatch() -> None:
     assert var_fasta._database_priority("custom") == 2
     var_fasta._warn_on_mismatch(
         pd.Index(["P1", "custom"]),
-        np.asarray([True, True]),
+        np.asarray([True, True], dtype=np.bool_),
         indexed,
     )
 

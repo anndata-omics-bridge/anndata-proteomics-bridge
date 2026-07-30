@@ -8,7 +8,7 @@ Convert proteomics quantification output into **AnnData / MuData** using declara
 - **One file → a multi-level MuData.** A single vendor export is converted into a MuData whose modalities are the quantification levels it provides (`ion` / `fragment` / `peptidoform` / `protein`) on a shared run axis — or a single-level AnnData when you ask for one level.
 - **Standardised content.** Peptide modifications are normalised to **ProForma**; a per-vendor parser reads the vendor **parameter file** (enzyme, FDR, tolerances, …) into one typed record under `uns['search_parameters']`.
 - **Enrichable and validated.** Join sample metadata onto `obs` (`apb annotate`); `apb fasta` adds protein annotation and automatically checks every peptide-derived feature against the supplied FASTA with Aho--Corasick.
-- **ProteoBench scoring.** `apb proteobench` computes HYE intermediate statistics and compatible score JSON directly from converted ion or peptidoform matrices.
+- **ProteoBench scoring.** After `apb annotate`, `apb proteobench` computes HYE intermediate statistics and compatible score JSON from annotated ion or peptidoform matrices.
 - **Interoperable.** Writes plain `.h5ad` / `.h5mu`, readable from Python (`anndata` / `mudata` / `scanpy`) and R (`anndataR`).
 
 > **New to AnnData?**  It's the standard container for an annotated data matrix — observations (`obs`, here MS runs) × variables (`var`, here peptides/proteins), with multiple measurement `layers`, dimensionality-reduction slots (`obsm`/`varm`), and free-form metadata (`uns`). **MuData** bundles several AnnData objects as *modalities*. See [anndata.readthedocs.io](https://anndata.readthedocs.io) and [mudata.readthedocs.io](https://mudata.readthedocs.io).
@@ -81,9 +81,9 @@ The cache and its CSV manifests are generated and remain outside git.
 ## Command-line interface
 
 The umbrella CLI is `apb` (the installed Python package is `anndata-proteomics`).
-`convert` creates the common input; `annotate`, `fasta`, and `proteobench` are
-independent enrichments that can be applied in any order. `validate` and `list`
-maintain parsing rules.
+`convert` creates the common input. `annotate` adds the sample design required
+by `proteobench`; `fasta` remains an independent enrichment. `validate` and
+`list` maintain parsing rules.
 
 ### Convert
 
@@ -107,8 +107,10 @@ apb annotate data.h5mu module_settings.toml     # writes data.annotated.h5mu
 Joins a ProteoBench module's top-level `[[samples]]` records onto `obs` (the run axis,
 shared across MuData modalities). APB also reads annotation-only TOML using
 `[[obs.samples]]`, plus CSV and TSV sample tables. The `raw_file` field is matched against
-`obs_names` by default; every other field becomes an `obs` column. Annotation tables are
-loaded directly and are not Pydantic models.
+`obs_names` by default. An exact fallback identifier can be declared as
+`raw_file_alias`; use `raw_file_aliases = ["alias-one", "alias-two"]` when a sample has
+multiple exact aliases. Identifier fields are not copied into `obs`; every other field
+becomes an `obs` column. Annotation tables are loaded directly and are not Pydantic models.
 
 ```toml
 [[samples]]
@@ -153,16 +155,17 @@ quantified rows or FASTA records.
 ### Compute ProteoBench scores
 
 ```bash
-apb proteobench data.h5mu module_settings.toml
-# writes data.proteobench.h5mu
+apb annotate data.h5mu module_settings.toml
+apb proteobench data.annotated.h5mu module_settings.toml
+# writes data.annotated.proteobench.h5mu
 ```
 
 The module TOML is the experiment-design contract: it supplies the scoring
 level, run-to-condition samples, species mapping, and expected ratios.
-Vendor-specific interpretation is already complete in the converted object's
-`X`, canonical feature columns, and stored parsing rule. Neither `apb annotate`
-nor `apb fasta` is required; running either before or after scoring preserves
-the other enrichments.
+`apb proteobench` requires `obs['sample_name']` and `obs['condition']`, which
+must already have been joined by `apb annotate`; it does not infer sample
+identity from vendor run names or parsing rules. `apb fasta` is optional and
+may run independently.
 
 For a standalone AnnData, the module level must match the object. For MuData,
 only that modality is scored. Feature-aligned means, standard deviations, CVs,

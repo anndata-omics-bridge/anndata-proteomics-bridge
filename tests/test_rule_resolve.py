@@ -82,6 +82,55 @@ def test_rule_software_version_regex_must_match_params_version() -> None:
         load_packaged_rule("diann", "ion", "3.0.0")
 
 
+def test_compound_parameters_resolve_rule_version_from_quantification_software() -> None:
+    resolution = ui.ParameterResolution(
+        source_path=Path("fragpipe.workflow"),
+        parameters=Parameters(
+            software_name="FragPipe",
+            software_version="24.0",
+            quantification_software="DIA-NN",
+            quantification_software_version="1.8.2 beta 8",
+        ),
+        version="24.0",
+        version_status="present",
+    )
+
+    assert ui.resolve_rule_version(resolution, "fragpipe") == ("24.0", "present")
+    assert ui.resolve_rule_version(resolution, "diann") == ("1.8.2 beta 8", "present")
+    assert ui.resolve_rule_version(resolution, "spectronaut") == (None, "missing")
+
+
+def test_effective_rule_version_decision_table() -> None:
+    parse_error = ui.ParameterResolution(
+        source_path=Path("broken.params"),
+        parameters=None,
+        version=None,
+        version_status="parse_error",
+        error="broken",
+    )
+    mismatch = ui.ParameterResolution(
+        source_path=Path("fragpipe.workflow"),
+        parameters=Parameters(
+            software_name="FragPipe",
+            software_version="24.0",
+        ),
+        version="24.0",
+        version_status="present",
+    )
+
+    assert ui.resolve_rule_version(parse_error, "diann") == (None, "parse_error")
+    assert ui._effective_rule_version("diann", None, None) == (None, None)
+    assert ui._effective_rule_version("diann", None, parse_error) == (
+        None,
+        "parse_error",
+    )
+    assert ui._effective_rule_version("diann", "1.9.2", mismatch) == (
+        "1.9.2",
+        "present",
+    )
+    assert ui._effective_rule_version("diann", None, mismatch) == (None, "missing")
+
+
 @pytest.mark.parametrize("version", ["22.0", "22.1-build02", "23.0"])
 def test_fragpipe_known_major_versions_resolve(version: str) -> None:
     assert resolve_rule_for_version("fragpipe", "ion", version) is not None

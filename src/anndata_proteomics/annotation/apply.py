@@ -23,7 +23,6 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
     Raises ``ValueError`` if no observation matches any annotation record.
     Partial mismatches are logged as warnings.
     """
-    frame = _build_annotation_frame(annotation)
     match_on = annotation.match_on
 
     holders = [obj]
@@ -31,12 +30,13 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
         holders += [obj.mod[name] for name in obj.mod]
 
     primary_keys = _obs_keys(obj, match_on)
+    frame, matched_key_field = _matching_annotation_frame(annotation, primary_keys)
     in_table = primary_keys.isin(frame.index)
     n_matched = int(in_table.sum())
     if n_matched == 0:
         raise ValueError(
             f"no obs rows matched any annotation record on match_on={match_on!r} "
-            f"(key_field={annotation.key_field!r}). "
+            f"(key_field={matched_key_field!r}). "
             f"first obs keys: {list(primary_keys[:_MAX_REPORTED])}; "
             f"first record keys: {list(frame.index[:_MAX_REPORTED])}"
         )
@@ -49,8 +49,19 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
             frame,
         )
 
-    _warn_on_mismatch(primary_keys, in_table, frame)
-    _record_provenance(obj, annotation, cols_added, n_matched)
+    _warn_on_mismatch(
+        primary_keys,
+        in_table,
+        frame,
+        matched_key_field=matched_key_field,
+    )
+    _record_provenance(
+        obj,
+        annotation,
+        cols_added,
+        n_matched,
+        matched_key_field=matched_key_field,
+    )
     store_annotation_summary(
         obj,
         fields=cols_added,
@@ -63,15 +74,44 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
     return obj
 
 
-def _build_annotation_frame(annotation: AnnotationTable) -> pd.DataFrame:
+def _matching_annotation_frame(
+    annotation: AnnotationTable,
+    obs_keys: pd.Index,
+) -> tuple[pd.DataFrame, str]:
+    """Try the primary sample identifier, then declared exact aliases."""
+    key_fields = [annotation.key_field]
+    alias_field = f"{annotation.key_field}_alias"
+    if alias_field in annotation.samples:
+        key_fields.append(alias_field)
+    aliases_field = f"{annotation.key_field}_aliases"
+    if aliases_field in annotation.samples:
+        key_fields.append(aliases_field)
+
+    selected = _build_annotation_frame(annotation, key_fields[0], key_fields)
+    for key_field in key_fields:
+        candidate = _build_annotation_frame(annotation, key_field, key_fields)
+        if obs_keys.isin(candidate.index).any():
+            return candidate, key_field
+        selected = candidate
+    return selected, key_fields[-1]
+
+
+def _build_annotation_frame(
+    annotation: AnnotationTable,
+    join_field: str,
+    identifier_fields: list[str],
+) -> pd.DataFrame:
     """Index annotation rows by their string join value and sanitize columns."""
     frame = annotation.samples.copy()
-    key = annotation.key_field
-    frame[key] = frame[key].astype(str)
-    if frame[key].duplicated().any():
-        duplicates = sorted(frame[key][frame[key].duplicated()].unique())
-        raise ValueError(f"duplicate {key!r} values in annotation table: {duplicates}")
-    frame = frame.set_index(key)
+    if join_field.endswith("_aliases"):
+        frame = frame.explode(join_field)
+    frame = frame.loc[frame[join_field].notna()].copy()
+    frame[join_field] = frame[join_field].astype(str)
+    if frame[join_field].duplicated().any():
+        duplicates = sorted(frame[join_field][frame[join_field].duplicated()].unique())
+        raise ValueError(f"duplicate {join_field!r} values in annotation table: {duplicates}")
+    frame.index = pd.Index(frame[join_field], name=join_field)
+    frame = frame.drop(columns=identifier_fields)
     frame.columns = sanitize_columns(list(frame.columns))
     return frame
 
@@ -107,10 +147,14 @@ def _warn_on_mismatch(
     keys: pd.Index,
     in_table: NDArray[np.bool_],
     annotation: pd.DataFrame,
+    *,
+    matched_key_field: str,
 ) -> None:
     n_unmatched = int((~in_table).sum())
     if n_unmatched:
         logger.warning(f"{n_unmatched}/{len(keys)} obs rows had no matching annotation record")
+    if matched_key_field.endswith("_aliases"):
+        return
     key_set = set(keys)
     records_unmatched = [key for key in annotation.index if key not in key_set]
     if records_unmatched:
@@ -126,6 +170,8 @@ def _record_provenance(
     annotation: AnnotationTable,
     cols_added: list[str],
     n_matched: int,
+    *,
+    matched_key_field: str,
 ) -> None:
     """Append lightweight annotation provenance under APB's ``uns`` namespace."""
     entry = {
@@ -134,7 +180,7 @@ def _record_provenance(
         if annotation.source
         else None,
         "match_on": annotation.match_on,
-        "key_field": annotation.key_field,
+        "key_field": matched_key_field,
         "obs_columns_added": list(cols_added),
         "n_obs_matched": n_matched,
     }

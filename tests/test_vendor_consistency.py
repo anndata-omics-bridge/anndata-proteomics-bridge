@@ -50,6 +50,12 @@ def test_every_packaged_rule_has_a_registered_parser() -> None:
         registry.get_parser(vendor)  # raises KeyError if unregistered
 
 
+def test_catalog_label_resolves_primary_parameter_file_owner() -> None:
+    assert registry.parser_slug("DIA-NN") == "diann"
+    assert registry.parser_slug("FragPipe (DIA-NN quant)") == "fragpipe"
+    assert registry.parser_slug("Unknown Tool") is None
+
+
 def test_packaged_rules_and_param_fixtures_cover_the_same_tools() -> None:
     """Packaged conversion rules and param fixtures must agree on the tool set.
 

@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from anndata_proteomics.annotation.apply import annotate_obs
+from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.converters.pipeline import convert_level, param_version
 from anndata_proteomics.proteobench.config import load_module_settings
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
@@ -123,11 +125,12 @@ GOLDEN_CONVERSION_CASES = (
 )
 def test_diann_dia_astral_uses_precursor_normalised() -> None:
     target = _load_plain_converted_fixture()
+    annotate_obs(target, load_annotation(MODULE_TOML))
     module = load_module_settings(MODULE_TOML)
-    rule, roles = resolve_roles(target, module)
-    design = align_runs(target, rule, roles, module)
+    rule, roles = resolve_roles(target)
+    design = align_runs(target, module)
 
-    result = compute_intermediate(target, module, roles, design)
+    result = compute_intermediate(target, module, roles, design, level=rule.quantification_level)
     expected = pd.read_csv(FIXTURE / "result_performance.csv")
 
     assert rule.axis.x_layer == "Precursor_Normalised"
@@ -219,12 +222,14 @@ def test_conversion_protein_completion_matches_proteobench_golden(
         params_path=params,
     )
     _assert_representative_completed_protein(target, data, case)
-    module = load_module_settings(ROOT / "test_data_download/annotations" / case.module_name)
-    rule, roles = resolve_roles(target, module)
+    module_path = ROOT / "test_data_download/annotations" / case.module_name
+    annotate_obs(target, load_annotation(module_path))
+    module = load_module_settings(module_path)
+    rule, roles = resolve_roles(target)
     assert roles.proteins == case.protein_role
 
-    design = align_runs(target, rule, roles, module)
-    result = compute_intermediate(target, module, roles, design)
+    design = align_runs(target, module)
+    result = compute_intermediate(target, module, roles, design, level=rule.quantification_level)
     expected_intermediate = pd.read_csv(case.fixture / "result_performance.csv")
     if case.wide_intensity_suffix:
         expected_intermediate = expected_intermediate.rename(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -50,5 +51,32 @@ def parse_params(path: str | Path, software: str) -> Parameters:
     return get_parser(software)(path)
 
 
+def parser_slug(software_name: str) -> str | None:
+    """Resolve the primary parameter parser named by a catalog software label.
+
+    Compound labels place the workflow owner first, for example
+    ``FragPipe (DIA-NN quant)``. The earliest registered software token is
+    therefore the parameter-file owner, while result-table recognition remains
+    the responsibility of the parsing-rule registry.
+    """
+    normalized_name = _normalize_software_name(software_name)
+    canonical: dict[str, str] = {}
+    for candidate in _REGISTRY:
+        token = _normalize_software_name(candidate)
+        current = canonical.get(token)
+        if current is None or candidate == token:
+            canonical[token] = candidate
+    matches = [
+        (normalized_name.find(token), -len(token), candidate)
+        for token, candidate in canonical.items()
+        if token and token in normalized_name
+    ]
+    return min(matches)[2] if matches else None
+
+
 def available_software() -> list[str]:
     return sorted(_REGISTRY)
+
+
+def _normalize_software_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())

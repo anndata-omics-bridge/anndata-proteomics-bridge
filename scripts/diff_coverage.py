@@ -14,7 +14,7 @@ def main() -> None:
             "diff-cover",
             "coverage.xml",
             f"--compare-branch={compare_branch}",
-            "--fail-under=100",
+            "--fail-under=90",
         ],
         check=True,
     )

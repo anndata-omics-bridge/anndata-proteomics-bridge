@@ -216,6 +216,79 @@ def test_packaged_level_and_mudata_conversion_paths(
     assert cli.convert(tmp_path / "data.tsv", params=params) == 1
 
 
+def test_compound_conversion_separates_parameter_and_rule_software(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame({"x": [1]})
+    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(
+        conversion_pipeline,
+        "recognize_software",
+        lambda _columns: "diann",
+    )
+    parameter_path = tmp_path / "fragpipe.workflow"
+    parameter_path.write_text("workflow", encoding="utf-8")
+    resolution = conversion_pipeline.ParameterResolution(
+        source_path=parameter_path,
+        parameters=Parameters(
+            software_name="FragPipe",
+            software_version="24.0",
+            quantification_software="DIA-NN",
+            quantification_software_version="1.8.2 beta 8",
+        ),
+        version="24.0",
+        version_status="present",
+    )
+    parser_calls: list[str] = []
+
+    def resolve_parameters(
+        _path: Path,
+        software: str,
+    ) -> conversion_pipeline.ParameterResolution:
+        parser_calls.append(software)
+        return resolution
+
+    selected: dict[str, object] = {}
+
+    def convert_level(
+        _frame: pd.DataFrame,
+        slug: str,
+        level: str,
+        version: str | None,
+        **kwargs: object,
+    ) -> ad.AnnData:
+        selected.update(
+            slug=slug,
+            level=level,
+            version=version,
+            parameter_resolution=kwargs["parameter_resolution"],
+        )
+        return ad.AnnData(np.ones((1, 1), dtype=np.float32))
+
+    monkeypatch.setattr(conversion_pipeline, "resolve_parameters", resolve_parameters)
+    monkeypatch.setattr(conversion_pipeline, "convert_level", convert_level)
+
+    assert (
+        cli.convert(
+            tmp_path / "report.tsv",
+            "ion",
+            params=parameter_path,
+            software="diann",
+            params_software="fragpipe",
+            output=tmp_path / "converted",
+        )
+        == 0
+    )
+    assert parser_calls == ["fragpipe"]
+    assert selected == {
+        "slug": "diann",
+        "level": "ion",
+        "version": "1.8.2 beta 8",
+        "parameter_resolution": resolution,
+    }
+
+
 def test_summary_and_annotation_writers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

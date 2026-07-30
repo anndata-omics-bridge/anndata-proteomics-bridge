@@ -81,7 +81,7 @@ def _rule() -> ParseRule:
     )
 
 
-def _adata(*, sparse_x: bool = False) -> ad.AnnData:
+def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
     values = np.asarray(
         [
             [10, 20, 5, 10, 10, 10],
@@ -92,10 +92,15 @@ def _adata(*, sparse_x: bool = False) -> ad.AnnData:
         dtype=np.float64,
     )
     matrix = sparse.csr_matrix(np.nan_to_num(values, nan=0.0)) if sparse_x else values
-    obs = pd.DataFrame(
-        {"Run": ["run_A1", "run_A2", "run_B1", "run_B2"]},
-        index=["run_A1", "run_A2", "run_B1", "run_B2"],
-    )
+    obs_data = {"Run": ["run_A1", "run_A2", "run_B1", "run_B2"]}
+    if annotated:
+        obs_data.update(
+            {
+                "sample_name": ["A1", "A2", "B1", "B2"],
+                "condition": ["A", "A", "B", "B"],
+            }
+        )
+    obs = pd.DataFrame(obs_data, index=["run_A1", "run_A2", "run_B1", "run_B2"])
     var = pd.DataFrame(
         {
             "Protein_Ids": [
@@ -109,7 +114,8 @@ def _adata(*, sparse_x: bool = False) -> ad.AnnData:
             "ProForma_ion": ["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"],
             "ProForma_peptide": ["H", "Y", "E", "C", "M", "N"],
         },
-        index=[f"ion:{name}" for name in ["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"]],
+        # A real ion rule keeps ProForma_ion in axis.var_keys, so var_names *are* those values.
+        index=["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"],
     )
     result = ad.AnnData(X=matrix, obs=obs, var=var)
     result.uns["anndata_proteomics"] = {
@@ -120,29 +126,28 @@ def _adata(*, sparse_x: bool = False) -> ad.AnnData:
     return result
 
 
-def _intermediate(adata: ad.AnnData):
+def _intermediate(adata: ad.AnnData, *, level: str | None = None):
     module = _module_settings()
-    rule, roles = resolve_roles(adata, module)
-    design = align_runs(adata, rule, roles, module)
-    return compute_intermediate(adata, module, roles, design)
+    rule, roles = resolve_roles(adata)
+    design = align_runs(adata, module)
+    return compute_intermediate(
+        adata,
+        module,
+        roles,
+        design,
+        level=level or rule.quantification_level,
+    )
 
 
 def test_matrix_intermediate_matches_hand_computed_values() -> None:
     result = _intermediate(_adata())
     frame = result.varm
 
-    assert frame.index.tolist() == [
-        "ion:H/2",
-        "ion:Y/2",
-        "ion:E/2",
-        "ion:C/2",
-        "ion:M/2",
-        "ion:N/2",
-    ]
-    assert frame.loc["ion:H/2", "CV_A"] == 0
-    assert frame.loc["ion:Y/2", "log2_A_vs_B"] == pytest.approx(1.0)
-    assert frame.loc["ion:E/2", "log2_A_vs_B"] == pytest.approx(-2.0)
-    assert frame.loc["ion:E/2", "epsilon"] == pytest.approx(0.0)
+    assert frame.index.tolist() == ["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"]
+    assert frame.loc["H/2", "CV_A"] == 0
+    assert frame.loc["Y/2", "log2_A_vs_B"] == pytest.approx(1.0)
+    assert frame.loc["E/2", "log2_A_vs_B"] == pytest.approx(-2.0)
+    assert frame.loc["E/2", "epsilon"] == pytest.approx(0.0)
     assert frame["nr_observed"].tolist() == [4, 4, 4, 4, 4, 1]
     assert frame["included"].tolist() == [True, True, True, False, False, False]
     assert result.legacy["precursor ion"].tolist() == ["E/2", "H/2", "Y/2"]
@@ -215,7 +220,6 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
     tmp_path: Path,
 ) -> None:
     adata = _adata()
-    adata.obs["condition"] = ["A", "A", "B", "B"]
     adata.varm["fasta"] = pd.DataFrame({"accession": ["x"] * adata.n_vars}, index=adata.var_names)
 
     returned = score_quantification(adata, _module_settings())
@@ -249,7 +253,7 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
     assert restored_proteobench.index.equals(restored.var_names)
 
 
-def test_pipeline_refuses_collisions_and_conflicting_annotations() -> None:
+def test_pipeline_refuses_collisions_and_invalid_annotations() -> None:
     adata = _adata()
     score_quantification(adata, _module_settings())
     with pytest.raises(ValueError, match="refusing to overwrite"):
@@ -257,11 +261,11 @@ def test_pipeline_refuses_collisions_and_conflicting_annotations() -> None:
 
     conflicting = _adata()
     conflicting.obs["condition"] = ["B", "A", "B", "B"]
-    with pytest.raises(ValueError, match="disagrees"):
+    with pytest.raises(ValueError, match="does not match module condition"):
         score_quantification(conflicting, _module_settings())
 
 
-def test_annotation_fasta_and_scoring_are_order_independent() -> None:
+def test_scoring_requires_annotation_while_fasta_remains_independent() -> None:
     annotation = AnnotationTable(
         samples=pd.DataFrame(
             {
@@ -273,25 +277,16 @@ def test_annotation_fasta_and_scoring_are_order_independent() -> None:
     )
     fasta = ">sp|P1|TEST_HUMAN\nHYECMN\n"
 
-    enrich_first = _adata()
-    annotate_obs(enrich_first, annotation)
-    validate_peptides_against_fasta(enrich_first, fasta, backend="ahocorapy")
-    score_quantification(enrich_first, _module_settings())
+    unannotated = _adata(annotated=False)
+    with pytest.raises(ValueError, match="Run 'apb annotate' first"):
+        score_quantification(unannotated, _module_settings())
 
-    score_first = _adata()
-    score_quantification(score_first, _module_settings())
-    annotate_obs(score_first, annotation)
-    validate_peptides_against_fasta(score_first, fasta, backend="ahocorapy")
+    annotate_obs(unannotated, annotation)
+    score_quantification(unannotated, _module_settings())
+    validate_peptides_against_fasta(unannotated, fasta, backend="ahocorapy")
 
-    assert enrich_first.uns["proteobench"]["scores"] == score_first.uns["proteobench"]["scores"]
-    enrich_scores = enrich_first.varm["proteobench"]
-    score_scores = score_first.varm["proteobench"]
-    assert isinstance(enrich_scores, pd.DataFrame)
-    assert isinstance(score_scores, pd.DataFrame)
-    pd.testing.assert_frame_equal(enrich_scores, score_scores)
-    assert "fasta_validation" in enrich_first.varm
-    assert "fasta_validation" in score_first.varm
-    assert enrich_first.obs["condition"].tolist() == score_first.obs["condition"].tolist()
+    assert unannotated.uns["proteobench"]["scores"]["nr_feature"] == 3
+    assert "fasta_validation" in unannotated.varm
 
 
 def test_role_resolution_reports_missing_canonical_protein_column() -> None:
@@ -301,7 +296,7 @@ def test_role_resolution_reports_missing_canonical_protein_column() -> None:
     rule_document["columns"]["var"]["select"]["Missing_Proteins"] = "Missing.Proteins"
     adata.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
     with pytest.raises(ValueError, match="missing var column"):
-        resolve_roles(adata, _module_settings())
+        resolve_roles(adata)
 
 
 def test_config_defaults_match_golden_json_projection(tmp_path: Path) -> None:
@@ -314,7 +309,7 @@ def test_config_defaults_match_golden_json_projection(tmp_path: Path) -> None:
     assert module.general.max_nr_observed == 6
 
 
-def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(
+def test_cli_scores_annotated_h5ad_and_describe_exposes_scores(
     tmp_path: Path,
 ) -> None:
     input_path = tmp_path / "converted.h5ad"
@@ -336,7 +331,22 @@ def test_cli_scores_plain_converted_h5ad_and_describe_exposes_scores(
     assert "proteobench" not in ad.read_h5ad(input_path).uns
 
 
-def test_cli_scores_only_the_module_modality_in_mudata(tmp_path: Path) -> None:
+def test_cli_rejects_unannotated_h5ad(tmp_path: Path) -> None:
+    input_path = tmp_path / "converted.h5ad"
+    unannotated = _adata(annotated=False)
+    unannotated.write_h5ad(input_path)
+    module_path = tmp_path / "module.toml"
+    module_path.write_text(_module_toml())
+
+    with pytest.raises(ValueError, match="Run 'apb annotate' first"):
+        proteobench_cmd(
+            input_path,
+            module_path,
+            output=tmp_path / "scored.h5ad",
+        )
+
+
+def test_cli_scores_every_modality_in_mudata(tmp_path: Path) -> None:
     ion = _adata()
     protein = _adata()
     ion.var_names = [f"ion:{name}" for name in ion.var_names]
@@ -358,8 +368,11 @@ def test_cli_scores_only_the_module_modality_in_mudata(tmp_path: Path) -> None:
 
     with mudata.set_options(pull_on_update=False):
         restored = mudata.read_h5mu(output_path)
-    assert restored.mod["ion"].uns["proteobench"]["scores"]["nr_feature"] == 3
-    assert "proteobench" not in restored.mod["protein"].uns
+    # Scores are per level: every modality keeps its own, and the container itself stays untouched.
+    for name in ("ion", "protein"):
+        assert restored.mod[name].uns["proteobench"]["scores"]["nr_feature"] == 3
+        assert "proteobench" in restored.mod[name].varm
+    assert "proteobench" not in restored.uns
 
 
 def _module_toml() -> str:
@@ -437,63 +450,67 @@ def test_configuration_models_reject_inconsistent_contracts() -> None:
 
 
 def test_role_target_and_optional_role_validation() -> None:
-    roles = resolve.ResolvedRoles(
-        proteins="Protein_Ids",
-        feature="ProForma_ion",
-        raw_file=None,
-    )
+    roles = resolve.ResolvedRoles(proteins="Protein_Ids")
     stored = roles.as_dict()
-    assert stored["Raw file"] == "obs_names"
+    assert stored["Sample name"] == "obs:sample_name"
+    assert stored["Condition"] == "obs:condition"
+    # The feature axis is the var index at every level, not a level-specific var column.
+    assert stored["feature"] == "var_names"
 
-    with pytest.raises(ValueError, match="no 'ion' modality"):
-        resolve.resolve_target(SimpleNamespace(mod={}), "ion")
+    # An AnnData is its own only target; a MuData yields every modality, in order.
     adata = _adata()
-    adata.uns["anndata_proteomics"]["quantification_level"] = "protein"
-    with pytest.raises(ValueError, match="does not match"):
-        resolve.resolve_target(adata, "ion")
+    assert resolve.resolve_targets(adata) == [adata]
+    other = _adata()
+    assert resolve.resolve_targets(SimpleNamespace(mod={"a": adata, "b": other})) == [adata, other]
+    with pytest.raises(ValueError, match="no modality to score"):
+        resolve.resolve_targets(SimpleNamespace(mod={}))
 
     missing_rule = _adata()
     missing_rule.uns["anndata_proteomics"]["rule_json"] = {}
     with pytest.raises(ValueError, match="no string"):
-        resolve_roles(missing_rule, _module_settings())
-
-    wrong_rule = _rule().model_copy(update={"quantification_level": "peptidoform"})
-    wrong = _adata()
-    wrong.uns["anndata_proteomics"]["rule_json"] = wrong_rule.model_dump_json(by_alias=True)
-    with pytest.raises(ValueError, match="stored rule level"):
-        resolve_roles(wrong, _module_settings())
-
-    no_feature = _adata()
-    no_feature.var = cast(pd.DataFrame, no_feature.var).drop(columns=["ProForma_ion"])
-    with pytest.raises(ValueError, match="lacks var"):
-        resolve_roles(no_feature, _module_settings())
+        resolve_roles(missing_rule)
 
     no_roles = _adata()
     rule_document = _rule().model_dump(mode="json", by_alias=True)
     rule_document["column_roles"] = None
     no_roles.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
     with pytest.raises(ValueError, match="no column_roles"):
-        resolve_roles(no_roles, _module_settings())
+        resolve_roles(no_roles)
 
 
 def test_alignment_and_intermediate_identity_guards() -> None:
     module = _module_settings()
-    rule, roles = resolve_roles(_adata(), module)
+    _, roles = resolve_roles(_adata())
 
     unknown = _adata()
-    unknown.obs["Run"] = ["unknown", "run_A2", "run_B1", "run_B2"]
+    unknown.obs["sample_name"] = ["unknown", "A2", "B1", "B2"]
     with pytest.raises(ValueError, match="does not match"):
-        align_runs(unknown, rule, roles, module)
+        align_runs(unknown, module)
 
     repeated = _adata()
-    repeated.obs["Run"] = ["run_A1", "run_A1", "run_B1", "run_B2"]
+    repeated.obs["sample_name"] = ["A1", "A1", "B1", "B2"]
     with pytest.raises(ValueError, match="one-to-one"):
-        align_runs(repeated, rule, roles, module)
+        align_runs(repeated, module)
 
     incomplete = _adata()[[0, 1, 2], :].copy()
-    with pytest.raises(ValueError, match="alignment is incomplete"):
-        align_runs(incomplete, rule, roles, module)
+    with pytest.raises(ValueError, match="sample alignment is incomplete"):
+        align_runs(incomplete, module)
 
+    conflicting = _adata()
+    conflicting.obs["condition"] = ["B", "A", "B", "B"]
+    with pytest.raises(ValueError, match="does not match module condition"):
+        align_runs(conflicting, module)
+
+    missing_annotation = _adata(annotated=False)
+    with pytest.raises(ValueError, match="Run 'apb annotate' first"):
+        align_runs(missing_annotation, module)
+
+    incomplete_annotation = _adata()
+    cast(pd.DataFrame, incomplete_annotation.obs).loc["run_A1", "sample_name"] = None
+    with pytest.raises(ValueError, match="complete sample annotation"):
+        align_runs(incomplete_annotation, module)
+
+    # var_names *is* the feature axis, so its uniqueness check is the feature-identity check.
     duplicate_names = _adata()
     duplicate_names.var_names = ["duplicate"] * duplicate_names.n_vars
     with pytest.raises(ValueError, match="unique var_names"):
@@ -501,72 +518,17 @@ def test_alignment_and_intermediate_identity_guards() -> None:
             duplicate_names,
             module,
             roles,
-            align_runs(_adata(), rule, roles, module),
+            align_runs(_adata(), module),
+            level="ion",
         )
 
-    duplicate_features = _adata()
-    duplicate_features.var["ProForma_ion"] = ["same"] * duplicate_features.n_vars
-    feature_roles = resolve.ResolvedRoles(
-        proteins=roles.proteins,
-        feature="ProForma_ion",
-        raw_file=roles.raw_file,
-    )
-    with pytest.raises(ValueError, match="feature identifiers"):
-        compute_intermediate(
-            duplicate_features,
-            module,
-            feature_roles,
-            align_runs(duplicate_features, rule, roles, module),
-        )
 
-    colliding_module = module.model_copy(
-        update={
-            "samples": [
-                SampleSettings(raw_file="same.raw", sample_name="A1", condition="A"),
-                SampleSettings(raw_file="same.mzML", sample_name="B1", condition="B"),
-            ]
-        }
-    )
-    colliding_target = _adata()[:2, :].copy()
-    colliding_target.obs["Run"] = ["A1", "B1"]
-    with pytest.raises(ValueError, match="not unique after cleanup"):
-        align_runs(
-            colliding_target,
-            rule,
-            roles,
-            colliding_module,
-        )
-
-    wide_rule = rule.model_copy(
-        update={
-            "input_shape": "wide",
-            "layers": [rule.layers[0].model_copy(update={"source": r"abundance_(?P<sample>.+)"})],
-        }
-    )
-    wide_target = _adata()
-    wide_target.obs["Run"] = ["A1", "A2", "B1", "B2"]
-    wide_module = module.model_copy(
-        update={
-            "samples": [
-                SampleSettings(raw_file="abundance_A1", sample_name="A1", condition="A"),
-                SampleSettings(raw_file="abundance_A2", sample_name="A2", condition="A"),
-                SampleSettings(raw_file="abundance_B1", sample_name="B1", condition="B"),
-                SampleSettings(raw_file="abundance_B2", sample_name="B2", condition="B"),
-            ]
-        }
-    )
-    wide_design = align_runs(
-        wide_target,
-        wide_rule,
-        roles,
-        wide_module,
-    )
-    assert wide_design.raw_files == (
-        "abundance_A1",
-        "abundance_A2",
-        "abundance_B1",
-        "abundance_B2",
-    )
+def test_legacy_feature_column_follows_the_scored_level() -> None:
+    """ProteoBench names its feature column per level; levels it has no module for use the level."""
+    assert _intermediate(_adata()).legacy.columns[0] == "precursor ion"
+    assert _intermediate(_adata(), level="peptidoform").legacy.columns[0] == "peptidoform"
+    assert _intermediate(_adata(), level="fragment").legacy.columns[0] == "fragment"
+    assert _intermediate(_adata(), level="protein").legacy.columns[0] == "protein"
 
 
 def test_intermediate_low_level_edge_paths() -> None:
@@ -574,45 +536,18 @@ def test_intermediate_low_level_edge_paths() -> None:
         np.asarray([[0.0, np.nan]]),
         np.asarray([0, 1]),
         2,
-        np.asarray([True, True]),
+        np.asarray([True, True], dtype=np.bool_),
         np.float64,
     )
     assert np.isnan(collapsed).all()
     centers = intermediate._empirical_centers(
         np.asarray([1.0]),
         np.asarray(["HUMAN"], dtype=object),
-        np.asarray([False]),
+        np.asarray([False], dtype=np.bool_),
     )
     assert np.isnan(centers["median"]).all()
     assert intermediate._contaminants(pd.Series(["P1", "Cont_P2"])).tolist() == [False, True]
     assert intermediate._is_float32_backed(np.asarray([np.nan])) is False
-    assert (
-        intermediate._clean_run_name(
-            r"C:\data\run.raw",
-            intermediate._DEFAULT_RUN_CLEANUP,
-        )
-        == "run"
-    )
-    from anndata_proteomics.rules.loader import load_rule
-    from anndata_proteomics.rules.registry import find_rule
-
-    wide_rule = load_rule(find_rule("wombat", "ion", "0.9.11"))
-    wide_module = _module_settings().model_copy(
-        update={
-            "samples": [
-                SampleSettings(raw_file="abundance_A1", sample_name="A1", condition="A"),
-                SampleSettings(raw_file="unmatched.raw", sample_name="A2", condition="A"),
-                SampleSettings(raw_file="abundance_B1", sample_name="B1", condition="B"),
-                SampleSettings(raw_file="abundance_B2", sample_name="B2", condition="B"),
-            ]
-        }
-    )
-    mapping_result = intermediate._wide_run_mapping(
-        wide_rule,
-        wide_module,
-        intermediate._DEFAULT_RUN_CLEANUP,
-    )
-    assert set(mapping_result) == {"A1", "unmatched", "B1", "B2"}
 
 
 def test_mapping_helpers_cover_empty_tokens() -> None:

@@ -291,3 +291,63 @@ def test_packaged_loader_functions_propagate_search_parameters() -> None:
     assert packaged.axis.x_layer == "Ms1_Normalised"
     assert resolved is not None
     assert resolved.axis.x_layer == "Ms1_Normalised"
+
+
+def _gated_document(
+    ion_requires: dict[str, Any] | None = None,
+    extra_levels: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The synthetic document with an availability gate on its ion level."""
+    data = _document()
+    if ion_requires is not None:
+        data["levels"]["ion"]["requires_search_parameters"] = ion_requires
+    if extra_levels:
+        data["levels"].update(extra_levels)
+    return data
+
+
+def test_requires_search_parameters_normalizes_and_gates_availability() -> None:
+    document = _parse(_gated_document({"combine_charge_states": False}))
+
+    assert document.levels["ion"].requires_search_parameters == {"combine_charge_states": False}
+    assert document.level_is_available("ion", Parameters(combine_charge_states=False))
+    assert not document.level_is_available("ion", Parameters(combine_charge_states=True))
+    # A gate needs parameters to compare against; without them the level is not offered.
+    assert not document.level_is_available("ion", None)
+
+
+def test_ungated_level_is_always_available() -> None:
+    document = _parse(_document())
+
+    assert document.level_is_available("ion", None)
+    assert document.level_is_available("ion", Parameters(combine_charge_states=True))
+
+
+def test_level_is_available_is_false_for_an_undeclared_level() -> None:
+    document = _parse(_document())
+
+    assert not document.level_is_available("protein", Parameters())
+
+
+def test_available_levels_filters_by_gate_in_source_order() -> None:
+    document = _parse(_gated_document({"combine_charge_states": False}))
+
+    assert document.available_levels(Parameters(combine_charge_states=False)) == ["ion"]
+    assert document.available_levels(Parameters(combine_charge_states=True)) == []
+    assert document.available_levels(None) == []
+    assert _parse(_document()).available_levels(None) == ["ion"]
+
+
+def test_requires_search_parameters_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="unknown search-parameter field"):
+        _parse(_gated_document({"not_a_parameter_field": True}))
+
+
+def test_requires_search_parameters_does_not_reach_the_effective_rule() -> None:
+    """The gate decides availability only; it must not leak into the merged rule body."""
+    document = _parse(_gated_document({"combine_charge_states": False}))
+
+    rule = document.effective_rule("ion", Parameters(combine_charge_states=False))
+
+    assert not hasattr(rule, "requires_search_parameters")
+    assert document.effective_rules(Parameters(combine_charge_states=True)).keys() == {"ion"}

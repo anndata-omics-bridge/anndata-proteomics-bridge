@@ -18,17 +18,17 @@ def test_packaged_rules_root_exists() -> None:
     assert packaged_rules_root().exists()
 
 
-def test_iter_packaged_documents_returns_seven_sorted() -> None:
+def test_iter_packaged_documents_returns_nine_sorted() -> None:
     documents = list(iter_packaged_documents())
-    assert len(documents) == 7
+    assert len(documents) == 9
     assert documents == sorted(documents)
     assert all(path.name == "rules.json" for path in documents)
 
 
-def test_iter_packaged_rules_returns_thirteen_document_levels() -> None:
+def test_iter_packaged_rules_returns_sixteen_document_levels() -> None:
     locators = list(iter_packaged_rules())
-    assert len(locators) == 13
-    assert sum(item.level == "ion" for item in locators) == 7
+    assert len(locators) == 16
+    assert sum(item.level == "ion" for item in locators) == 9
 
 
 def test_diann_has_two_version_documents() -> None:

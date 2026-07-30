@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from anndata_proteomics._matrix_types import is_sparse_matrix
+from anndata_proteomics._matrix_types import is_sparse_matrix, named_layers
 from anndata_proteomics.params.anndata_io import read_search_parameters
 from anndata_proteomics.rules.schema import ColumnGroup, ParseRule
 
@@ -224,7 +224,8 @@ def _quantification_summary(obj: Any) -> dict[str, Any]:
         "software_name": metadata.get("software_name"),
         "software_version": params.software_version if params is not None else None,
         "layers": {
-            str(name): _layer_summary(layer, n_obs=obj.n_obs) for name, layer in obj.layers.items()
+            str(name): _layer_summary(layer, n_obs=obj.n_obs)
+            for name, layer in named_layers(obj).items()
         },
     }
 
@@ -236,7 +237,7 @@ def _column_mapping(obj: Any) -> dict[str, Any] | None:
         return None
 
     layers_by_name = {layer.name: layer for layer in rule.layers}
-    materialized_layers = {str(name) for name in obj.layers} | {rule.axis.x_layer}
+    materialized_layers = set(named_layers(obj)) | {rule.axis.x_layer}
     layers = {
         name: {
             "source": layer.source,

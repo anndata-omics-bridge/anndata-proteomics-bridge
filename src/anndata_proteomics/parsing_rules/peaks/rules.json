@@ -108,7 +108,10 @@
       "layers": [
         {
           "name": "Normalized_Area",
-          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? Normalized Area$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? Normalized Area$",
+          "missing_values": [
+            0
+          ]
         },
         {
           "name": "Sample_Mz",
@@ -120,7 +123,8 @@
         },
         {
           "name": "AScore",
-          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? AScore$"
+          "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? AScore$",
+          "value_pattern": ":(-?\\d+(?:\\.\\d+)?)(?:;|$)"
         }
       ]
     }

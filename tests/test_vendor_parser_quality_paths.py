@@ -141,7 +141,7 @@ def test_fragpipe_modification_and_workflow_variants() -> None:
 
     parsed = fragpipe._parse_lines(["flag", "key=value # comment"])
     assert parsed[0].value is None
-    _header, version, _fragpipe_version, _records = fragpipe._read_workflow(
+    _header, version, _fragpipe_version, _diann_version, _records = fragpipe._read_workflow(
         "# Header\nfragpipe-config.bin-msfragger=/path/no-version.jar"
     )
     assert version is None

@@ -71,12 +71,37 @@ class ColumnCompute(_Strict):
 
 
 class ColumnGroup(_Strict):
+    """Declared axis columns: required ``select``, best-effort ``optional_select``, ``compute``.
+
+    ``select`` sources must be present in the input — they gate rule recognition. Columns a
+    vendor emits only for some configurations belong in ``optional_select``: captured when the
+    source is present, silently skipped when absent, and never part of recognition. This
+    mirrors ``Layer.required = false`` so one vendor document can declare the full superset of
+    an export's volatile columns without rejecting the exports that omit some.
+    """
+
     select: dict[str, str] = Field(default_factory=dict)
+    optional_select: dict[str, str] = Field(default_factory=dict)
     compute: list[ColumnCompute] = Field(default_factory=list)
 
     @property
     def names(self) -> list[str]:
-        return list(dict.fromkeys([*self.select, *(column.name for column in self.compute)]))
+        return list(
+            dict.fromkeys(
+                [
+                    *self.select,
+                    *self.optional_select,
+                    *(column.name for column in self.compute),
+                ]
+            )
+        )
+
+    @model_validator(mode="after")
+    def _select_groups_are_disjoint(self) -> ColumnGroup:
+        both = sorted(set(self.select) & set(self.optional_select))
+        if both:
+            raise ValueError(f"column name(s) declared in both select and optional_select: {both}")
+        return self
 
 
 class Columns(_Strict):
@@ -104,6 +129,12 @@ class Layer(_Strict):
     of a vendor's volatile columns without rejecting exports that omit some. Set
     ``required = true`` to gate a layer (a file missing it is rejected). The
     ``axis.x_layer`` is always required regardless of this flag.
+
+    ``value_pattern`` handles vendor columns whose cells are structured strings rather
+    than bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex
+    with exactly one capture group, applied per cell before numeric coercion; the first
+    match wins and non-matching cells become NaN. Without it such a column silently
+    coerces to an all-NaN layer.
     """
 
     name: str
@@ -111,6 +142,7 @@ class Layer(_Strict):
     encoding_mode: EncodingMode = "numeric"
     categories: dict[str, int] = Field(default_factory=dict)
     missing_values: list[float] = Field(default_factory=list)
+    value_pattern: str = ""
     required: bool = False
 
     @model_validator(mode="after")
@@ -123,6 +155,22 @@ class Layer(_Strict):
             raise ValueError(
                 f"Layer {self.name!r}: 'missing_values' is only valid for numeric layers."
             )
+        if self.encoding_mode == "factor" and self.value_pattern:
+            raise ValueError(
+                f"Layer {self.name!r}: 'value_pattern' is only valid for numeric layers."
+            )
+        if self.value_pattern:
+            try:
+                compiled = re.compile(self.value_pattern)
+            except re.error as exc:
+                raise ValueError(
+                    f"Layer {self.name!r}: 'value_pattern' is not a valid regex: {exc}"
+                ) from exc
+            if compiled.groups != 1:
+                raise ValueError(
+                    f"Layer {self.name!r}: 'value_pattern' must have exactly one capture "
+                    f"group, found {compiled.groups}."
+                )
         return self
 
 
@@ -278,6 +326,31 @@ class ParseRule(_Strict):
         return self
 
     @model_validator(mode="after")
+    def _axis_keys_are_not_optional(self) -> ParseRule:
+        """An axis key must always exist; a feature/observation key cannot be best-effort."""
+        optional_obs = [
+            key for key in self.axis.obs_keys if key in self.columns.obs.optional_select
+        ]
+        optional_var = [
+            key for key in self.axis.var_keys if key in self.columns.var.optional_select
+        ]
+        if optional_obs:
+            raise ValueError(f"axis.obs_keys must not name optional_select columns: {optional_obs}")
+        if optional_var:
+            raise ValueError(f"axis.var_keys must not name optional_select columns: {optional_var}")
+        return self
+
+    @model_validator(mode="after")
+    def _wide_obs_has_no_optional_select(self) -> ParseRule:
+        """``converters.wide`` accepts only the ``<sample>`` placeholder on the wide obs axis."""
+        if self.input_shape == "wide" and self.columns.obs.optional_select:
+            raise ValueError(
+                "columns.obs.optional_select is not valid for wide rules; the wide observation "
+                "axis accepts only the '<sample>' placeholder"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _column_roles_are_declared(self) -> ParseRule:
         if (
             self.column_roles is not None
@@ -299,7 +372,7 @@ class ParseRule(_Strict):
     def _computed_column_consistency(  # noqa: C901, PLR0912 - schema invariant
         self,
     ) -> ParseRule:
-        available_var_columns = set(self.columns.var.select)
+        available_var_columns = set(self.columns.var.select) | set(self.columns.var.optional_select)
         if self.fragments is not None:
             # explode_fragments injects this column before materialization, so it is a
             # legal `from` source even though it is not a selected vendor column.
@@ -354,9 +427,12 @@ class ParseRule(_Strict):
         if self.modifications is None:
             return self
         derived = {self.modifications.output_column, "stripped_sequence"}
-        selected_sources = list(self.columns.obs.select.values()) + list(
-            self.columns.var.select.values()
-        )
+        selected_sources = [
+            *self.columns.obs.select.values(),
+            *self.columns.obs.optional_select.values(),
+            *self.columns.var.select.values(),
+            *self.columns.var.optional_select.values(),
+        ]
         selected = {source for source in selected_sources if source in derived}
         if selected:
             raise ValueError(
@@ -379,6 +455,7 @@ class PartialColumnGroup(_Strict):
     """Column-group fragment with presence preserved for deterministic merging."""
 
     select: dict[str, str] | None = None
+    optional_select: dict[str, str] | None = None
     compute: list[ColumnCompute] | None = None
 
 
@@ -446,16 +523,51 @@ class SearchParameterOverride(_Strict):
 
 
 class LevelRuleFragment(RuleFragment):
-    """Strict level body with non-recursive search-parameter axis overrides."""
+    """Strict level body with non-recursive search-parameter axis overrides.
+
+    ``requires_search_parameters`` gates the level's *availability* rather than its content:
+    a tool whose quantification settings decide the level of its own output table (Sage's
+    ``combine_charge_states`` collapses charge states, making one and the same ``lfq.tsv``
+    schema ion- or peptidoform-level) cannot be resolved by version or headers, because
+    neither differs. A level declaring conditions here is offered only when the parsed
+    search parameters satisfy every one of them. Levels with no conditions are always
+    available, so this changes nothing for documents that do not use it.
+    """
 
     search_parameter_overrides: list[SearchParameterOverride] = Field(default_factory=list)
+    requires_search_parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("requires_search_parameters")
+    @classmethod
+    def _normalize_required_search_parameters(cls, value: dict[str, Any]) -> dict[str, Any]:
+        unknown = sorted(set(value) - Parameters.model_fields.keys())
+        if unknown:
+            raise ValueError(f"unknown search-parameter field(s): {unknown}")
+        normalized = Parameters.model_validate(value)
+        return {name: getattr(normalized, name) for name in value}
+
+    def is_available(self, search_parameters: Parameters | None) -> bool:
+        """Return whether this level is offered for the given parsed search parameters.
+
+        An ungated level is always available. A gated level needs parameters to compare
+        against, so it is unavailable when none could be parsed — offering it blind would
+        resolve the wrong level for exactly the inputs the gate exists to separate.
+        """
+        if not self.requires_search_parameters:
+            return True
+        if search_parameters is None:
+            return False
+        return all(
+            getattr(search_parameters, name) == expected
+            for name, expected in self.requires_search_parameters.items()
+        )
 
     @override
     def as_merge_dict(self) -> dict[str, Any]:
         """Return the level body without its materialization-time overrides."""
         return self.model_dump(
             by_alias=True,
-            exclude={"search_parameter_overrides"},
+            exclude={"search_parameter_overrides", "requires_search_parameters"},
             exclude_unset=True,
             mode="json",
         )
@@ -491,11 +603,37 @@ class ParseRuleDocument(_Strict):
         )
         return self._materialize_rule(level, matching_overrides)
 
+    def level_is_available(
+        self,
+        level: QuantificationLevel,
+        search_parameters: Parameters | None = None,
+    ) -> bool:
+        """Return whether ``level`` is offered for these parsed search parameters."""
+        if level not in self.levels:
+            return False
+        return self.levels[level].is_available(search_parameters)
+
+    def available_levels(
+        self,
+        search_parameters: Parameters | None = None,
+    ) -> list[QuantificationLevel]:
+        """Levels whose ``requires_search_parameters`` gate is satisfied, in source order."""
+        return [
+            level
+            for level, fragment in self.levels.items()
+            if fragment.is_available(search_parameters)
+        ]
+
     def effective_rules(
         self,
         search_parameters: Parameters | None = None,
     ) -> dict[QuantificationLevel, ParseRule]:
-        """Validate and return every effective level in stable source order."""
+        """Validate and return every effective level in stable source order.
+
+        Returns every declared level regardless of its availability gate: this is the
+        document's full contract, used by validation and rule listing. Resolution filters
+        by ``available_levels``.
+        """
         return {level: self.effective_rule(level, search_parameters) for level in self.levels}
 
     def validate_effective_rule_variants(self, level: QuantificationLevel) -> None:

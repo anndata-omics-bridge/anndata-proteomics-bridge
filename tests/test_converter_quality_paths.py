@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,7 @@ import pytest
 from anndata_proteomics.converters import assemble, pipeline, wide
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.long import _aggfunc_for, convert_long
+from anndata_proteomics.converters.numeric import warn_if_all_missing
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.rules.schema import (
     ColumnCompute,
@@ -592,3 +594,13 @@ def test_wide_helpers_and_converter_guards() -> None:
         ParseRule.model_validate(optional_document),
     )
     assert "Optional" not in pieces.layers
+
+
+def test_warn_if_all_missing_ignores_an_empty_matrix(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A zero-feature layer has no missingness to report and must stay quiet."""
+    with caplog.at_level(logging.WARNING):
+        warn_if_all_missing(np.empty((0, 0), dtype="float64"), "Empty")
+
+    assert caplog.text == ""

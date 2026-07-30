@@ -223,7 +223,7 @@ def test_rule_document_missing_level_and_loader_paths(
     with pytest.raises(loader.RuleDocumentError, match="has no level"):
         loader.load_rule(path, "protein")
     with pytest.raises(ValueError, match="invalid software_version regex"):
-        loader._software_version_matches("[", "1")
+        loader.software_version_matches("[", "1")
 
 
 def test_parameter_registry_rejects_unknown_software() -> None:

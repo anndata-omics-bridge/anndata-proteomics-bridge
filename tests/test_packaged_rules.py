@@ -74,8 +74,12 @@ def test_maxquant_fills_missing_proteins_from_leading_proteins() -> None:
     proteins = next(column for column in rule.columns.var.compute if column.name == "Proteins")
 
     assert rule.axis.duplicates.mode == "aggregate"
-    assert rule.columns.var.select["Leading_Proteins"] == "Leading proteins"
-    assert rule.columns.var.select["Leading_Razor_Protein"] == "Leading razor protein"
+    # Leading-protein columns are configuration- and vintage-dependent: 1.5.2.8 spells them
+    # in title case and has neither lower-case form, so all four spellings are optional and
+    # the coalesce walks them in order.
+    assert rule.columns.var.optional_select["Leading_Proteins"] == "Leading proteins"
+    assert rule.columns.var.optional_select["Leading_Razor_Protein"] == "Leading razor protein"
+    assert rule.columns.var.optional_select["Leading_Proteins_Legacy"] == "Leading Proteins"
     assert proteins.how == "coalesce"
-    assert proteins.from_ == ["Proteins", "Leading_Proteins"]
+    assert proteins.from_ == ["Proteins", "Leading_Proteins", "Leading_Proteins_Legacy"]
     assert rule.columns.var.names.count("Proteins") == 1

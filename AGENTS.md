@@ -36,15 +36,22 @@ paths or separate base files. Single-level vendors use the same document shape.
 
 ## Current Scope
 
-Packaged parsing rules span **6 vendors** across the **ion / fragment / peptidoform / protein**
+Packaged parsing rules span **8 vendors** across the **ion / fragment / peptidoform / protein**
 quantification levels:
 
 - DIA-NN — ion, fragment, protein (version-specific rules under `diann/v1/`, `diann/v2/`)
 - Spectronaut — ion, fragment, protein
-- MaxQuant — ion (`evidence.txt`)
+- MaxQuant — ion (`evidence.txt`, 1.5.x through 2.7.x)
 - FragPipe — ion
 - PEAKS — ion
+- Sage — ion, peptidoform (wide `lfq.tsv`; the level is parameter-gated, see below)
+- AlphaPept — ion (long, comma-delimited PSM table)
 - WOMBAT — peptidoform
+
+Sage's `lfq_settings.combine_charge_states` (default `true`) collapses charge states and writes
+`charge = -1`, so the same `lfq.tsv` schema is ion-level or peptidoform-level depending only on that
+setting. The Sage document therefore gates each level on `requires_search_parameters` rather than a
+version regex; see [docs/json_schema.md](docs/json_schema.md).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the authoritative vendor/level/shape table.
 

@@ -92,7 +92,7 @@ parameter file cannot provide the required value.
 
 `software_version` is a confirmed exception, not a required-field candidate. Two
 supported PEAKS parameter files genuinely omit it; see
-[`TODO_fragpipe_peaks_version_coverage.md`](TODO_fragpipe_peaks_version_coverage.md).
+[`TODO_fragpipe_peaks_version_coverage.md`](Archive/TODO_fragpipe_peaks_version_coverage.md).
 Keep it optional-but-observed: parameter JSON always writes the key with `null`,
 while `search_parameters_version_status` and rule-selection provenance distinguish
 missing data from parse errors.

@@ -22,6 +22,7 @@ class Parameter(NamedTuple):
 
 
 _VERSION_NO_PATTERN = r"MSFragger-(.+)\.jar"
+_DIANN_PATH_VERSION = re.compile(r"/diann/([^/]+)/", re.IGNORECASE)
 
 _DIANN_QUANT = {
     1: "Any LC (high accuracy)",
@@ -157,11 +158,14 @@ def _parse_phi_report_filters(cmd: str) -> tuple[float, float, float]:
     )
 
 
-def _read_workflow(content: str) -> tuple[str, str | None, str | None, list[Parameter]]:
+def _read_workflow(
+    content: str,
+) -> tuple[str, str | None, str | None, str | None, list[Parameter]]:
     lines = content.splitlines()
     header = lines[0][1:].strip()  # leading '#'
     msfragger_version = None
     fragpipe_version = None
+    diann_version = None
     for line in lines[1:]:
         if line.startswith("# MSFragger version"):
             msfragger_version = line.split(" ")[-1].strip()
@@ -173,7 +177,18 @@ def _read_workflow(content: str) -> tuple[str, str | None, str | None, list[Para
                 msfragger_version = match.group(1)
         if line.startswith("# FragPipe version"):
             fragpipe_version = line.split(" ")[-1].strip()
-    return header, msfragger_version, fragpipe_version, _parse_lines(lines)
+        elif line.startswith("# DIA-NN version"):
+            diann_version = line.removeprefix("# DIA-NN version").strip()
+        elif line.startswith(("fragpipe-config.bin-diann", "fragpipe.config.bin-diann")):
+            executable = re.sub(
+                r"/+",
+                "/",
+                line.split("=", maxsplit=1)[-1].replace("\\", "/"),
+            )
+            match = _DIANN_PATH_VERSION.search(executable)
+            if match:
+                diann_version = match.group(1).replace("_", " ")
+    return header, msfragger_version, fragpipe_version, diann_version, _parse_lines(lines)
 
 
 def _resolve_enzyme(fp: pd.Series) -> str:
@@ -278,7 +293,7 @@ def extract_params(source: str | Path | IO[bytes] | IO[str] | BytesIO) -> Parame
     derivation to a pure helper before assembling :class:`Parameters`.
     """
     content = read_text(source)
-    header, msfragger_version, fragpipe_version, records = _read_workflow(content)
+    header, msfragger_version, fragpipe_version, diann_version, records = _read_workflow(content)
     fp = pd.DataFrame.from_records(records, columns=Parameter._fields).set_index("name")["value"]
 
     if not fragpipe_version:
@@ -292,11 +307,14 @@ def extract_params(source: str | Path | IO[bytes] | IO[str] | BytesIO) -> Parame
     )
     min_z, max_z = _charge_range(fp)
     min_prec_mz, max_prec_mz = _precursor_mz(fp, min_z, max_z)
+    uses_diann = fp.loc["diann.run-dia-nn"] == "true"
 
     return Parameters.model_validate(
         {
             "software_name": "FragPipe",
             "software_version": fragpipe_version,
+            "quantification_software": "DIA-NN" if uses_diann else None,
+            "quantification_software_version": diann_version if uses_diann else None,
             "search_engine": "MSFragger",
             "search_engine_version": msfragger_version,
             "enzyme": _resolve_enzyme(fp),

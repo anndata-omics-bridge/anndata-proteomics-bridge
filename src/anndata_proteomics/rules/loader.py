@@ -143,7 +143,7 @@ def load_rules(
     return load_rule_document(path).effective_rules(search_parameters)
 
 
-def _software_version_matches(pattern: str, version: str) -> bool:
+def software_version_matches(pattern: str, version: str) -> bool:
     """Return whether a document's version regex matches a parsed version."""
     try:
         return re.search(pattern, version) is not None
@@ -174,9 +174,11 @@ def resolve_rule_locator(
         document = load_rule_document(path)
         if level not in document.levels:
             continue
-        if version is not None and not _software_version_matches(
-            document.software_version, version
-        ):
+        # A level whose availability is gated on search parameters (e.g. whether the tool
+        # combined charge states) is not resolvable without them; see LevelRuleFragment.
+        if not document.level_is_available(level, search_parameters):
+            continue
+        if version is not None and not software_version_matches(document.software_version, version):
             continue
         candidates.append((path, document))
     if len(candidates) == 1:

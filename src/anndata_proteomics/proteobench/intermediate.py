@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,19 +10,17 @@ import numpy as np
 import pandas as pd
 
 from anndata_proteomics._matrix_types import is_sparse_matrix
-from anndata_proteomics.proteobench.config import ModuleSettings, SampleSettings
+from anndata_proteomics.proteobench.config import ModuleSettings
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
     render_proteobench_features,
 )
 from anndata_proteomics.proteobench.resolve import ResolvedRoles
-from anndata_proteomics.rules.schema import ParseRule
 
-_DEFAULT_RUN_CLEANUP = re.compile(
-    r"(?:\.mzML\.gz|\.mzML|\.mgf|\.raw|\.RAW|\.d|\.wiff|_uncalibrated|"
-    r" Intensity| Normalized Area)$"
-)
 _CHUNK_SIZE = 50_000
+# ProteoBench's own intermediate names its feature column after the module level; levels it has no
+# module for keep the plain level name.
+_LEGACY_FEATURE_COLUMN = {"ion": "precursor ion", "peptidoform": "peptidoform"}
 
 
 @dataclass(frozen=True)
@@ -47,53 +44,56 @@ class IntermediateResult:
 
 def align_runs(
     target: Any,
-    rule: ParseRule,
-    roles: ResolvedRoles,
     module_settings: ModuleSettings,
 ) -> RunDesign:
-    """Align converted observations to module samples without requiring annotation."""
-    obs_column = roles.raw_file or rule.axis.obs_keys[0]
-    observed = (
-        target.obs[obs_column].astype(str).tolist()
-        if obs_column in target.obs.columns
-        else target.obs_names.astype(str).tolist()
-    )
-    cleanup = _DEFAULT_RUN_CLEANUP
-    by_raw = {
-        _clean_run_name(sample.raw_file, cleanup): sample for sample in module_settings.samples
-    }
+    """Validate and align the sample design added by ``apb annotate``."""
+    required = ("sample_name", "condition")
+    missing = [column for column in required if column not in target.obs.columns]
+    if missing:
+        raise ValueError(
+            "ProteoBench scoring requires prior sample annotation; "
+            f"missing obs columns: {missing}. Run 'apb annotate' first."
+        )
+    if target.obs.loc[:, list(required)].isna().any(axis=None):
+        raise ValueError(
+            "ProteoBench scoring requires complete sample annotation; "
+            "obs['sample_name'] and obs['condition'] must not contain missing values"
+        )
+
+    observed_names = target.obs["sample_name"].astype(str).tolist()
+    observed_conditions = target.obs["condition"].astype(str).tolist()
     by_sample_name = {sample.sample_name: sample for sample in module_settings.samples}
-    wide = _wide_run_mapping(rule, module_settings, cleanup)
 
-    matched: list[tuple[SampleSettings, str]] = []
-    for value in observed:
-        clean_value = _clean_run_name(value, cleanup)
-        pair = wide.get(value) or wide.get(clean_value)
-        if pair is None:
-            sample = by_raw.get(clean_value) or by_sample_name.get(value)
-            pair = (sample, _clean_run_name(sample.raw_file, cleanup)) if sample else None
-        if pair is None:
+    matched = []
+    for sample_name, condition in zip(observed_names, observed_conditions, strict=True):
+        sample = by_sample_name.get(sample_name)
+        if sample is None:
             raise ValueError(
-                f"converted run {value!r} does not match any [[samples]] entry in the module TOML"
+                f"annotated sample_name {sample_name!r} does not match any "
+                "[[samples]].sample_name entry in the module TOML"
             )
-        matched.append(pair)
+        if condition != sample.condition:
+            raise ValueError(
+                f"annotated condition {condition!r} for sample_name {sample_name!r} "
+                f"does not match module condition {sample.condition!r}"
+            )
+        matched.append(sample)
 
-    samples = [pair[0] for pair in matched]
-    if len({sample.raw_file for sample in samples}) != len(samples):
-        raise ValueError("converted observations do not map one-to-one to module samples")
-    expected = {sample.raw_file for sample in module_settings.samples}
-    actual = {sample.raw_file for sample in samples}
+    if len(observed_names) != len(set(observed_names)):
+        raise ValueError("annotated sample_name values do not map one-to-one to module samples")
+    expected = set(by_sample_name)
+    actual = set(observed_names)
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
-        raise ValueError(f"module sample alignment is incomplete; missing={missing}, extra={extra}")
+        raise ValueError(
+            "annotated sample alignment is incomplete; "
+            f"missing sample_name values={missing}, extra={extra}"
+        )
 
-    conditions = np.asarray([sample.condition for sample in samples], dtype=object)
-    sample_names = tuple(sample.sample_name for sample in samples)
-    _validate_existing_annotations(target, conditions, sample_names)
-    raw_files = tuple(pair[1] for pair in matched)
-    if len(raw_files) != len(set(raw_files)):
-        raise ValueError(f"ProteoBench raw-file names are not unique after cleanup: {raw_files}")
+    conditions = np.asarray(observed_conditions, dtype=object)
+    sample_names = tuple(observed_names)
+    raw_files = tuple(sample.raw_file for sample in matched)
     return RunDesign(conditions=conditions, raw_files=raw_files, sample_names=sample_names)
 
 
@@ -102,21 +102,21 @@ def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestratio
     module_settings: ModuleSettings,
     roles: ResolvedRoles,
     design: RunDesign,
+    *,
+    level: str,
 ) -> IntermediateResult:
     """Compute feature statistics and assemble the legacy ProteoBench table."""
     if not target.var_names.is_unique:
         raise ValueError("ProteoBench scoring requires unique var_names")
 
-    feature_ids = target.var[roles.feature].astype(str).to_numpy()
-    if len(set(feature_ids)) != len(feature_ids):
-        raise ValueError(
-            f"ProteoBench feature identifiers in var[{roles.feature!r}] are not unique"
-        )
+    # The feature axis is `var_names` at every level (the rule's joined `axis.var_keys`), and the
+    # uniqueness check above is therefore also the feature-identifier uniqueness check.
+    features = target.var_names.to_series()
 
     reported_proteins = target.var[roles.proteins].astype("string").fillna("")
     mapping_result = map_reported_proteins(reported_proteins)
     proteins = mapping_result.proteins
-    compatibility_features = render_proteobench_features(target.var[roles.feature])
+    compatibility_features = render_proteobench_features(features)
     compatibility_feature_ids = compatibility_features.to_numpy(dtype=str)
     species_flags = {
         species: proteins.str.contains(flag, regex=True, na=False).to_numpy(dtype=bool)
@@ -191,6 +191,7 @@ def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestratio
         design=design,
         source_dtype=source_dtype,
         conditions=conditions,
+        level=level,
     )
     digest = hashlib.sha1(legacy.to_string().encode("utf-8")).hexdigest()
     return IntermediateResult(
@@ -221,6 +222,7 @@ def _compute_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
     design: RunDesign,
     source_dtype: type[np.floating[Any]],
     conditions: list[str],
+    level: str,
 ) -> pd.DataFrame:
     """Reproduce ProteoBench's legacy feature grouping and intermediate."""
     unique_features, group_codes = np.unique(feature_ids, return_inverse=True)
@@ -297,7 +299,7 @@ def _compute_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
         pre_unique=pre_unique,
         included=included,
         design=design,
-        level=module_settings.general.level,
+        level=level,
         source_dtype=source_dtype,
         species=list(module_settings.species_expected_ratio),
         conditions=conditions,
@@ -328,8 +330,7 @@ def assemble_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
     selected = selected[np.argsort(feature_ids[selected], kind="stable")]
     index = [legacy_index[feature_index] for feature_index in selected]
     legacy = pd.DataFrame(index=index)
-    precursor_column = "precursor ion" if level == "ion" else "peptidoform"
-    legacy[precursor_column] = feature_ids[selected]
+    legacy[_LEGACY_FEATURE_COLUMN.get(level, level)] = feature_ids[selected]
 
     for metric in (
         "log_Intensity_mean",
@@ -467,52 +468,6 @@ def _empirical_centers(
         median[frame.index] = frame.groupby("species")["fold_change"].transform("median")
         mean[frame.index] = frame.groupby("species")["fold_change"].transform("mean")
     return {"median": median, "mean": mean}
-
-
-def _wide_run_mapping(
-    rule: ParseRule,
-    module_settings: ModuleSettings,
-    cleanup: re.Pattern[str],
-) -> dict[str, tuple[SampleSettings, str]]:
-    if rule.input_shape != "wide":
-        return {}
-    x_layer = next(layer for layer in rule.layers if layer.name == rule.axis.x_layer)
-    pattern = re.compile(x_layer.source)
-    result: dict[str, tuple[SampleSettings, str]] = {}
-    for sample in module_settings.samples:
-        raw_column = sample.raw_file
-        match = pattern.match(raw_column)
-        observed_name = match.group("sample") if match else _clean_run_name(raw_column, cleanup)
-        result[observed_name] = (sample, _clean_run_name(raw_column, cleanup, strip_path=False))
-    return result
-
-
-def _clean_run_name(
-    value: str,
-    cleanup: re.Pattern[str],
-    *,
-    strip_path: bool = True,
-) -> str:
-    name = str(value)
-    if strip_path:
-        name = name.replace("\\", "/").rsplit("/", 1)[-1]
-    return cleanup.sub("", name)
-
-
-def _validate_existing_annotations(
-    target: Any,
-    conditions: np.ndarray,
-    sample_names: tuple[str, ...],
-) -> None:
-    for column, expected in (
-        ("condition", conditions),
-        ("sample_name", np.asarray(sample_names, dtype=object)),
-    ):
-        if column not in target.obs.columns:
-            continue
-        actual = target.obs[column].astype(str).to_numpy()
-        if not np.array_equal(actual, expected.astype(str)):
-            raise ValueError(f"existing obs[{column!r}] disagrees with the required module TOML")
 
 
 def _contaminants(proteins: pd.Series) -> np.ndarray:

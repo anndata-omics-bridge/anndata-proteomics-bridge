@@ -8,8 +8,8 @@ parameters and external annotations.
 
 **Figure:** the main conversion path. Rule JSON documents are validated into `ParseRule`
 objects; vendor data becomes a `DataFrame`; optional parameter files, sample
-annotation, FASTA validation, and ProteoBench scoring independently enrich the
-final AnnData/MuData object.
+annotation, and FASTA validation enrich the final AnnData/MuData object.
+ProteoBench scoring consumes the sample design produced by annotation.
 
 ```mermaid
 flowchart TD
@@ -50,7 +50,7 @@ flowchart TD
     valfasta -. MuData .-> mulink[varp feature_mapping: peptide feature to protein feature]
 
     moduletoml[/ProteoBench module TOML/] --> pbscore[proteobench.score_quantification]
-    adata --> pbscore
+    annobs --> pbscore
     pbscore --> pbvarm[varm proteobench: feature statistics]
     pbscore --> pbuns[uns proteobench: roles, mapping provenance, scores]
 
@@ -85,11 +85,13 @@ Packaged rule files live inside the Python package:
 src/anndata_proteomics/parsing_rules/
   _schema/parse_rule.schema.json
   _schema/parse_rule_document.schema.json
+  alphapept/rules.json       # ion
   diann/v1/rules.json        # ion, fragment, protein
   diann/v2/rules.json        # ion, protein
   fragpipe/rules.json        # ion
   maxquant/rules.json        # ion
   peaks/rules.json           # ion
+  sage/rules.json            # ion, peptidoform (parameter-gated)
   spectronaut/rules.json     # ion, fragment, protein
   wombat/rules.json          # ion, peptidoform
 ```
@@ -116,7 +118,7 @@ The CLI subcommands are:
 | `apb convert <data> [level] --params <param-file>` | Convert vendor data to `.h5mu` or a selected `.h5ad` level. |
 | `apb annotate <data> <annotations.toml/csv/tsv>` | Join external sample metadata onto `obs`. |
 | `apb fasta <data> <proteome.fasta>` | Annotate proteins and, by default, validate every peptide-derived modality against FASTA. |
-| `apb proteobench <data> <module.toml>` | Score the module-selected ion/peptidoform modality without requiring annotation or FASTA. |
+| `apb proteobench <data> <module.toml>` | Score every annotated quantification level a container holds, each into its own `uns`/`varm`; requires `sample_name` and `condition`, while FASTA remains optional. |
 
 ## Search Parameters
 
@@ -140,8 +142,13 @@ dispatches by software name.
 - MuLink edges can only target protein features already present in a MuData;
   exhaustive FASTA matches remain available in each peptide modality's validation table.
 - `duplicates.mode = "keep_all_as_raw_table"` is reserved but not implemented.
-- ProteoBench coverage currently implements quantitative HYE ion/peptidoform
-  metrics; PYE/plasma, de-novo, and entrapment variants are not implemented.
+- ProteoBench coverage currently implements the quantitative HYE metrics;
+  PYE/plasma, de-novo, and entrapment variants are not implemented.
+- Scoring is level-agnostic: the module TOML supplies the sample design and the
+  per-species expected ratios, and the feature axis is `var_names` (the rule's
+  joined `axis.var_keys`), so any converted level can be scored. Only ion and
+  peptidoform have published ProteoBench modules, so fragment and protein scores
+  are comparable across APB runs but not to the ProteoBench leaderboard.
 
 ## Adding Things
 

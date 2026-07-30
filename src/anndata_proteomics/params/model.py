@@ -207,6 +207,8 @@ class Parameters(_Strict):
 
     software_name: str | None = None
     software_version: str | None = None
+    quantification_software: str | None = None
+    quantification_software_version: str | None = None
     acquisition_method: AcquisitionMethod = "unknown"
     search_engine: str | None = None
     search_engine_version: str | None = None
@@ -231,6 +233,11 @@ class Parameters(_Strict):
     min_fragment_mz: NonNegativeFloat | None = None
     max_fragment_mz: NonNegativeFloat | None = None
     quantification_method: str | None = None
+    # Whether the quantification step merged a peptidoform's charge states into one value.
+    # This decides the quantification *level* of the result table, not just its content: a
+    # charge-collapsed export is peptidoform-level even when the tool's file carries a
+    # charge column (Sage writes -1 there). Parsing rules gate level availability on it.
+    combine_charge_states: bool | None = None
     protein_inference: str | None = None
     abundance_normalization_ions: str | bool | None = None
     predictors_library: str | None = None
@@ -240,6 +247,8 @@ class Parameters(_Strict):
     @field_validator(
         "software_name",
         "software_version",
+        "quantification_software",
+        "quantification_software_version",
         "search_engine",
         "search_engine_version",
         "quantification_method",

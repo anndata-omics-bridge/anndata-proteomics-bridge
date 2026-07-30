@@ -24,7 +24,11 @@ def _synthesized_columns(rule: ParseRule) -> set[str]:
 
 
 def _expected_long_columns(rule: ParseRule) -> set[str]:
-    """Vendor columns a long rule requires in the input (optional layers excluded)."""
+    """Vendor columns a long rule requires in the input.
+
+    Optional layers and ``columns.*.optional_select`` are excluded: both describe
+    configuration-dependent vendor columns that must not gate recognition.
+    """
     out = set(rule.columns.obs.select.values()) | set(rule.columns.var.select.values())
     out.update(layer.source for layer in rule.layers if rule.layer_required(layer))
     out.discard(_SAMPLE_PLACEHOLDER)
@@ -33,7 +37,10 @@ def _expected_long_columns(rule: ParseRule) -> set[str]:
 
 
 def _required_var_columns(rule: ParseRule) -> set[str]:
-    """Vendor columns a wide rule expects on the var axis (per-feature, not per-sample)."""
+    """Vendor columns a wide rule expects on the var axis (per-feature, not per-sample).
+
+    ``columns.var.optional_select`` is excluded for the same reason as optional layers.
+    """
     return {
         v
         for v in rule.columns.var.select.values()

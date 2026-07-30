@@ -24,7 +24,11 @@ from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.registry import parse_params
 from anndata_proteomics.readers.summary import store_quantification_summary
-from anndata_proteomics.rules.loader import load_rule, resolve_rule_for_version
+from anndata_proteomics.rules.loader import (
+    load_rule,
+    load_rule_document,
+    resolve_rule_for_version,
+)
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 
@@ -71,6 +75,47 @@ class ParameterResolution:
 def software_slug(software_name: str) -> str:
     """Map a catalog ``software_name`` (e.g. "DIA-NN") to a parsing-rule vendor slug ("diann")."""
     return re.sub(r"[^a-z0-9]", "", software_name.lower())
+
+
+def resolve_rule_version(
+    parameter_resolution: ParameterResolution,
+    rule_slug: str,
+) -> tuple[str | None, ParameterVersionStatus]:
+    """Resolve a parsing-rule version from primary or quantification software metadata."""
+    parameters = parameter_resolution.parameters
+    if parameters is None:
+        return None, parameter_resolution.version_status
+    candidates = (
+        (parameters.software_name, parameters.software_version),
+        (
+            parameters.quantification_software,
+            parameters.quantification_software_version,
+        ),
+    )
+    for software_name, version in candidates:
+        if software_name is not None and software_slug(software_name) == rule_slug:
+            return version, "present" if version is not None else "missing"
+    if not any(software_name for software_name, _version in candidates):
+        return parameter_resolution.version, parameter_resolution.version_status
+    return None, "missing"
+
+
+def _effective_rule_version(
+    rule_slug: str,
+    version: str | None,
+    parameter_resolution: ParameterResolution | None,
+) -> tuple[str | None, ParameterVersionStatus | None]:
+    if parameter_resolution is None:
+        return version, None
+    resolved_version, version_status = resolve_rule_version(
+        parameter_resolution,
+        rule_slug,
+    )
+    if resolved_version is not None:
+        return resolved_version, version_status
+    if version is not None and version_status == "missing":
+        return version, "present"
+    return version, version_status
 
 
 def recognize_software(headers: Iterable[str]) -> str | None:
@@ -141,6 +186,10 @@ def _column_matching_rule_variants(
     candidates = []
     for locator in iter_packaged_rules():
         if locator.level != level:
+            continue
+        # Same availability gate the version resolver applies: two levels of one document can
+        # share both the version regex and the header schema, so headers cannot separate them.
+        if not load_rule_document(locator.path).level_is_available(level, search_parameters):
             continue
         rule = load_rule(locator, search_parameters=search_parameters)
         if software_slug(rule.software_name) != slug:
@@ -310,10 +359,10 @@ def convert_level(
 
     if parameter_resolution is None and params_path is not None:
         parameter_resolution = resolve_parameters(params_path, slug)
-    if version is None and parameter_resolution is not None:
-        version = parameter_resolution.version
-    version_status = (
-        parameter_resolution.version_status if parameter_resolution is not None else None
+    version, version_status = _effective_rule_version(
+        slug,
+        version,
+        parameter_resolution,
     )
     search_parameters = (
         parameter_resolution.parameters if parameter_resolution is not None else None
@@ -359,10 +408,10 @@ def build_mudata(
     """
     if parameter_resolution is None and params_path is not None:
         parameter_resolution = resolve_parameters(params_path, slug)
-    if version is None and parameter_resolution is not None:
-        version = parameter_resolution.version
-    version_status = (
-        parameter_resolution.version_status if parameter_resolution is not None else None
+    version, version_status = _effective_rule_version(
+        slug,
+        version,
+        parameter_resolution,
     )
     search_parameters = (
         parameter_resolution.parameters if parameter_resolution is not None else None

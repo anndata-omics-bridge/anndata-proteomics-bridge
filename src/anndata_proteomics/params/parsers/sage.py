@@ -76,10 +76,20 @@ def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
 
     max_len = data["database"]["enzyme"]["max_len"]
 
+    # `quant.lfq_settings.combine_charge_states` decides whether `lfq.tsv` is ion- or
+    # peptidoform-level: Sage's DOCS.md gives it default `true` ("Combine all charge states
+    # for quantification"), and a combined row is written with `charge = -1`. Absent when the
+    # run had no LFQ stage, in which case there is no charge-state decision to report.
+    lfq_settings = data.get("quant", {}).get("lfq_settings") or {}
+    combine_charge_states = (
+        lfq_settings.get("combine_charge_states", True) if lfq_settings else None
+    )
+
     return Parameters.model_validate(
         {
             "software_name": "Sage",
             "software_version": data["version"],
+            "combine_charge_states": combine_charge_states,
             "search_engine": "Sage",
             "search_engine_version": data["version"],
             "enzyme": enzyme,

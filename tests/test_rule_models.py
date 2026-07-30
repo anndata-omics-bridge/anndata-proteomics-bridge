@@ -192,6 +192,28 @@ def test_factor_rejects_missing_values():
         _parse(bad)
 
 
+def test_factor_rejects_value_pattern():
+    bad = copy.deepcopy(WIDE_EXAMPLE)
+    bad["layers"][2]["value_pattern"] = r":(\d+)$"
+    with pytest.raises(ValidationError, match="only valid for numeric"):
+        _parse(bad)
+
+
+def test_value_pattern_must_be_a_valid_regex():
+    bad = copy.deepcopy(WIDE_EXAMPLE)
+    bad["layers"][0]["value_pattern"] = r"([unclosed"
+    with pytest.raises(ValidationError, match="not a valid regex"):
+        _parse(bad)
+
+
+@pytest.mark.parametrize("pattern", [r":\d+$", r"(\w+):(\d+)$"])
+def test_value_pattern_requires_exactly_one_capture_group(pattern: str):
+    bad = copy.deepcopy(WIDE_EXAMPLE)
+    bad["layers"][0]["value_pattern"] = pattern
+    with pytest.raises(ValidationError, match="exactly one capture group"):
+        _parse(bad)
+
+
 def test_x_layer_must_exist():
     bad = copy.deepcopy(LONG_EXAMPLE)
     bad["axis"]["x_layer"] = "DoesNotExist"

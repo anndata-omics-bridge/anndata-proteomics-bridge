@@ -2,7 +2,7 @@
   "schema_version": "0.1",
   "file_version": "1",
   "software_name": "MaxQuant",
-  "software_version": "^2\\.6\\.7\\.0$",
+  "software_version": "^(1\\.5|1\\.6|2\\.)",
   "base": {
     "input_shape": "long",
     "axis": {
@@ -16,7 +16,9 @@
     "columns": {
       "obs": {
         "select": {
-          "Raw_File": "Raw file",
+          "Raw_File": "Raw file"
+        },
+        "optional_select": {
           "Experiment": "Experiment",
           "Fraction": "Fraction"
         }
@@ -70,16 +72,21 @@
             "Modifications": "Modifications",
             "Charge": "Charge",
             "Mass": "Mass",
-            "Proteins": "Proteins",
+            "Proteins": "Proteins"
+          },
+          "optional_select": {
             "Leading_Proteins": "Leading proteins",
-            "Leading_Razor_Protein": "Leading razor protein"
+            "Leading_Razor_Protein": "Leading razor protein",
+            "Leading_Proteins_Legacy": "Leading Proteins",
+            "Leading_Razor_Protein_Legacy": "Leading Razor Protein"
           },
           "compute": [
             {
               "name": "Proteins",
               "from": [
                 "Proteins",
-                "Leading_Proteins"
+                "Leading_Proteins",
+                "Leading_Proteins_Legacy"
               ],
               "how": "coalesce"
             },

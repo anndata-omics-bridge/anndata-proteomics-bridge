@@ -85,12 +85,20 @@
     },
     "ColumnGroup": {
       "additionalProperties": false,
+      "description": "Declared axis columns: required ``select``, best-effort ``optional_select``, ``compute``.\n\n``select`` sources must be present in the input \u2014 they gate rule recognition. Columns a\nvendor emits only for some configurations belong in ``optional_select``: captured when the\nsource is present, silently skipped when absent, and never part of recognition. This\nmirrors ``Layer.required = false`` so one vendor document can declare the full superset of\nan export's volatile columns without rejecting the exports that omit some.",
       "properties": {
         "select": {
           "additionalProperties": {
             "type": "string"
           },
           "title": "Select",
+          "type": "object"
+        },
+        "optional_select": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Optional Select",
           "type": "object"
         },
         "compute": {
@@ -197,7 +205,7 @@
     },
     "Layer": {
       "additionalProperties": false,
-      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.",
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\n``value_pattern`` handles vendor columns whose cells are structured strings rather\nthan bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex\nwith exactly one capture group, applied per cell before numeric coercion; the first\nmatch wins and non-matching cells become NaN. Without it such a column silently\ncoerces to an all-NaN layer.",
       "properties": {
         "name": {
           "title": "Name",
@@ -229,6 +237,11 @@
           },
           "title": "Missing Values",
           "type": "array"
+        },
+        "value_pattern": {
+          "default": "",
+          "title": "Value Pattern",
+          "type": "string"
         },
         "required": {
           "default": false,

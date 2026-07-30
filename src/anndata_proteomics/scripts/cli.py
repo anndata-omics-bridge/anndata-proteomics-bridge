@@ -25,6 +25,7 @@ from cyclopts import App
 from loguru import logger
 
 from anndata_proteomics._logging import configure_default_sink
+from anndata_proteomics._matrix_types import named_layers
 from anndata_proteomics.converters.assemble import convert as _run_convert
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
@@ -81,6 +82,7 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
     params: Path | None = None,
     rule_config: Path | None = None,
     software: str | None = None,
+    params_software: str | None = None,
     output: Path | None = None,
 ) -> int:
     """Convert a vendor file to a multi-level MuData (.h5mu) or one level to an AnnData (.h5ad).
@@ -89,11 +91,12 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
     (.h5mu) on a shared run axis, including a one-modality MuData for single-level vendors.
     Pass a LEVEL (ion / fragment / peptidoform / peptide / protein) to emit an AnnData (.h5ad).
 
-    --params is the vendor parameter file; it supplies the software version that selects the rule
-    variant (e.g. DIA-NN v1 vs v2) and is required unless --rule-config is given. The vendor is
-    auto-detected from the column headers; override with --software (the rule folder slug, e.g.
-    "diann"). --rule-config selects an explicit software-version document; LEVEL chooses one
-    section, while omitting LEVEL converts every matching section in that document.
+    --params is the vendor parameter file and is required unless --rule-config is given. The
+    result-table vendor is auto-detected from the column headers; override it with --software (the
+    rule folder slug, e.g. "diann"). For compound workflows such as FragPipe with DIA-NN output,
+    --params-software selects the parameter parser independently (e.g. "fragpipe"). --rule-config
+    selects an explicit software-version document; LEVEL chooses one section, while omitting LEVEL
+    converts every matching section in that document.
     --output is an extensionless basename. APB appends .h5mu for MuData or .h5ad for AnnData.
     Without --output, the result is written next to the input using the input stem.
     """
@@ -106,6 +109,7 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
         matching_rules,
         recognize_software,
         resolve_parameters,
+        resolve_rule_version,
         set_rule_selection_method,
         software_slug,
     )
@@ -122,7 +126,9 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
     if rule_config is not None:
         document = load_rule_document(rule_config)
         rule_slug = software_slug(document.software_name)
-        parameter_resolution = resolve_parameters(params, rule_slug) if params is not None else None
+        parameter_resolution = (
+            resolve_parameters(params, params_software or rule_slug) if params is not None else None
+        )
         search_parameters = (
             parameter_resolution.parameters if parameter_resolution is not None else None
         )
@@ -178,12 +184,9 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
     if params is None:
         logger.error("pass --params (it gives the software version) or --rule-config PATH")
         return 1
-    parameter_resolution = resolve_parameters(params, slug)
-    version = parameter_resolution.version
-    logger.info(
-        f"vendor={slug} software_version={version!r} "
-        f"version_status={parameter_resolution.version_status}"
-    )
+    parameter_resolution = resolve_parameters(params, params_software or slug)
+    version, version_status = resolve_rule_version(parameter_resolution, slug)
+    logger.info(f"vendor={slug} software_version={version!r} version_status={version_status}")
 
     if level is not None:
         adata = convert_level(
@@ -200,7 +203,7 @@ def convert(  # noqa: C901, PLR0911 - CLI maps validation failures to exit statu
         slug,
         version,
         df.columns,
-        version_status=parameter_resolution.version_status,
+        version_status=version_status,
         search_parameters=parameter_resolution.parameters,
     )
     if levels:
@@ -228,7 +231,7 @@ def _write_anndata(adata: AnnData, output: Path | None, data: Path) -> int:
     out = _output_path(output, data, ".h5ad")
     _write_atomically(out, adata.write_h5ad)
     _remove_stale_sibling(out, ".h5mu")
-    logger.info(f"wrote {out}  shape={adata.shape}  layers={list(adata.layers)}")
+    logger.info(f"wrote {out}  shape={adata.shape}  layers={list(named_layers(adata))}")
     return 0
 
 
@@ -420,11 +423,12 @@ def proteobench(
     *,
     output: Path | None = None,
 ) -> int:
-    """Compute ProteoBench scores without requiring annotation or FASTA stages.
+    """Compute ProteoBench scores from an APB-annotated quantitative object.
 
-    The module TOML supplies the sample design and species ratios. Vendor-specific
-    interpretation is already complete in the converted APB object. The default
-    output is ``<stem>.proteobench<suffix>`` beside the input.
+    Every quantification level the object holds is scored into its own ``uns``/``varm``: an
+    AnnData scores itself, a MuData scores each modality. Run ``apb annotate`` before this
+    command; scoring requires ``sample_name`` and ``condition`` in each scored observation
+    table. The default output is ``<stem>.proteobench<suffix>`` beside the input.
     """
     from anndata_proteomics.proteobench.config import load_module_settings
     from anndata_proteomics.proteobench.pipeline import score_quantification

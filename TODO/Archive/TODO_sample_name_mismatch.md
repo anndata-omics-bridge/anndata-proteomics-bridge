@@ -1,6 +1,19 @@
 # TODO: Resolve vendor-to-module sample-name mismatches
 
-Status: root cause confirmed; implementation not started.
+Status: superseded on 2026-07-29.
+
+The accepted pipeline contract is now:
+
+```text
+apb convert -> apb annotate -> apb proteobench
+```
+
+Annotation alone resolves vendor identifiers (including exact
+`raw_file_alias` fallback) and writes `obs["sample_name"]` and
+`obs["condition"]`. ProteoBench scoring requires those columns and does not
+contain a second run-name resolver. The scoring-side resolver proposed below
+must not be implemented; the remaining historical analysis is retained only
+for context.
 
 ## Outcome from the corpus run
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pytest
 
+from anndata_proteomics._matrix_types import named_layers
 from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.readers.dispatch import read_table
@@ -121,7 +122,7 @@ def test_spectronaut_conversion_matches_declared_columns(
 
     assert set(rule.columns.var.names) <= set(adata.var.columns)
     assert set(rule.columns.obs.names) <= set(adata.obs.columns)
-    assert {layer.name for layer in rule.layers} == set(adata.layers.keys())
+    assert {layer.name for layer in rule.layers} == set(named_layers(adata))
 
     # when the feature key is a directly selected vendor column, conversion must collapse to one
     # var per distinct key value (computed keys such as ProForma_ion are exercised at ion level).

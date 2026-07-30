@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.params.parsers.fragpipe import extract_params
+from anndata_proteomics.params.parsers.fragpipe import _read_workflow, extract_params
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
@@ -73,3 +73,28 @@ def test_fragpipe_matches_proteobench(workflow_name: str):
         if str(a) != str(e):
             mismatches.append((f, a, e))
     assert not mismatches, f"Mismatched fields in {workflow_name}: {mismatches}"
+
+
+def test_fragpipe_exposes_embedded_diann_quantification_version() -> None:
+    params = extract_params(PROTEOBENCH_PARAMS / "fragpipe.workflow")
+
+    assert params.software_name == "FragPipe"
+    assert params.software_version == "23.0"
+    assert params.quantification_software == "DIA-NN"
+    assert params.quantification_software_version == "1.8.2 beta 8"
+
+
+def test_fragpipe_without_diann_quantification_has_no_embedded_quantifier() -> None:
+    params = extract_params(PROTEOBENCH_PARAMS / "fragpipe_v23_noMBR.workflow")
+
+    assert params.quantification_software is None
+    assert params.quantification_software_version is None
+
+
+def test_fragpipe_reads_diann_version_from_legacy_executable_path() -> None:
+    workflow = (
+        "# FragPipe (22.0) runtime properties\n"
+        "fragpipe-config.bin-diann=C\\:\\\\tools\\\\diann\\\\1.8.2_beta_8\\\\win\\\\DiaNN.exe\n"
+    )
+
+    assert _read_workflow(workflow)[3] == "1.8.2 beta 8"

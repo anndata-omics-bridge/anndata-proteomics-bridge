@@ -124,7 +124,7 @@
     },
     "Layer": {
       "additionalProperties": false,
-      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.",
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\n``value_pattern`` handles vendor columns whose cells are structured strings rather\nthan bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex\nwith exactly one capture group, applied per cell before numeric coercion; the first\nmatch wins and non-matching cells become NaN. Without it such a column silently\ncoerces to an all-NaN layer.",
       "properties": {
         "name": {
           "title": "Name",
@@ -157,6 +157,11 @@
           "title": "Missing Values",
           "type": "array"
         },
+        "value_pattern": {
+          "default": "",
+          "title": "Value Pattern",
+          "type": "string"
+        },
         "required": {
           "default": false,
           "title": "Required",
@@ -172,7 +177,7 @@
     },
     "LevelRuleFragment": {
       "additionalProperties": false,
-      "description": "Strict level body with non-recursive search-parameter axis overrides.",
+      "description": "Strict level body with non-recursive search-parameter axis overrides.\n\n``requires_search_parameters`` gates the level's *availability* rather than its content:\na tool whose quantification settings decide the level of its own output table (Sage's\n``combine_charge_states`` collapses charge states, making one and the same ``lfq.tsv``\nschema ion- or peptidoform-level) cannot be resolved by version or headers, because\nneither differs. A level declaring conditions here is offered only when the parsed\nsearch parameters satisfy every one of them. Levels with no conditions are always\navailable, so this changes nothing for documents that do not use it.",
       "properties": {
         "input_shape": {
           "anyOf": [
@@ -292,6 +297,11 @@
           },
           "title": "Search Parameter Overrides",
           "type": "array"
+        },
+        "requires_search_parameters": {
+          "additionalProperties": true,
+          "title": "Requires Search Parameters",
+          "type": "object"
         }
       },
       "title": "LevelRuleFragment",
@@ -398,6 +408,21 @@
           ],
           "default": null,
           "title": "Select"
+        },
+        "optional_select": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optional Select"
         },
         "compute": {
           "anyOf": [

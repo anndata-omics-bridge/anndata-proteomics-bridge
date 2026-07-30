@@ -78,6 +78,81 @@ def test_obs_join_by_index(tmp_path: Path) -> None:
     assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
 
 
+def test_obs_join_falls_back_to_exact_raw_file_alias(tmp_path: Path) -> None:
+    text = _BASIC_TOML.replace(
+        'raw_file = "runA1"',
+        'raw_file = "runA1"\nraw_file_alias = "aliasA1"',
+    )
+    text = text.replace(
+        'raw_file = "runA2"',
+        'raw_file = "runA2"\nraw_file_alias = "aliasA2"',
+    )
+    text = text.replace(
+        'raw_file = "runB1"',
+        'raw_file = "runB1"\nraw_file_alias = "aliasB1"',
+    )
+    text = text.replace(
+        'raw_file = "runB2"',
+        'raw_file = "runB2"\nraw_file_alias = "aliasB2"',
+    )
+    adata = _adata(runs=["aliasA1", "aliasA2", "aliasB1", "aliasB2"])
+
+    annotate_obs(adata, _annotation_from(tmp_path, text))
+
+    assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
+    assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
+    provenance = adata.uns["anndata_proteomics"]["obs_annotations_json"]
+    assert '"key_field": "raw_file_alias"' in provenance
+
+
+def test_obs_join_supports_multiple_exact_raw_file_aliases(tmp_path: Path) -> None:
+    text = _BASIC_TOML.replace(
+        'raw_file = "runA1"',
+        'raw_file = "runA1"\nraw_file_aliases = ["aliasA1", "secondA1"]',
+    )
+    text = text.replace(
+        'raw_file = "runA2"',
+        'raw_file = "runA2"\nraw_file_aliases = ["aliasA2", "secondA2"]',
+    )
+    text = text.replace(
+        'raw_file = "runB1"',
+        'raw_file = "runB1"\nraw_file_aliases = ["aliasB1", "secondB1"]',
+    )
+    text = text.replace(
+        'raw_file = "runB2"',
+        'raw_file = "runB2"\nraw_file_aliases = ["aliasB2", "secondB2"]',
+    )
+    adata = _adata(runs=["secondA1", "secondA2", "secondB1", "secondB2"])
+
+    annotate_obs(adata, _annotation_from(tmp_path, text))
+
+    assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
+    assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
+    provenance = adata.uns["anndata_proteomics"]["obs_annotations_json"]
+    assert '"key_field": "raw_file_aliases"' in provenance
+
+
+def test_duplicate_raw_file_aliases_raise(tmp_path: Path) -> None:
+    text = _BASIC_TOML.replace(
+        'raw_file = "runA1"',
+        'raw_file = "runA1"\nraw_file_aliases = ["shared", "aliasA1"]',
+    )
+    text = text.replace(
+        'raw_file = "runA2"',
+        'raw_file = "runA2"\nraw_file_aliases = ["shared", "aliasA2"]',
+    )
+
+    with pytest.raises(ValueError, match="duplicate 'raw_file_aliases'"):
+        annotate_obs(_adata(runs=["shared"]), _annotation_from(tmp_path, text))
+
+
+def test_obs_join_does_not_fall_back_to_sample_name(tmp_path: Path) -> None:
+    adata = _adata(runs=["A_rep1", "A_rep2", "B_rep1", "B_rep2"])
+
+    with pytest.raises(ValueError, match="no obs rows matched"):
+        annotate_obs(adata, _annotation_from(tmp_path))
+
+
 def test_annotation_preserves_quantification_summary(tmp_path: Path) -> None:
     adata = _adata()
     matrix = adata.X

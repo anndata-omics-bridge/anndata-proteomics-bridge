@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from anndata_proteomics._matrix_types import named_layers
 from anndata_proteomics.converters.pipeline import (
     convert_level,
     resolve_parameters,
@@ -136,14 +137,14 @@ def test_cached_fragpipe_and_peaks_inputs_convert_with_exact_run_axis(
     if case.expected_version_status == "missing":
         assert stored["software_version"] is None
     if case.slug == "fragpipe":
-        assert set(result.layers) == {
+        assert set(named_layers(result)) == {
             "Intensity",
             "Spectral_Count",
             "Apex_Retention_Time",
             "Match_Type",
         }
     else:
-        assert {"Normalized_Area", "Sample_Mz", "Sample_RT_Mean"} <= set(result.layers)
+        assert {"Normalized_Area", "Sample_Mz", "Sample_RT_Mean"} <= set(named_layers(result))
 
 
 def test_peaks_aif_txt_is_detected_as_comma_delimited() -> None:

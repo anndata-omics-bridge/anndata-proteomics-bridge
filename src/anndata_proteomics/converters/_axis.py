@@ -27,10 +27,18 @@ def build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
 
 
 def build_axis_frame(df: pd.DataFrame, keys: list[str], output_columns: list[str]) -> pd.DataFrame:
-    """Take first occurrence per key tuple for already-materialized output columns."""
-    needed_cols = list(dict.fromkeys(list(keys) + output_columns))
+    """Take first occurrence per key tuple for already-materialized output columns.
+
+    ``output_columns`` is the rule's *declared* column set, which may name
+    ``optional_select`` entries this export does not carry. Those are the only declared
+    columns that can be absent here — ``_materialize_column_group`` raises on a missing
+    required ``select`` source, and every compute assigns its column — so filtering to the
+    present ones drops exactly the skipped optional columns and nothing else.
+    """
+    present = [column for column in output_columns if column in df.columns]
+    needed_cols = list(dict.fromkeys(list(keys) + present))
     block = df[needed_cols].drop_duplicates(subset=keys).copy()
-    out = block[output_columns].copy()
+    out = block[present].copy()
     out.index = build_index(block, keys).values
     out.index.name = KEY_SEPARATOR.join(keys)
     return out

@@ -181,6 +181,35 @@ input columns:
 Left-hand names preserve the vendor's words, case, and namespace while replacing
 separators with underscores. Do not replace them with cross-vendor semantic aliases.
 
+`select` sources are required: a file missing one is rejected, because `select` is what
+gates rule recognition. Vendor columns emitted only for some configurations — a MaxQuant
+`Fraction` column that exists only for fractionated designs, an `Experiment` column that
+depends on the experimental design — belong in `optional_select` instead:
+
+```json
+{
+  "obs": {
+    "select": {"Raw_File": "Raw file"},
+    "optional_select": {"Experiment": "Experiment", "Fraction": "Fraction"}
+  }
+}
+```
+
+`optional_select` is captured when the source is present and silently skipped when absent,
+and never participates in recognition. This is the column-side counterpart of an optional
+layer (`required: false`), and it lets one vendor document declare the full superset of an
+export's volatile columns without rejecting the exports that omit some. Three rules apply:
+
+- A name may not appear in both `select` and `optional_select` of the same group.
+- An `axis.obs_keys` / `axis.var_keys` entry may not name an `optional_select` column: an
+  axis key must always exist.
+- `columns.obs.optional_select` is forbidden on wide rules, whose observation axis accepts
+  only the `<sample>` placeholder.
+
+A `coalesce` or `join_nonempty` compute may name `optional_select` sources; those absent
+from the input are dropped from the coalesce chain. A compute whose *every* source was
+skipped is an error — it declares a column it can never produce.
+
 `columns.var.compute` is ordered. Each object has `name`, `from`, and `how`:
 
 | `how` | Required `name` | Purpose |
@@ -212,7 +241,9 @@ field is `protein_accessions`, which must name a declared `var` column:
 
 Declare the role in the level that owns that column. Consumers resolve it from
 the stored effective rule and continue to use `X` as the quantitative matrix;
-they do not parse the vendor table again.
+they do not parse the vendor table again. Declare it in **every** level a vendor
+supports: ProteoBench scoring resolves species membership through this role, so a
+level without it cannot be scored.
 
 ## Layers
 
@@ -235,7 +266,16 @@ A layer is one reported measurement varying over `obs × var`:
   with a non-empty `categories` map.
 - `missing_values` lists numeric vendor sentinels that APB replaces with `NaN`
   before matrix assembly. It is layer-specific and must not include valid zeros or
-  factor category codes.
+  factor category codes. Several tools write `0` for "not quantified" rather than
+  leaving the cell empty (FragPipe, Sage, PEAKS); without this the layer reports 0%
+  missingness.
+- `value_pattern` is a regex with exactly one capture group, applied per cell before
+  numeric coercion, for vendor columns whose cells are structured strings rather than
+  bare numbers. PEAKS `AScore` cells read `site:modification:score`, so the layer needs
+  `":(-?\\d+(?:\\.\\d+)?)(?:;|$)"` to yield the score; the first match wins and cells
+  that do not match become `NaN`. Numeric layers only — a `factor` layer must use
+  `categories`. Without it such a column coerces to an all-NaN layer, which APB warns
+  about but cannot repair.
 - `required` defaults to false, but `axis.x_layer` is always required.
 
 Store a value as a layer only when it varies by sample for the same feature.
@@ -257,6 +297,36 @@ Wide documents normally put the synthetic sample column in `base`:
 Each wide level then declares feature columns and layer regexes such as
 `"^(?P<sample>.+) Intensity$"`. `sample_name_cleanup` is optional and forbidden on
 long rules.
+
+## Parameter-gated level availability
+
+A level may declare `requires_search_parameters`, a map of `Parameters` field names to
+required values. The level is offered only when the parsed vendor parameters satisfy every
+condition; a level with no conditions is always offered.
+
+```json
+{
+  "levels": {
+    "ion":         {"requires_search_parameters": {"combine_charge_states": false}, "...": "..."},
+    "peptidoform": {"requires_search_parameters": {"combine_charge_states": true},  "...": "..."}
+  }
+}
+```
+
+This exists for tools whose own quantification settings decide the level of their output
+table while leaving the file schema untouched. Sage's `lfq_settings.combine_charge_states`
+(default `true`) collapses charge states and writes `charge = -1`, so one and the same
+`lfq.tsv` header is ion-level or peptidoform-level depending only on that setting — neither
+the `software_version` regex nor the headers can tell them apart.
+
+Two consequences worth knowing:
+
+- A gated level is **unavailable when no parameters could be parsed**. Guessing would pick
+  the wrong level for exactly the inputs the gate exists to separate, so the vendor reports
+  as unsupported instead.
+- `requires_search_parameters` gates availability only. It never reaches the merged
+  `ParseRule` body and cannot change a level's columns, axis, or layers — use
+  `search_parameter_overrides` for that.
 
 ## Modification normalization
 

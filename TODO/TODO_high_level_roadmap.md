@@ -16,13 +16,13 @@ For cross-level feature linking, APB will align with **mulink**, not QPX.
 
 ## Roadmap
 
-### 1. Complete conversion coverage
+### 1. Complete conversion coverage — delivered
 
-Resolve the known FragPipe and PEAKS corpus failures and verify the results at artifact level. A
-successful conversion must have correct samples, feature identities, quantitative layers, and
-provenance—not merely avoid an exception.
+The known FragPipe and PEAKS corpus failures were resolved and verified at artifact level, including
+samples, feature identities, quantitative layers, and provenance.
 
-Source: [TODO_fragpipe_peaks_version_coverage.md](TODO_fragpipe_peaks_version_coverage.md)
+Source:
+[archived FragPipe/PEAKS implementation tracker](Archive/TODO_fragpipe_peaks_version_coverage.md)
 
 ### 2. Formalize the vendor-column contract
 

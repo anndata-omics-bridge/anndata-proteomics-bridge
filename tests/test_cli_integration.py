@@ -56,11 +56,11 @@ def test_cli_validate_path_bad(tmp_path: Path) -> None:
     assert "1 failed" in r.stderr
 
 
-def test_cli_list_outputs_thirteen_document_levels() -> None:
+def test_cli_list_outputs_sixteen_document_levels() -> None:
     r = _run("list")
     assert r.returncode == 0, r.stderr
     lines = [line for line in r.stderr.splitlines() if line.strip()]
-    assert len(lines) == 13
+    assert len(lines) == 16
     assert "diann" in r.stderr
     assert "wombat" in r.stderr
 
