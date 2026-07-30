@@ -72,6 +72,9 @@ def test_packaged_rule_token_mapping(
 ) -> None:
     rule = _load(rule_path, level)
     assert rule.modifications is not None
+    # These cases all feed an inline modified sequence; site_list rules take parallel
+    # name/site columns instead and are covered by tests/test_modifications_site_list.py.
+    assert rule.modifications.parser == "token_regex"
     frame = pd.DataFrame({rule.modifications.source_column: [modified_sequence]})
     result = apply_modifications(frame, rule.modifications)
     assert result.loc[0, "proforma_sequence"] == expected_proforma

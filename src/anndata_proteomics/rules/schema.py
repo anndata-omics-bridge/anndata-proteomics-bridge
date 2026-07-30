@@ -195,9 +195,8 @@ class ModificationMapEntry(_Strict):
 class TokenRegexModifications(_Strict):
     """Extract vendor modification tokens with a regex and map them to Unimod.
 
-    ``token_regex`` is the only modification parser with a runtime
-    implementation (see ``modifications.pipeline``), so it is the only
-    accepted ``parser`` value.
+    For vendors that write modifications inline in the sequence itself, e.g.
+    ``"PEPM[15.9949]TIDE"`` or ``"_(ac)PEPTIDEM(ox)_"``.
     """
 
     parser: Literal["token_regex"]
@@ -209,10 +208,48 @@ class TokenRegexModifications(_Strict):
     output_column: str = "proforma_sequence"
     map: list[ModificationMapEntry] = Field(min_length=1)
 
+    @property
+    def source_columns(self) -> tuple[str, ...]:
+        """Input columns this parser reads."""
+        return (self.source_column,)
 
-# Only ``token_regex`` has a runtime implementation; the alias keeps the public
-# name stable for ``ParseRule.modifications`` and importers.
-Modifications = TokenRegexModifications
+
+class SiteListModifications(_Strict):
+    """Read modifications from parallel name and site columns beside a bare sequence.
+
+    The alphabase layout, used by AlphaDIA::
+
+        sequence     mods                            mod_sites
+        TCSSFIAAMER  Oxidation@M;Carbamidomethyl@C   9;2
+
+    ``mods`` and ``mod_sites`` are ``delimiter``-joined and paired **index-wise**,
+    not sorted — above, ``Oxidation@M`` sits at 9 and ``Carbamidomethyl@C`` at 2.
+    Sites are ``site_base``-indexed into the sequence; site ``0`` denotes the
+    N-terminus regardless of ``site_base`` (AlphaDIA writes ``Acetyl@Protein_N-term``
+    that way). Tokens are matched exactly against ``map``, since a name like
+    ``Oxidation@M`` already carries its own target.
+    """
+
+    parser: Literal["site_list"]
+    sequence_column: str
+    modification_column: str
+    site_column: str
+    delimiter: str = ";"
+    site_base: int = Field(default=1, ge=0, le=1)
+    case_sensitive: bool = False
+    unknown_policy: UnknownPolicy = "preserve"
+    output_column: str = "proforma_sequence"
+    map: list[ModificationMapEntry] = Field(min_length=1)
+
+    @property
+    def source_columns(self) -> tuple[str, ...]:
+        """Input columns this parser reads."""
+        return (self.sequence_column, self.modification_column, self.site_column)
+
+
+Modifications = Annotated[
+    TokenRegexModifications | SiteListModifications, Field(discriminator="parser")
+]
 
 
 class PositionalFragments(_Strict):

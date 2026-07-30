@@ -50,6 +50,17 @@ class ModificationRule:
     entries: tuple[MapEntry, ...] = ()
 
 
+@dataclass(frozen=True)
+class SiteListRule:
+    """Parsed ``parser="site_list"`` ``[modifications]`` section."""
+
+    delimiter: str = ";"
+    site_base: int = 1
+    case_sensitive: bool = False
+    unknown_policy: str = "preserve"  # "preserve" | "drop" | "error"
+    entries: tuple[MapEntry, ...] = ()
+
+
 _MASS_TOLERANCE = 1e-3
 _TERM_MARKERS = {"_", "-", "."}
 _TERMINUS_TARGETS = {
@@ -261,5 +272,93 @@ def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequen
         proforma_sequence=proforma,
         occurrences=occurrences,
         source_sequence=modified_sequence,
+        unknown_tokens=unknown_list,
+    )
+
+
+def _site_to_position(site: int, rule: SiteListRule, n_residues: int) -> tuple[str, int | None]:
+    """Map a vendor site value to a ProForma position and 0-based residue index.
+
+    Site ``0`` is the N-terminus by convention, independent of ``site_base``: a
+    1-based vendor writing a protein N-terminal modification has no residue to point
+    at and uses ``0``. Sites past the sequence end are reported as C-terminal.
+    """
+    if site == 0:
+        return "N-term", None
+    index = site - rule.site_base
+    if index >= n_residues:
+        return "C-term", None
+    return "Anywhere", index
+
+
+def apply_site_list(
+    sequence: str, modifications: str, sites: str, rule: SiteListRule
+) -> ModifiedSequence:
+    """Normalize a bare sequence plus parallel modification/site columns.
+
+    ``modifications`` and ``sites`` are paired index-wise after splitting on
+    ``rule.delimiter``; a length mismatch is a vendor-file defect and raises.
+    """
+    stripped = "".join(ch for ch in sequence if ch.isalpha())
+    tokens = [t for t in modifications.split(rule.delimiter) if t] if modifications else []
+    raw_sites = [s for s in sites.split(rule.delimiter) if s] if sites else []
+
+    if len(tokens) != len(raw_sites):
+        raise ValueError(
+            f"modification/site length mismatch for sequence {sequence!r}: "
+            f"{len(tokens)} token(s) {tokens} vs {len(raw_sites)} site(s) {raw_sites}"
+        )
+
+    by_token = {
+        (entry.token if rule.case_sensitive else entry.token.lower()): entry
+        for entry in rule.entries
+    }
+
+    occurrences: list[ModificationOccurrence] = []
+    unknown_tokens: dict[int, str] = {}
+    unknown_list: list[str] = []
+
+    for raw_token, raw_site in zip(tokens, raw_sites, strict=True):
+        try:
+            site = int(raw_site)
+        except ValueError as exc:
+            raise ValueError(
+                f"non-integer modification site {raw_site!r} for sequence {sequence!r}"
+            ) from exc
+
+        position, index = _site_to_position(site, rule, len(stripped))
+        entry = by_token.get(raw_token if rule.case_sensitive else raw_token.lower())
+
+        if entry is not None:
+            occurrences.append(
+                ModificationOccurrence(
+                    name=entry.name,
+                    accession=entry.accession,
+                    target_residue=stripped[index] if index is not None else None,
+                    sequence_index=index,
+                    position=position,
+                    mass_delta=entry.mass_delta,
+                    source_token=raw_token,
+                )
+            )
+            continue
+        if rule.unknown_policy == "error":
+            raise ValueError(f"unknown modification token: {raw_token!r}")
+        if rule.unknown_policy == "drop":
+            continue
+        unknown_list.append(raw_token)
+        if position == "N-term":
+            unknown_tokens[-1] = raw_token
+        elif position == "C-term":
+            unknown_tokens[len(stripped)] = raw_token
+        elif index is not None:
+            unknown_tokens[index] = raw_token
+
+    proforma = render_proforma(stripped, occurrences, unknown_tokens=unknown_tokens)
+    return ModifiedSequence(
+        stripped_sequence=stripped,
+        proforma_sequence=proforma,
+        occurrences=occurrences,
+        source_sequence=sequence,
         unknown_tokens=unknown_list,
     )

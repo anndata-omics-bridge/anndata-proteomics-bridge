@@ -1,5 +1,32 @@
 # Changes
 
+- 2026-07-30: Support AlphaDIA at ion level across all 11 cached submissions and six
+  versions, in three shape-distinct documents: `alphadia/v1_10` (wide TSV, one bare run
+  column per sample), `alphadia/v1_12` (long TSV), `alphadia/v2` (long parquet, dotted
+  namespaces). Each converts to the exact six-run axis its ProteoBench module annotation
+  declares. Contrary to the plan, no `sample_name_cleanup` is needed: the diaPASEF run
+  columns carry a trailing acquisition id (`..._Alpha_01_11494`) that the annotation's
+  `raw_file` carries too, so stripping it would have broken the join.
+- 2026-07-30: Add a second modification parser, `parser = "site_list"`, for vendors that
+  write modifications as parallel name/site columns beside a bare sequence instead of
+  inline tokens. AlphaDIA emits the alphabase layout (`mods = Oxidation@M;Carbamidomethyl@C`
+  with `mod_sites = 9;2`), which pairs index-wise rather than in sorted order, and uses
+  site `0` for a protein N-terminal modification. Without it the same sequence and charge
+  with different modifications collapse into one feature, silently summing an oxidised and
+  a non-oxidised precursor — so this gates AlphaDIA support rather than merely enriching it.
+- 2026-07-30: Add `params/parsers/alphadia.py`. AlphaDIA ships an ANSI-coloured, timestamped
+  run log rather than a config file; the parser strips that framing, keeps the applied value
+  of `[user defined, default: X]` entries, and anchors `software_version` on the startup
+  `PROGRESS:` banner because the config tree also carries a bare `version:` key. A `0`
+  tolerance records automatic calibration rather than a zero-width window.
+- 2026-07-30: Wide sample detection now excludes every column the rule accounts for by
+  name. Modifications and column materialization both run before the wide dispatch, so
+  APB's derived columns and the rule's renamed `select` outputs are on the frame by then;
+  a rule whose sample pattern cannot anchor on a suffix — AlphaDIA's run columns are bare
+  run names — matched 13 of them as extra samples.
+- 2026-07-30: AlphaDIA's `mod_seq_charge_hash` is deliberately not carried as a var column.
+  It is a uint64 that pandas reads from TSV as float64, collapsing 81 949 distinct values
+  to 75 292 and leaving every one inexact; `ProForma_ion` is the feature key.
 - 2026-07-30: Upgrade to pandas 3.0.5 and anndata 0.13.2 (also numpy 2.5.1, scipy
   1.18.0). anndata `<0.13` capped `pandas<3`. From 0.13 `adata.layers` also yields `X`
   under a `None` key, which leaked a `"None"` layer into the descriptive summary and the

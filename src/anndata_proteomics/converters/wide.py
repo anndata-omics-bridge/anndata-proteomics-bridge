@@ -8,7 +8,11 @@ import re
 import numpy as np
 import pandas as pd
 
-from anndata_proteomics.converters._axis import build_axis_frame, build_index
+from anndata_proteomics.converters._axis import (
+    build_axis_frame,
+    build_index,
+    non_sample_columns,
+)
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.factors import encode_factor
 from anndata_proteomics.converters.numeric import coerce_numeric, warn_if_all_missing
@@ -37,13 +41,14 @@ def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]
 def _gather_layer_matrix(
     df: pd.DataFrame,
     layer: Layer,
+    headers: list[str],
     sample_order: list[str],
     var_index: pd.Index,
     var_keys: list[str],
     duplicate_mode: str,
 ) -> np.ndarray:
     """Build (n_obs × n_var) matrix for a single wide layer."""
-    matches = _matching_columns(list(df.columns), layer.source)
+    matches = _matching_columns(headers, layer.source)
     sample_to_columns: dict[str, list[str]] = {}
     for column, sample in matches:
         sample_to_columns.setdefault(sample, []).append(column)
@@ -121,7 +126,11 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
         raise ValueError(f"convert_wide called with {rule.input_shape!r} rule")
     _raise_on_duplicate_features(df, rule)
 
-    headers = list(df.columns)
+    # Modifications and column materialization both run before the wide dispatch, so
+    # APB's derived columns and the rule's renamed `select` outputs are on the frame by
+    # now. Neither is a vendor sample column, so keep them away from the layer patterns.
+    excluded = non_sample_columns(rule)
+    headers = [column for column in df.columns if column not in excluded]
 
     # The x-layer defines the observation axis. Optional auxiliary layers may expose
     # summary columns or malformed tokens; those must not expand the run axis.
@@ -164,6 +173,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
         layers[layer.name] = _gather_layer_matrix(
             df,
             layer,
+            headers,
             sample_order,
             var_df.index,
             list(rule.axis.var_keys),

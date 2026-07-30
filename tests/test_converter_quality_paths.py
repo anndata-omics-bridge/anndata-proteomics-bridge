@@ -540,6 +540,7 @@ def test_wide_helpers_and_converter_guards() -> None:
         wide._gather_layer_matrix(
             duplicate_columns,
             layer,
+            list(duplicate_columns.columns),
             ["S1"],
             pd.Index(["F1"]),
             ["Feature"],
@@ -548,6 +549,7 @@ def test_wide_helpers_and_converter_guards() -> None:
     empty_for_sample = wide._gather_layer_matrix(
         pd.DataFrame({"Feature": ["F1"]}),
         rule.layers[0],
+        ["Feature"],
         ["S1"],
         pd.Index(["F1"]),
         ["Feature"],

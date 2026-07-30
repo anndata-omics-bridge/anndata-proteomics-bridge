@@ -4,7 +4,38 @@ from __future__ import annotations
 
 import pandas as pd
 
+from anndata_proteomics.rules.schema import ParseRule
+
 KEY_SEPARATOR = "_"
+_SAMPLE_PLACEHOLDER = "<sample>"
+
+# Added by `modifications.pipeline.apply_modifications` alongside the rule's own
+# `output_column`; never present in the raw vendor input.
+_MODIFICATION_OUTPUTS = frozenset({"stripped_sequence", "unknown_mod_tokens"})
+
+
+def non_sample_columns(rule: ParseRule) -> frozenset[str]:
+    """Every column a wide rule accounts for by name, so none can be a sample column.
+
+    By the time the wide converter runs, ``apply_modifications`` and
+    ``_materialize_columns`` have both been applied: the frame carries APB's derived
+    columns *and* the rule's ``select`` outputs under their declared names, not the
+    vendor's. Both spellings are excluded so a rule whose sample pattern cannot anchor
+    on a suffix — AlphaDIA's run columns are bare run names — does not match them as
+    extra samples.
+    """
+    out = set(_MODIFICATION_OUTPUTS)
+    if rule.modifications is not None:
+        out.add(rule.modifications.output_column)
+        out.update(rule.modifications.source_columns)
+    for group in (rule.columns.var, rule.columns.obs):
+        out.update(group.select)
+        out.update(group.optional_select)
+        out.update(column.name for column in group.compute)
+        out.update(group.select.values())
+        out.update(group.optional_select.values())
+    out.discard(_SAMPLE_PLACEHOLDER)
+    return frozenset(out)
 
 
 def join_keys(row: pd.Series) -> str:

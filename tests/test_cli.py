@@ -133,12 +133,12 @@ def test_validate_multiple_paths(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert "2 document(s) checked, 1 failed" in err
 
 
-def test_list_shows_sixteen_document_levels(capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_shows_nineteen_document_levels(capsys: pytest.CaptureFixture[str]) -> None:
     rc = list_rules()
     err = capsys.readouterr().err
     assert rc == 0
     lines = [line for line in err.splitlines() if line.strip()]
-    assert len(lines) == 16
+    assert len(lines) == 19
     assert "diann" in err
     assert "wombat" in err
     assert "ion" in err

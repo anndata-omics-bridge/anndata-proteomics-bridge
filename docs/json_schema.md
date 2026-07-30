@@ -347,9 +347,38 @@ The optional `modifications` object converts vendor tokens to accessions:
 }
 ```
 
-`parser` must be `token_regex`; `map` must contain at least one entry. Canonical
-metadata comes from `modifications/unimod_registry.toml`. That internal reference
-dataset remains TOML and is not a parsing-rule configuration.
+`map` must contain at least one entry. Canonical metadata comes from
+`modifications/unimod_registry.toml`. That internal reference dataset remains TOML and
+is not a parsing-rule configuration.
+
+`parser` is a discriminator with two values. Use `token_regex` (above) when the vendor
+writes modifications inline in the sequence. Use `site_list` when they arrive as two
+parallel columns beside a bare sequence — the alphabase layout AlphaDIA emits:
+
+```json
+{
+  "parser": "site_list",
+  "sequence_column": "sequence",
+  "modification_column": "mods",
+  "site_column": "mod_sites",
+  "delimiter": ";",
+  "site_base": 1,
+  "map": [
+    {"token": "Oxidation@M", "accession": "UNIMOD:35"}
+  ]
+}
+```
+
+Given `sequence = TCSSFIAAMER`, `mods = Oxidation@M;Carbamidomethyl@C` and
+`mod_sites = 9;2`, the two lists pair **index-wise**, not in sorted order, yielding
+`TC[UNIMOD:4]SSFIAAM[UNIMOD:35]ER`. Sites are `site_base`-indexed into the sequence;
+site `0` means the N-terminus whatever `site_base` is, because a protein N-terminal
+modification has no residue to point at. Tokens are matched against `map` exactly — a
+name like `Oxidation@M` already carries its own target, so there is no mass or
+residue-context lookup. A token/site length mismatch raises rather than guessing.
+
+Both parsers produce the same columns (`output_column`, `stripped_sequence`,
+`unknown_mod_tokens`) and honour `case_sensitive` and `unknown_policy`.
 
 ## Fragment rules
 

@@ -36,7 +36,7 @@ paths or separate base files. Single-level vendors use the same document shape.
 
 ## Current Scope
 
-Packaged parsing rules span **8 vendors** across the **ion / fragment / peptidoform / protein**
+Packaged parsing rules span **9 vendors** across the **ion / fragment / peptidoform / protein**
 quantification levels:
 
 - DIA-NN — ion, fragment, protein (version-specific rules under `diann/v1/`, `diann/v2/`)
@@ -46,6 +46,8 @@ quantification levels:
 - PEAKS — ion
 - Sage — ion, peptidoform (wide `lfq.tsv`; the level is parameter-gated, see below)
 - AlphaPept — ion (long, comma-delimited PSM table)
+- AlphaDIA — ion, in three shape-distinct documents: `alphadia/v1_10/` (wide TSV),
+  `alphadia/v1_12/` (long TSV), `alphadia/v2/` (long parquet, dotted namespaces)
 - WOMBAT — peptidoform
 
 Sage's `lfq_settings.combine_charge_states` (default `true`) collapses charge states and writes

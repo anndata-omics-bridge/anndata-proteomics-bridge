@@ -142,7 +142,7 @@ def test_apply_modifications_requires_source_column() -> None:
         token_pattern=r"\(([^)]+)\)",
         map=[ModificationMapEntry(token="ox", accession="UNIMOD:35")],
     )
-    with pytest.raises(KeyError, match="source_column"):
+    with pytest.raises(KeyError, match="needs column"):
         apply_modifications(pd.DataFrame({"Other": ["PEP"]}), settings)
 
 

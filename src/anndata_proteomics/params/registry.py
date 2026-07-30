@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.parsers.alphadia import extract_params as _alphadia_extract
 from anndata_proteomics.params.parsers.alphapept import extract_params as _alphapept_extract
 from anndata_proteomics.params.parsers.diann import extract_params as _diann_extract
 from anndata_proteomics.params.parsers.fragpipe import extract_params as _fragpipe_extract
@@ -22,6 +23,7 @@ ParseFn = Callable[..., Parameters]
 
 
 _REGISTRY: dict[str, ParseFn] = {
+    "alphadia": _alphadia_extract,
     "alphapept": _alphapept_extract,
     "dia-nn": _diann_extract,
     "diann": _diann_extract,

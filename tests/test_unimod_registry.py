@@ -146,6 +146,7 @@ def test_runtime_rule_resolves_canonical_fields_from_accession():
     }
     rule = ParseRule.model_validate({**BASE, "modifications": modifications})
     assert rule.modifications is not None
+    assert rule.modifications.parser == "token_regex"
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
     assert runtime.entries[0].target == ["M"]
@@ -162,5 +163,6 @@ def test_runtime_rule_errors_on_unknown_accession():
     }
     rule = ParseRule.model_validate({**BASE, "modifications": modifications})
     assert rule.modifications is not None
+    assert rule.modifications.parser == "token_regex"
     with pytest.raises(KeyError, match="UNIMOD:99999"):
         _to_runtime_rule(rule.modifications)

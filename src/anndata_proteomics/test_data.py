@@ -54,6 +54,7 @@ PARAM_FIXTURE_DIR = REPO_ROOT / "tests" / "params"
 
 # One canonical sample per packaged tool, keyed by the rule's software_name.
 _PROTEOBENCH_PARAM_FIXTURES: dict[str, str] = {
+    "AlphaDIA": "alphadia_1.10.3.log.txt",
     "AlphaPept": "alphapept_0.4.9.yaml",
     "DIA-NN": "DIANN_output_20240229_report.log.txt",
     "FragPipe": "fragpipe.workflow",

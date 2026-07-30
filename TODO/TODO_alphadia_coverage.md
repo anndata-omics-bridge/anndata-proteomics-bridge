@@ -6,8 +6,29 @@
 > documents.
 
 **Date:** 2026-07-30 · **Source:** header and content survey of the cached AlphaDIA fixtures.
-**Owner:** apb (modifications, params, parsing rules). **Status:** planned — awaiting approval on
-the modification-parser question below.
+**Owner:** apb (modifications, params, parsing rules). **Status:** **done** (2026-07-30). All three
+phases implemented; 11/11 fixtures convert with the annotated run axis. See
+[test_alphadia_coverage.py](../tests/test_alphadia_coverage.py).
+
+## What differed from this plan
+
+Verified against the fixtures during implementation:
+
+- **No `sample_name_cleanup`.** The plan called for stripping `_\d+$` from the diaPASEF wide run
+  names. That would have *broken* the join: `dia_diapasef.toml` declares `raw_file =
+  "ttSCP_diaPASEF_Condition_A_Sample_Alpha_01_11494"` — the acquisition id and the missing `LFQ_`
+  prefix are both already what AlphaDIA writes. All 11 fixtures match their annotation verbatim.
+- **`duplicates.mode = "keep_first"`, not `aggregate`.** The plan noted shape A repeats features but
+  did not say which policy. The repeats are exact copies of the whole row, intensities included
+  (72 404 of 98 570 rows), so `aggregate` would have multiplied intensities by the repeat count.
+- **The negative-lookahead regex was necessary but not sufficient.** Modifications and column
+  materialization run before the wide dispatch, so the rule's own renamed `select` outputs
+  (`Sequence`, `Charge`, …) were on the frame and matched as extra samples — 13 obs instead of 6.
+  Fixed in `converters/_axis.non_sample_columns`, not in the rule.
+- **`mod_seq_charge_hash` is not carried.** It is a uint64 that pandas reads from TSV as float64,
+  collapsing 81 949 distinct values to 75 292. Carrying it would ship a corrupted identifier.
+- **Shape B's 45-vs-91 column spread is export verbosity, not version drift** — all keys needed sit
+  in the 42-column common core, so `optional_select` covers only `channel` and `pg_qval`.
 
 ---
 

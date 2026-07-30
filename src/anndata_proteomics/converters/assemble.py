@@ -135,7 +135,7 @@ def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:
     needed |= set(rule.columns.var.optional_select.values())
     needed |= {layer.source for layer in rule.layers}
     if rule.modifications is not None:
-        needed |= {rule.modifications.source_column, rule.modifications.output_column}
+        needed |= {*rule.modifications.source_columns, rule.modifications.output_column}
         needed.add("stripped_sequence")
     if rule.fragments is not None:
         if rule.fragments.label_strategy == "column":
