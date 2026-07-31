@@ -512,4 +512,5 @@ The substance of the outreach to `mulink`'s author:
    ("all ions under this protein") need either transitive closure at build time or a
    traversal helper. Which does `mulink` intend to own?
 
-See the draft outreach note in `apb/TODO/` for the email framing.
+See the draft outreach note at `../TODO/stale/DRAFT_email_mulink_developer.md` for the email
+framing.

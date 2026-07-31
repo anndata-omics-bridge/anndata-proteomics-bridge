@@ -249,7 +249,7 @@ filenames. Concrete JSON persistence under
 - Scoring is level-agnostic, but only ion and peptidoform have published ProteoBench
   modules. Other level scores are comparable across APB runs, not to the leaderboard.
 - The generic APB QC engine and pMultiQC consumer described in
-  `TODO/TODO_pmultiqc_support.md` are planned but not implemented.
+  `../TODO/TODO_pmultiqc_support.md` are planned but not implemented.
 
 ## Adding Things
 

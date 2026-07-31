@@ -98,7 +98,7 @@ max-args = 7
 quote-style = "double"
 
 # Strictest practical pyright, modelled on prozor / python_package_template.
-# See TODO/TODO_pyright.md for the completed burn-down and enforcement policy.
+# See ../TODO/Archive/TODO_pyright.md for the completed burn-down and enforcement policy.
 [tool.pyright]
 include = ["src", "tests", "scripts"]
 executionEnvironments = [

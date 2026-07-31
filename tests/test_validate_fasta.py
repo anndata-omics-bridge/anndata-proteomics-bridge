@@ -1,6 +1,6 @@
 """Tests for FASTA identification validation (Aho-Corasick).
 
-Covers the test matrix in TODO/TODO_aho_cor.md: unmodified/modified sequences,
+Covers the test matrix in ../TODO/Archive/TODO_aho_cor.md: unmodified/modified sequences,
 shared and repeated matches, unmatched flagging, multi-file databases, decoy
 policy, normalization edge cases, backend equivalence, h5ad/h5mu round-trips,
 and automatic validation through the ``apb fasta`` CLI.

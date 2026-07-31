@@ -3,7 +3,7 @@
 We exercise the subcommand functions directly (calling them as Python)
 rather than going through cyclopts' argv parsing — that's a unit-test
 shortcut. The dispatch layer is exercised separately by the manual
-smoke commands in TODO/PLAN_20260502_jsonschema-and-cli.md §Verification.
+smoke commands in ../TODO/Archive/PLAN_20260502_jsonschema-and-cli.md §Verification.
 
 CLI output goes through loguru → stderr; tests read `capsys.readouterr().err`.
 The `_loguru_to_pytest_capsys` fixture in conftest.py wires loguru into

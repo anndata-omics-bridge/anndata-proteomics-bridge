@@ -6,7 +6,7 @@ lost data rather than the experiment lacking it. Nothing here is persisted, and 
 is densified — a sparse layer is measured by its stored non-zeros.
 
 Report-level missingness, distributions, and CVs stay out of conversion by design; see
-``TODO/TODO_pmultiqc_support.md``.
+``../TODO/TODO_pmultiqc_support.md``.
 """
 
 from __future__ import annotations
