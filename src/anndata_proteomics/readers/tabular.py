@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Hashable, Mapping
 from itertools import islice
 from pathlib import Path
 
@@ -64,9 +65,33 @@ def _read_delimited(path: Path | str, delimiter: str) -> pd.DataFrame:
     )
 
 
+def _read_delimited_preserving_strings(
+    path: Path | str,
+    delimiter: str,
+    string_columns: frozenset[str],
+) -> pd.DataFrame:
+    """Read delimited data while preserving rule-declared textual source tokens."""
+    dtypes: Mapping[Hashable, str] = dict.fromkeys(string_columns, "string")
+    return pd.read_csv(
+        path,
+        sep=delimiter,
+        encoding="utf-8-sig",
+        decimal=detect_decimal_separator(path, delimiter=delimiter),
+        dtype=dtypes,
+    )
+
+
 def read_csv(path: Path | str) -> pd.DataFrame:
     """Read a comma-delimited file. UTF-8 with BOM tolerance."""
     return _read_delimited(path, ",")
+
+
+def read_csv_preserving_strings(
+    path: Path | str,
+    string_columns: frozenset[str],
+) -> pd.DataFrame:
+    """Read comma-delimited data with declared textual sources preserved."""
+    return _read_delimited_preserving_strings(path, ",", string_columns)
 
 
 def read_tsv(path: Path | str) -> pd.DataFrame:
@@ -74,9 +99,26 @@ def read_tsv(path: Path | str) -> pd.DataFrame:
     return _read_delimited(path, "\t")
 
 
+def read_tsv_preserving_strings(
+    path: Path | str,
+    string_columns: frozenset[str],
+) -> pd.DataFrame:
+    """Read tab-delimited data with declared textual sources preserved."""
+    return _read_delimited_preserving_strings(path, "\t", string_columns)
+
+
 def read_detected_text(path: Path | str) -> pd.DataFrame:
     """Read comma- or tab-delimited text after content-based delimiter detection."""
     return _read_delimited(path, detect_text_delimiter(path))
+
+
+def read_detected_text_preserving_strings(
+    path: Path | str,
+    string_columns: frozenset[str],
+) -> pd.DataFrame:
+    """Read detected delimited text with declared textual sources preserved."""
+    delimiter = detect_text_delimiter(path)
+    return _read_delimited_preserving_strings(path, delimiter, string_columns)
 
 
 def read_delimited_columns(path: Path | str, *, delimiter: str) -> list[str]:

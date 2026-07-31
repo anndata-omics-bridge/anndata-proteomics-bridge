@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json as jsonlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -47,11 +47,14 @@ from anndata_proteomics.fasta.config import (
     FastaConfig,
 )
 from anndata_proteomics.proteobench import config as proteobench_config
-from anndata_proteomics.readers.dispatch import read_table
+from anndata_proteomics.readers.dispatch import (
+    read_table_columns,
+    read_table_preserving_strings,
+)
 from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule, load_rule_document
 from anndata_proteomics.rules.registry import iter_packaged_rules
-from anndata_proteomics.rules.schema import PEPTIDE_LEVELS, ParseRuleDocument, QuantificationLevel
+from anndata_proteomics.rules.schema import PEPTIDE_LEVELS, QuantificationLevel
 from anndata_proteomics.rules.validate import (
     log_and_exit_code,
     validate_all_packaged,
@@ -100,6 +103,32 @@ class ConvertCliOptions:
 
 
 DEFAULT_CONVERT_CLI_OPTIONS = ConvertCliOptions()
+
+
+@dataclass(frozen=True, slots=True)
+class ConversionContext:
+    """Resolved file inputs shared by one CLI conversion route."""
+
+    data_path: Path
+    headers: tuple[str, ...]
+    strict: bool
+    output: Path
+
+
+@dataclass(frozen=True, slots=True)
+class PackagedConversionContext:
+    """Resolved packaged-rule inputs shared by one conversion route."""
+
+    slug: str
+    parameters: conversion_pipeline.ParameterResolution
+
+
+@dataclass(frozen=True, slots=True)
+class PackagedConversionUnavailable:
+    """Packaged-rule inputs could not be resolved; the diagnostic was logged."""
+
+
+type PackagedConversionResolution = PackagedConversionContext | PackagedConversionUnavailable
 
 
 @app.command
@@ -164,248 +193,272 @@ def convert(
             "APB chooses .h5ad or .h5mu"
         )
         return 2
-    df = read_table(data)
+    headers = read_table_columns(data)
     suffix = ".h5ad" if level is not None else ".h5mu"
     output = (
         data.with_suffix(suffix) if options.output is None else Path(f"{options.output}{suffix}")
     )
-
+    context = ConversionContext(data, tuple(headers), options.strict, output)
     if options.rule_config is not None:
-        document = load_rule_document(options.rule_config)
-        rule_slug = conversion_pipeline.software_slug(document.software_name)
-        if level is not None and level not in document.levels:
-            logger.error(
-                f"{options.rule_config} has no level {level!r}; available: {list(document.levels)}"
-            )
-            return 1
-        if options.params is None:
-            result = (
-                _convert_configured_level(df, document, level, options.strict, output)
-                if level is not None
-                else _convert_configured_levels(
-                    df,
-                    document,
-                    options.rule_config,
-                    options.strict,
-                    output,
-                )
-            )
-        else:
-            parameter_resolution = conversion_pipeline.resolve_parameters(
-                options.params,
-                options.params_software or rule_slug,
-            )
-            result = (
-                _convert_parameterized_configured_level(
-                    df,
-                    document,
-                    level,
-                    parameter_resolution,
-                    options.strict,
-                    output,
-                )
-                if level is not None
-                else _convert_parameterized_configured_levels(
-                    df,
-                    document,
-                    options.rule_config,
-                    parameter_resolution,
-                    options.strict,
-                    output,
-                )
-            )
-    else:
-        if options.software is not None:
-            slug = options.software
-        else:
-            recognition = conversion_pipeline.recognize_software(df.columns)
-            if not isinstance(recognition, conversion_pipeline.RecognizedSoftware):
-                logger.error(
-                    f"could not auto-detect the vendor for {data}; "
-                    "pass --software SLUG or --rule-config PATH"
-                )
-                return 1
-            slug = recognition.slug
-        if options.params is None:
-            logger.error("pass --params (it gives the software version) or --rule-config PATH")
-            return 1
-        parameter_resolution = conversion_pipeline.resolve_parameters(
-            options.params,
-            options.params_software or slug,
-        )
-        _log_parameter_resolution(slug, parameter_resolution)
-        result = (
-            _convert_packaged_level(
-                df,
-                slug,
+        if level is not None:
+            return _convert_level_from_rule_config(
+                context,
+                options.rule_config,
                 level,
-                parameter_resolution,
-                options.strict,
-                output,
+                options,
             )
-            if level is not None
-            else _convert_packaged_levels(
-                df,
-                slug,
-                parameter_resolution,
-                options.strict,
-                output,
-            )
+        return _convert_levels_from_rule_config(context, options.rule_config, options)
+    if level is not None:
+        return _convert_level_from_packaged_rules(context, level, options)
+    return _convert_levels_from_packaged_rules(context, options)
+
+
+def _convert_level_from_rule_config(
+    context: ConversionContext,
+    rule_config: Path,
+    level: QuantificationLevel,
+    options: ConvertCliOptions,
+) -> int:
+    """Select and execute one level from an explicit rule document."""
+    document = load_rule_document(rule_config)
+    if level not in document.levels:
+        logger.error(f"{rule_config} has no level {level!r}; available: {list(document.levels)}")
+        return 1
+    if options.params is not None:
+        resolution = conversion_pipeline.resolve_parameters(
+            options.params,
+            options.params_software or conversion_pipeline.software_slug(document.software_name),
         )
-    return result
-
-
-def _convert_configured_level(
-    data: DataFrame,
-    document: ParseRuleDocument,
-    level: QuantificationLevel,
-    strict: bool,
-    output: Path,
-) -> int:
-    """Convert and write one explicitly configured, unparameterized level."""
+        selection = conversion_pipeline.RuleSelection(
+            document.parameterized_effective_rule(level, resolution.parameters),
+            "rule_config",
+        )
+        return _execute_parameterized_level(context, level, selection, resolution)
     selection = conversion_pipeline.RuleSelection(document.effective_rule(level), "rule_config")
-    conversion = conversion_workflow.convert_selected_level(
-        data,
-        level,
-        selection,
-        strict=strict,
-    )
-    return _write_anndata(conversion_adapter.to_anndata(conversion), output)
+    return _execute_level(context, level, selection)
 
 
-def _convert_parameterized_configured_level(
-    data: DataFrame,
-    document: ParseRuleDocument,
-    level: QuantificationLevel,
-    resolution: conversion_pipeline.ParameterResolution,
-    strict: bool,
-    output: Path,
+def _convert_levels_from_rule_config(
+    context: ConversionContext,
+    rule_config: Path,
+    options: ConvertCliOptions,
 ) -> int:
-    """Convert and write one explicitly configured, parameterized level."""
-    rule = document.parameterized_effective_rule(level, resolution.parameters)
-    selection = conversion_pipeline.RuleSelection(rule, "rule_config")
+    """Select and execute all matching levels from an explicit rule document."""
+    document = load_rule_document(rule_config)
+    if options.params is None:
+        return _execute_matching_levels(context, document.effective_rules(), rule_config)
+    resolution = conversion_pipeline.resolve_parameters(
+        options.params,
+        options.params_software or conversion_pipeline.software_slug(document.software_name),
+    )
+    rules = document.parameterized_effective_rules(resolution.parameters)
+    return _execute_matching_parameterized_levels(
+        context,
+        rules,
+        rule_config,
+        resolution,
+    )
+
+
+def _convert_level_from_packaged_rules(
+    context: ConversionContext,
+    level: QuantificationLevel,
+    options: ConvertCliOptions,
+) -> int:
+    """Select and execute one packaged quantification level."""
+    resolved = _resolve_packaged_conversion(context, options)
+    if isinstance(resolved, PackagedConversionUnavailable):
+        return 1
+    selection = conversion_workflow.select_rule_from_parameters(
+        context.headers,
+        resolved.slug,
+        level,
+        resolved.parameters,
+    )
+    return _execute_parameterized_level(
+        context,
+        level,
+        selection,
+        resolved.parameters,
+    )
+
+
+def _convert_levels_from_packaged_rules(
+    context: ConversionContext,
+    options: ConvertCliOptions,
+) -> int:
+    """Select and execute every available packaged quantification level."""
+    resolved = _resolve_packaged_conversion(context, options)
+    if isinstance(resolved, PackagedConversionUnavailable):
+        return 1
+    selections = conversion_workflow.select_rules_from_parameters(
+        context.headers,
+        resolved.slug,
+        resolved.parameters,
+    )
+    if not selections:
+        return _log_no_packaged_levels(resolved.slug, resolved.parameters)
+    return _execute_parameterized_levels(context, selections, resolved.parameters)
+
+
+def _resolve_packaged_conversion(
+    context: ConversionContext,
+    options: ConvertCliOptions,
+) -> PackagedConversionResolution:
+    """Resolve vendor identity and parameters for a packaged-rule route."""
+    if options.software is not None:
+        slug = options.software
+    else:
+        recognition = conversion_pipeline.recognize_software(context.headers)
+        if not isinstance(recognition, conversion_pipeline.RecognizedSoftware):
+            logger.error(
+                f"could not auto-detect the vendor for {context.data_path}; "
+                "pass --software SLUG or --rule-config PATH"
+            )
+            return PackagedConversionUnavailable()
+        slug = recognition.slug
+    if options.params is None:
+        logger.error("pass --params (it gives the software version) or --rule-config PATH")
+        return PackagedConversionUnavailable()
+    resolution = conversion_pipeline.resolve_parameters(
+        options.params,
+        options.params_software or slug,
+    )
+    _log_parameter_resolution(slug, resolution)
+    return PackagedConversionContext(slug, resolution)
+
+
+def _log_no_packaged_levels(
+    slug: str,
+    resolution: conversion_pipeline.ParameterResolution,
+) -> int:
+    """Report that parameter evidence selected no packaged level."""
+    version = conversion_pipeline.resolve_rule_version(resolution, slug)
+    version_label = (
+        version.value if isinstance(version, conversion_pipeline.PresentRuleVersion) else "missing"
+    )
+    logger.error(
+        f"no quantification level resolves for {slug} at software version "
+        f"{version_label!r}; check --params / --software"
+    )
+    return 1
+
+
+def _execute_level(
+    context: ConversionContext,
+    level: QuantificationLevel,
+    selection: conversion_pipeline.RuleSelection,
+) -> int:
+    """Read, convert, and write one already-selected level."""
+    data = _read_table_for_selections(context.data_path, (selection,))
     conversion = conversion_workflow.convert_selected_level(
         data,
         level,
         selection,
-        strict=strict,
+        strict=context.strict,
+    )
+    return _write_anndata(conversion_adapter.to_anndata(conversion), context.output)
+
+
+def _execute_parameterized_level(
+    context: ConversionContext,
+    level: QuantificationLevel,
+    selection: conversion_pipeline.RuleSelection,
+    resolution: conversion_pipeline.ParameterResolution,
+) -> int:
+    """Read, convert, and write one selected level with parameter provenance."""
+    data = _read_table_for_selections(context.data_path, (selection,))
+    conversion = conversion_workflow.convert_selected_level(
+        data,
+        level,
+        selection,
+        strict=context.strict,
     )
     adata = conversion_adapter.to_anndata(conversion)
     _write_parameter_resolution(adata, resolution)
-    return _write_anndata(adata, output)
+    return _write_anndata(adata, context.output)
 
 
-def _convert_configured_levels(
-    data: DataFrame,
-    document: ParseRuleDocument,
-    rule_config: Path,
-    strict: bool,
-    output: Path,
+def _execute_levels(
+    context: ConversionContext,
+    selections: dict[QuantificationLevel, conversion_pipeline.RuleSelection],
 ) -> int:
-    """Convert and write every matching explicitly configured level."""
-    return _convert_matching_configured_levels(
+    """Read, convert, and write several already-selected levels."""
+    data = _read_table_for_selections(context.data_path, selections.values())
+    conversions = conversion_workflow.convert_selected_levels(
         data,
-        document.effective_rules(),
-        rule_config,
-        strict,
-        output,
+        selections,
+        strict=context.strict,
+    )
+    return _write_mudata(conversion_adapter.to_mudata(conversions), context.output)
+
+
+def _execute_parameterized_levels(
+    context: ConversionContext,
+    selections: dict[QuantificationLevel, conversion_pipeline.RuleSelection],
+    resolution: conversion_pipeline.ParameterResolution,
+) -> int:
+    """Read, convert, and write selected levels with parameter provenance."""
+    data = _read_table_for_selections(context.data_path, selections.values())
+    conversions = conversion_workflow.convert_selected_levels(
+        data,
+        selections,
+        strict=context.strict,
+    )
+    md = conversion_adapter.to_mudata(conversions)
+    _write_parameter_resolution(md, resolution)
+    return _write_mudata(md, context.output)
+
+
+def _execute_matching_levels(
+    context: ConversionContext,
+    rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
+    rule_config: Path,
+) -> int:
+    """Select configured rules matching the headers, then execute them."""
+    matching = conversion_pipeline.matching_rules(rules, context.headers)
+    if not matching:
+        logger.error(f"no level in {rule_config} matches the input columns")
+        return 1
+    return _execute_levels(context, _configured_selections(matching))
+
+
+def _execute_matching_parameterized_levels(
+    context: ConversionContext,
+    rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
+    rule_config: Path,
+    resolution: conversion_pipeline.ParameterResolution,
+) -> int:
+    """Select configured parameterized rules matching headers, then execute them."""
+    matching = conversion_pipeline.matching_rules(rules, context.headers)
+    if not matching:
+        logger.error(f"no level in {rule_config} matches the input columns")
+        return 1
+    return _execute_parameterized_levels(
+        context,
+        _configured_selections(matching),
+        resolution,
     )
 
 
-def _convert_parameterized_configured_levels(
-    data: DataFrame,
-    document: ParseRuleDocument,
-    rule_config: Path,
-    resolution: conversion_pipeline.ParameterResolution,
-    strict: bool,
-    output: Path,
-) -> int:
-    """Convert and write every matching parameterized configured level."""
-    rules = document.parameterized_effective_rules(resolution.parameters)
-    matching = conversion_pipeline.matching_rules(rules, data.columns)
-    if not matching:
-        logger.error(f"no level in {rule_config} matches the input columns")
-        return 1
-    md = _convert_rule_mapping(data, matching, strict)
-    _write_parameter_resolution(md, resolution)
-    return _write_mudata(md, output)
-
-
-def _convert_matching_configured_levels(
-    data: DataFrame,
+def _configured_selections(
     rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
-    rule_config: Path,
-    strict: bool,
-    output: Path,
-) -> int:
-    """Convert and write the configured rules whose columns match the input."""
-    matching = conversion_pipeline.matching_rules(rules, data.columns)
-    if not matching:
-        logger.error(f"no level in {rule_config} matches the input columns")
-        return 1
-    return _write_mudata(_convert_rule_mapping(data, matching, strict), output)
-
-
-def _convert_rule_mapping(
-    data: DataFrame,
-    rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
-    strict: bool,
-) -> MuData:
-    """Convert one concrete mapping of effective rules into a MuData artifact."""
-    selections: dict[QuantificationLevel, conversion_pipeline.RuleSelection] = {
+) -> dict[QuantificationLevel, conversion_pipeline.RuleSelection]:
+    """Attach explicit-config provenance to concrete effective rules."""
+    return {
         level: conversion_pipeline.RuleSelection(rule, "rule_config")
         for level, rule in rules.items()
     }
-    conversions = conversion_workflow.convert_selected_levels(data, selections, strict=strict)
-    return conversion_adapter.to_mudata(conversions)
 
 
-def _convert_packaged_level(
-    data: DataFrame,
-    slug: str,
-    level: QuantificationLevel,
-    resolution: conversion_pipeline.ParameterResolution,
-    strict: bool,
-    output: Path,
-) -> int:
-    """Convert and write one packaged level selected from parsed parameters."""
-    conversion = conversion_workflow.convert_level_from_parameters(
-        data,
-        slug,
-        level,
-        resolution,
-        strict=strict,
-    )
-    adata = conversion_adapter.to_anndata(conversion)
-    _write_parameter_resolution(adata, resolution)
-    return _write_anndata(adata, output)
-
-
-def _convert_packaged_levels(
-    data: DataFrame,
-    slug: str,
-    resolution: conversion_pipeline.ParameterResolution,
-    strict: bool,
-    output: Path,
-) -> int:
-    """Convert and write all packaged levels selected from parsed parameters."""
-    selections = conversion_workflow.select_rules_from_parameters(data.columns, slug, resolution)
-    if not selections:
-        version = conversion_pipeline.resolve_rule_version(resolution, slug)
-        version_label = (
-            version.value
-            if isinstance(version, conversion_pipeline.PresentRuleVersion)
-            else "missing"
-        )
-        logger.error(
-            f"no quantification level resolves for {slug} at software version "
-            f"{version_label!r}; check --params / --software"
-        )
-        return 1
-    conversions = conversion_workflow.convert_selected_levels(data, selections, strict=strict)
-    md = conversion_adapter.to_mudata(conversions)
-    _write_parameter_resolution(md, resolution)
-    return _write_mudata(md, output)
+def _read_table_for_selections(
+    data_path: Path,
+    selections: Iterable[conversion_pipeline.RuleSelection],
+) -> DataFrame:
+    """Read one vendor table using the logical contracts of selected rules."""
+    rules = tuple(selection.rule for selection in selections)
+    string_sources = conversion_pipeline.string_sources_for_rules(rules)
+    return read_table_preserving_strings(data_path, string_sources)
 
 
 def _log_parameter_resolution(

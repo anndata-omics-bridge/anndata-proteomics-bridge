@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "MaxQuant",
   "software_version": "^(1\\.5|1\\.6|2\\.)",
   "base": {
@@ -18,10 +18,10 @@
         "select": {
           "Raw_File": "Raw file"
         },
-        "optional_select": {
-          "Experiment": "Experiment",
-          "Fraction": "Fraction"
-        }
+      "optional_select": {
+        "Experiment": "Experiment",
+        "Fraction": "Fraction"
+      }
       }
     },
     "modifications": {
@@ -79,6 +79,10 @@
             "Leading_Razor_Protein": "Leading razor protein",
             "Leading_Proteins_Legacy": "Leading Proteins",
             "Leading_Razor_Protein_Legacy": "Leading Razor Protein"
+          },
+          "types": {
+            "Charge": "integer",
+            "Mass": "number"
           },
           "compute": [
             {

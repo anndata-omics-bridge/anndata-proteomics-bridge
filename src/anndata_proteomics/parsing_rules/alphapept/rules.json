@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "AlphaPept",
   "software_version": "^0\\.5\\.",
   "base": {
@@ -64,6 +64,10 @@
             "Protein": "protein",
             "Protein_Group": "protein_group",
             "Decoy": "decoy"
+          },
+          "types": {
+            "Charge": "integer",
+            "Decoy": "boolean"
           },
           "compute": [
             {

@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "PEAKS",
   "software_version": "^13(?:\\.|\\s|$)",
   "base": {
@@ -75,6 +75,13 @@
             "Significance": "Significance",
             "Avg_Area": "Avg. Area",
             "Accession": "Accession"
+          },
+          "types": {
+            "Charge": "integer",
+            "Mz": "number",
+            "Quality": "number",
+            "Significance": "number",
+            "Avg_Area": "number"
           },
           "compute": [
             {

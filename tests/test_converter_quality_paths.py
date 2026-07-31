@@ -130,7 +130,11 @@ def test_assemble_helper_guards(
 
     group = rule.columns.var.model_copy(update={"select": {"Missing": "not-present"}})
     with pytest.raises(ValueError, match="cannot select"):
-        assemble._materialize_column_group(pd.DataFrame({"Feature": ["F1"]}), group)
+        assemble._materialize_column_group(
+            pd.DataFrame({"Feature": ["F1"]}),
+            group,
+            "var",
+        )
 
     coalesce = ColumnCompute.model_validate(
         {"name": "value", "from": ["one", "two"], "how": "coalesce"}
@@ -171,15 +175,6 @@ def test_assemble_helper_guards(
     unsupported = coalesce.model_copy(update={"how": "unsupported"})
     with pytest.raises(ValueError, match="unsupported column"):
         assemble._compute_column(pd.DataFrame({"one": [1], "two": [2]}), unsupported)
-
-    for value, message in [
-        (None, "missing"),
-        (np.nan, "missing"),
-        ("", "empty"),
-        ("not-numeric", "numeric"),
-    ]:
-        with pytest.raises(ValueError, match=message):
-            assemble._format_charge(value)
 
 
 def test_assemble_column_selection_and_fragment_column_inventory() -> None:

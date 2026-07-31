@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "DIA-NN",
   "software_version": "^1\\..*",
   "base": {
@@ -63,6 +63,9 @@
             "Protein_Ids": "Protein.Ids",
             "Protein_Names": "Protein.Names",
             "Genes": "Genes"
+          },
+          "types": {
+            "Precursor_Charge": "integer"
           },
           "compute": [
             {
@@ -130,6 +133,9 @@
             "Modified_Sequence": "Modified.Sequence",
             "Precursor_Charge": "Precursor.Charge",
             "Protein_Group": "Protein.Group"
+          },
+          "types": {
+            "Precursor_Charge": "integer"
           },
           "compute": [
             {

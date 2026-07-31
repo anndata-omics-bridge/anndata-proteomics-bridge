@@ -83,11 +83,16 @@ flowchart TD
     resolution --> selection[typed version/parameter/column selection]
     rule --> selection
 
-    vendor[/vendor quantification file/] --> tabular[readers.read_table]
+    vendor[/vendor quantification file/] --> headers[readers.read_table_columns]
+    headers --> selection
+    selection --> textcontract[rule-derived exact-text sources]
+    vendor --> tabular[readers.read_table_preserving_strings]
+    textcontract --> tabular
     tabular --> frame[(pandas.DataFrame)]
     frame --> conversion[workflows.conversion]
     selection --> conversion
     conversion --> tablecalc[converters.assemble.convert_table]
+    tablecalc --> coercion[converters.axis_types<br/>strict logical coercion]
     tablecalc --> pieces[ConversionPieces]
     pieces --> conversionadapter[adapters.anndata.conversion]
     conversionadapter --> container[(AnnData / MuData)]

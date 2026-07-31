@@ -1,5 +1,16 @@
 # Changes
 
+- 2026-07-31: Make selected `obs`/`var` column types an explicit parsing-rule contract.
+  Undeclared columns are exact text; a parallel `types` map declares only `integer`,
+  `number`, or `boolean` exceptions. Conversion now reads headers first, selects concrete
+  effective rules, protects their textual vendor sources from pandas inference, and then
+  strictly coerces declared exceptions before computed identifiers and axis keys. Invalid
+  non-missing values fail with bounded source context instead of becoming missing. The
+  `proforma_ion` recipe requires and consumes an integer charge rather than reparsing an
+  arbitrary object. All 12 packaged rule documents moved to schema 0.2 with explicit
+  numeric/boolean declarations, and the generated source/effective JSON Schemas were
+  regenerated.
+
 - 2026-07-31: Finish the typed computation boundary (`TODO/TODO_fix_dependency_injection_further.md`).
   Three things moved to where the architecture already said they belonged. (1) The MuLink
   sparse merge and feature-node assembly left `workflows/fasta.py` for a new pure

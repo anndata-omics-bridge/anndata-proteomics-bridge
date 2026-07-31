@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "Spectronaut",
   "software_version": "^(19|20)\\..*",
   "base": {
@@ -82,8 +82,19 @@
             "FG_LabeledSequence": "FG.LabeledSequence",
             "FG_Mass": "FG.Mass",
             "FG_PrecMz": "FG.PrecMz",
-            "FG_XICDBID": "FG.XICDBID"
-          },
+          "FG_XICDBID": "FG.XICDBID"
+        },
+        "types": {
+          "EG_IsDecoy": "boolean",
+          "EG_iRTPredicted": "number",
+          "EG_AvgProfileQvalue": "number",
+          "EG_MaxProfileQvalue": "number",
+          "EG_MinProfileQvalue": "number",
+          "EG_PercentileQvalue": "number",
+          "FG_Charge": "integer",
+          "FG_Mass": "number",
+          "FG_PrecMz": "number"
+        },
           "compute": [
             {
               "name": "ProForma_peptidoform",
@@ -232,8 +243,15 @@
             "F_FrgType": "F.FrgType",
             "F_FrgNum": "F.FrgNum",
             "F_FrgMz": "F.FrgMz",
-            "F_TheoreticalMz": "F.TheoreticalMz"
-          },
+          "F_TheoreticalMz": "F.TheoreticalMz"
+        },
+        "types": {
+          "FG_Charge": "integer",
+          "F_Charge": "integer",
+          "F_FrgNum": "integer",
+          "F_FrgMz": "number",
+          "F_TheoreticalMz": "number"
+        },
           "compute": [
             {
               "name": "ProForma_peptidoform",
@@ -303,6 +321,12 @@
             "PG_PEP": "PG.PEP",
             "PG_Pvalue": "PG.Pvalue",
             "PG_Qvalue": "PG.Qvalue"
+          },
+          "types": {
+            "PG_Cscore": "number",
+            "PG_PEP": "number",
+            "PG_Pvalue": "number",
+            "PG_Qvalue": "number"
           }
         }
       },

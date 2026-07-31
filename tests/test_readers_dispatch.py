@@ -11,6 +11,7 @@ from anndata_proteomics.readers.dispatch import (
     UnknownFormat,
     read_table,
     read_table_columns,
+    read_table_preserving_strings,
 )
 
 
@@ -85,3 +86,27 @@ def test_read_table_columns_uses_dispatch_without_loading_rows(tmp_path: Path) -
     unknown.write_text("a,b\n")
     with pytest.raises(UnknownFormat, match="xyz"):
         read_table_columns(unknown)
+
+
+def test_rule_aware_text_read_preserves_strings_and_locale_numbers(tmp_path: Path) -> None:
+    path = tmp_path / "typed.tsv"
+    path.write_text(
+        "Identifier\tQuantity\n001\t702,1904907226562\n9007199254740993\t168,5559844970703\n",
+        encoding="utf-8",
+    )
+
+    frame = read_table_preserving_strings(path, frozenset({"Identifier", "Absent"}))
+
+    assert frame["Identifier"].tolist() == ["001", "9007199254740993"]
+    assert str(frame["Identifier"].dtype) == "string"
+    assert frame["Quantity"].dtype.kind == "f"
+    assert frame["Quantity"].tolist() == pytest.approx([702.1904907226562, 168.5559844970703])
+
+
+def test_rule_aware_parquet_read_defers_to_physical_schema(tmp_path: Path) -> None:
+    path = tmp_path / "typed.parquet"
+    pd.DataFrame({"Identifier": [1, 2], "Quantity": [3.0, 4.0]}).to_parquet(path)
+
+    frame = read_table_preserving_strings(path, frozenset({"Identifier"}))
+
+    assert frame["Identifier"].dtype.kind in {"i", "u"}

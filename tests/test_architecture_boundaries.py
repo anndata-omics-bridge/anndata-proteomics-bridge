@@ -232,7 +232,6 @@ AUDITED_OBJECT_SIGNATURE_SLOTS: frozenset[SignatureSlot] = frozenset(
         ("adapters/anndata/namespace.py", "parse_namespace", "parameter", "stored"),
         ("adapters/anndata/proteobench.py", "_require_anndata", "parameter", "target"),
         ("converters/_fragments.py", "_split_packed", "parameter", "value"),
-        ("converters/assemble.py", "_format_charge", "parameter", "value"),
         ("params/parsers/maxquant.py", "_joined_text", "parameter", "value"),
         ("params/parsers/maxquant.py", "_text", "parameter", "value"),
         ("serialization.py", "to_json_compatible", "parameter", "value"),

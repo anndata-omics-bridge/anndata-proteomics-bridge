@@ -540,6 +540,27 @@
           "default": null,
           "title": "Optional Select"
         },
+        "types": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "number",
+                  "boolean"
+                ],
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Types"
+        },
         "compute": {
           "anyOf": [
             {

@@ -32,6 +32,7 @@ LONG_EXAMPLE: dict[str, Any] = {
                 "Precursor_Charge": "Precursor.Charge",
                 "Genes": "Genes",
             },
+            "types": {"Precursor_Charge": "integer"},
             "compute": [
                 {
                     "name": "ProForma_peptidoform",

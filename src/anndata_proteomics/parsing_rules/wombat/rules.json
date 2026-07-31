@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "2",
+  "schema_version": "0.2",
+  "file_version": "3",
   "software_name": "WOMBAT",
   "software_version": "^0\\.9\\.11$",
   "base": {
@@ -82,6 +82,9 @@
         "var": {
           "select": {
             "charge": "charge"
+          },
+          "types": {
+            "charge": "integer"
           },
           "compute": [
             {

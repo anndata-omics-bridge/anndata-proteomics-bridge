@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "Sage",
   "software_version": "^0\\.",
   "base": {
@@ -26,6 +26,11 @@
           "Q_Value": "q_value",
           "Score": "score",
           "Spectral_Angle": "spectral_angle"
+        },
+        "types": {
+          "Q_Value": "number",
+          "Score": "number",
+          "Spectral_Angle": "number"
         },
         "compute": [
           {
@@ -97,6 +102,9 @@
         "var": {
           "select": {
             "Charge": "charge"
+          },
+          "types": {
+            "Charge": "integer"
           },
           "compute": [
             {

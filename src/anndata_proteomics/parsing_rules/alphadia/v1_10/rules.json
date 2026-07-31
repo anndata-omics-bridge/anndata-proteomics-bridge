@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "AlphaDIA",
   "software_version": "^1\\.10(?:\\.|-|$)",
   "base": {
@@ -63,6 +63,10 @@
             "Mod_Sites": "mod_sites",
             "Genes": "genes",
             "Decoy": "decoy"
+          },
+          "types": {
+            "Charge": "integer",
+            "Decoy": "boolean"
           },
           "compute": [
             {

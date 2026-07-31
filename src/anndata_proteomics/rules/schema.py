@@ -21,6 +21,7 @@ UnknownPolicy = modification_schema.UnknownPolicy
 
 InputShape = Literal["long", "wide"]
 QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein", "fragment"]
+AxisColumnType = Literal["string", "integer", "number", "boolean"]
 
 PEPTIDE_LEVELS: frozenset[QuantificationLevel] = frozenset(
     {"ion", "fragment", "peptidoform", "peptide"}
@@ -100,7 +101,12 @@ class ColumnGroup(_Strict):
 
     select: dict[str, str] = Field(default_factory=dict)
     optional_select: dict[str, str] = Field(default_factory=dict)
+    types: dict[str, AxisColumnType] = Field(default_factory=dict)
     compute: list[ColumnCompute] = Field(default_factory=list)
+
+    def type_for(self, name: str) -> AxisColumnType:
+        """Return one selected column's declared type or the string default."""
+        return self.types.get(name, "string")
 
     @property
     def names(self) -> list[str]:
@@ -119,6 +125,14 @@ class ColumnGroup(_Strict):
         both = sorted(set(self.select) & set(self.optional_select))
         if both:
             raise ValueError(f"column name(s) declared in both select and optional_select: {both}")
+        return self
+
+    @model_validator(mode="after")
+    def _types_name_selected_columns(self) -> ColumnGroup:
+        selected = set(self.select) | set(self.optional_select)
+        unknown = sorted(set(self.types) - selected)
+        if unknown:
+            raise ValueError(f"types must name selected columns; unknown: {unknown}")
         return self
 
 
@@ -455,6 +469,12 @@ def _validate_ion_compute(rule: ParseRule, column: ColumnCompute) -> None:
         raise ValueError("how='proforma_ion' is valid only for ion or fragment rules.")
     if len(column.from_) != 2:
         raise ValueError("how='proforma_ion' requires exactly two source columns.")
+    charge_column = column.from_[1]
+    if rule.columns.var.type_for(charge_column) != "integer":
+        raise ValueError(
+            "how='proforma_ion' requires its charge source to declare type='integer'; "
+            f"got {charge_column!r}"
+        )
     if rule.quantification_level == "ion" and column.name not in rule.axis.var_keys:
         raise ValueError("computed ProForma ion columns must be used in axis.var_keys.")
 
@@ -482,6 +502,7 @@ class PartialColumnGroup(_Strict):
 
     select: dict[str, str] | None = None
     optional_select: dict[str, str] | None = None
+    types: dict[str, AxisColumnType] | None = None
     compute: list[ColumnCompute] | None = None
 
 
@@ -867,6 +888,7 @@ def _compose_column_group(
     return ColumnGroup(
         select=_compose_selected_columns(fragments, group),
         optional_select=_compose_optional_columns(fragments, group),
+        types=_compose_column_types(fragments, group),
         compute=_compose_computed_columns(fragments, group),
     )
 
@@ -920,6 +942,32 @@ def _compose_optional_columns(
             ("columns", group, "optional_select"),
         )
     return selected
+
+
+def _compose_column_types(
+    fragments: Sequence[PartialColumnGroup],
+    group: Literal["obs", "var"],
+) -> dict[str, AxisColumnType]:
+    """Compose logical selected-column types; omitted entries default to string."""
+    declared: dict[str, AxisColumnType] = {}
+    is_null = False
+    for fragment in fragments:
+        if "types" not in fragment.model_fields_set:
+            continue
+        if fragment.types is None:
+            declared.clear()
+            is_null = True
+        else:
+            if is_null:
+                declared.clear()
+            declared.update(fragment.types)
+            is_null = False
+    if is_null:
+        raise RuleCompositionError(
+            f"columns.{group}.types cannot be null",
+            ("columns", group, "types"),
+        )
+    return declared
 
 
 def _compose_computed_columns(

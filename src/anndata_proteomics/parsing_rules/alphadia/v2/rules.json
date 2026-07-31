@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "AlphaDIA",
   "software_version": "^2\\.",
   "base": {
@@ -72,6 +72,13 @@
             "Protein_Group_QValue": "pg.qval",
             "Mz_Observed": "precursor.mz.observed",
             "Mobility_Observed": "precursor.mobility.observed"
+          },
+          "types": {
+            "Charge": "integer",
+            "Decoy": "boolean",
+            "Protein_Group_QValue": "number",
+            "Mz_Observed": "number",
+            "Mobility_Observed": "number"
           },
           "compute": [
             {

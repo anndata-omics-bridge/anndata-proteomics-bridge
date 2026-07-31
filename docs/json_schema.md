@@ -20,7 +20,7 @@ This minimal long-format document contains one ion level:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "file_version": "1",
   "software_name": "MyTool",
   "software_version": "^1\\..*",
@@ -210,6 +210,43 @@ A `coalesce` or `join_nonempty` compute may name `optional_select` sources; thos
 from the input are dropped from the coalesce chain. A compute whose *every* source was
 skipped is an error — it declares a column it can never produce.
 
+### Selected-column logical types
+
+Every selected axis column is logical `string` unless its APB output name appears in the
+parallel `types` map:
+
+```json
+{
+  "var": {
+    "select": {
+      "Precursor_Id": "Precursor.Id",
+      "Precursor_Charge": "Precursor.Charge",
+      "Is_Decoy": "Decoy"
+    },
+    "types": {
+      "Precursor_Charge": "integer",
+      "Is_Decoy": "boolean"
+    }
+  }
+}
+```
+
+Allowed values are `string`, `integer`, `number`, and `boolean`. A `types` key must name a
+column in the same group's `select` or `optional_select`; computed columns cannot be typed
+through this map. Omitting a declaration deliberately means text, not inference.
+
+Delimited conversion is header-first: APB selects the effective rule before reading data,
+then protects every vendor source mapped to logical `string` from pandas numeric inference.
+After reading, selected columns are strictly coerced before computed columns and axis keys
+are constructed. Invalid non-missing values are errors with the axis, output name, vendor
+source, target type, count, and bounded examples. `integer` rejects fractions and values
+outside signed 64-bit range; `number` rejects unparseable and non-finite values; `boolean`
+accepts only case-insensitive `true`/`false` and `0`/`1`. Missing values remain missing.
+
+If a selected vendor source feeds several effective levels, all those rules must assign it
+the same logical type. Parquet keeps its physical input schema, but the same strict logical
+coercion is applied after reading.
+
 `columns.var.compute` is ordered. Each object has `name`, `from`, and `how`:
 
 | `how` | Required `name` | Purpose |
@@ -226,6 +263,9 @@ All computed columns may depend on earlier computed columns. `coalesce` and
 `join_nonempty`. A generic compute may intentionally replace a selected output with
 the same name. ProForma computed columns retain their reserved APB identifier names,
 not input-column aliases.
+
+`proforma_ion` additionally requires its charge input to be a selected column declared as
+logical `integer`; the recipe consumes that typed value and does not parse vendor tokens.
 
 `column_roles` identifies APB output columns that carry downstream semantics
 without repeating vendor input names. The two current roles are deliberately

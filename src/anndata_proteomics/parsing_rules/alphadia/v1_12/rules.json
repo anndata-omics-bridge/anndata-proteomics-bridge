@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "AlphaDIA",
   "software_version": "^1\\.12(?:\\.|-|$)",
   "base": {
@@ -70,6 +70,11 @@
           "optional_select": {
             "Channel": "channel",
             "Protein_Group_QValue": "pg_qval"
+          },
+          "types": {
+            "Charge": "integer",
+            "Decoy": "boolean",
+            "Protein_Group_QValue": "number"
           },
           "compute": [
             {

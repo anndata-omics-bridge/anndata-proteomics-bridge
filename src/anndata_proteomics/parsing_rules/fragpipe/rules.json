@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "1",
+  "schema_version": "0.2",
+  "file_version": "2",
   "software_name": "FragPipe",
   "software_version": "^2[23]\\.",
   "base": {
@@ -72,6 +72,10 @@
             "Protein_ID": "Protein ID",
             "Gene": "Gene",
             "Assigned_Modifications": "Assigned Modifications"
+          },
+          "types": {
+            "Charge": "integer",
+            "M_Z": "number"
           },
           "compute": [
             {

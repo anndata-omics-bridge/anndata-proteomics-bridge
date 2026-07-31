@@ -47,7 +47,8 @@ def test_rule_config_missing_level_and_no_match(
         effective_rules=lambda: {},
         software_name="Tool",
     )
-    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(cli, "read_table_columns", lambda _path: list(frame.columns))
+    monkeypatch.setattr(cli, "_read_table_for_selections", lambda *_args: frame)
     monkeypatch.setattr(cli, "load_rule_document", lambda _path: document)
     assert (
         cli.convert(
@@ -99,7 +100,8 @@ def test_rule_config_materializes_single_and_mudata_with_parameters(
         parameterized_effective_rules=parameterized_effective_rules,
         software_name="DIA-NN",
     )
-    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(cli, "read_table_columns", lambda _path: list(frame.columns))
+    monkeypatch.setattr(cli, "_read_table_for_selections", lambda *_args: frame)
     monkeypatch.setattr(cli, "load_rule_document", lambda _path: document)
     monkeypatch.setattr(
         conversion_pipeline,
@@ -170,7 +172,8 @@ def test_packaged_level_and_mudata_conversion_paths(
 ) -> None:
     frame = pd.DataFrame({"x": [1]})
     adata = ad.AnnData(np.ones((1, 1), dtype=np.float32))
-    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(cli, "read_table_columns", lambda _path: list(frame.columns))
+    monkeypatch.setattr(cli, "_read_table_for_selections", lambda *_args: frame)
     monkeypatch.setattr(
         conversion_pipeline,
         "recognize_software",
@@ -187,9 +190,15 @@ def test_packaged_level_and_mudata_conversion_paths(
         lambda *_args: resolution,
     )
     level_conversion = object()
+    selected_rule = load_packaged_rule_for_version("diann", "ion", "2.0.0")
     monkeypatch.setattr(
         conversion_workflow,
-        "convert_level_from_parameters",
+        "select_rule_from_parameters",
+        lambda *_args: conversion_pipeline.RuleSelection(selected_rule, "software_version"),
+    )
+    monkeypatch.setattr(
+        conversion_workflow,
+        "convert_selected_level",
         lambda *_args, **_kwargs: level_conversion,
     )
     monkeypatch.setattr(conversion_adapter, "to_anndata", lambda _conversion: adata)
@@ -256,7 +265,8 @@ def test_compound_conversion_separates_parameter_and_rule_software(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     frame = pd.DataFrame({"x": [1]})
-    monkeypatch.setattr(cli, "read_table", lambda _path: frame)
+    monkeypatch.setattr(cli, "read_table_columns", lambda _path: list(frame.columns))
+    monkeypatch.setattr(cli, "_read_table_for_selections", lambda *_args: frame)
     monkeypatch.setattr(
         conversion_pipeline,
         "recognize_software",
@@ -286,25 +296,30 @@ def test_compound_conversion_separates_parameter_and_rule_software(
     selected: dict[str, object] = {}
     level_conversion = object()
 
-    def convert_level_from_parameters(
-        _frame: pd.DataFrame,
+    def select_rule_from_parameters(
+        _headers: object,
         slug: str,
         level: str,
         selected_resolution: conversion_pipeline.ParameterResolution,
-        **_kwargs: object,
-    ) -> object:
+    ) -> conversion_pipeline.RuleSelection:
         selected.update(
             slug=slug,
             level=level,
             parameter_resolution=selected_resolution,
         )
-        return level_conversion
+        rule = load_packaged_rule_for_version("diann", "ion", "1.8.2 beta 8")
+        return conversion_pipeline.RuleSelection(rule, "software_version")
 
     monkeypatch.setattr(conversion_pipeline, "resolve_parameters", resolve_parameters)
     monkeypatch.setattr(
         conversion_workflow,
-        "convert_level_from_parameters",
-        convert_level_from_parameters,
+        "select_rule_from_parameters",
+        select_rule_from_parameters,
+    )
+    monkeypatch.setattr(
+        conversion_workflow,
+        "convert_selected_level",
+        lambda *_args, **_kwargs: level_conversion,
     )
     monkeypatch.setattr(
         conversion_adapter,

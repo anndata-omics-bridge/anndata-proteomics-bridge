@@ -101,6 +101,19 @@
           "title": "Optional Select",
           "type": "object"
         },
+        "types": {
+          "additionalProperties": {
+            "enum": [
+              "string",
+              "integer",
+              "number",
+              "boolean"
+            ],
+            "type": "string"
+          },
+          "title": "Types",
+          "type": "object"
+        },
         "compute": {
           "items": {
             "$ref": "#/$defs/ColumnCompute"

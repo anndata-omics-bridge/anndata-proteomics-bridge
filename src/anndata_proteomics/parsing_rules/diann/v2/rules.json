@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "file_version": "3",
+  "schema_version": "0.2",
+  "file_version": "4",
   "software_name": "DIA-NN",
   "software_version": "^2\\..*",
   "base": {
@@ -73,6 +73,9 @@
             "Protein_Ids": "Protein.Ids",
             "Protein_Names": "Protein.Names",
             "Genes": "Genes"
+          },
+          "types": {
+            "Precursor_Charge": "integer"
           },
           "compute": [
             {

@@ -208,7 +208,7 @@ Every document opens with `schema_version`, `file_version`, `software_name`, and
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "file_version": "1",
   "software_name": "MyTool",
   "software_version": "^1\\..*",
@@ -231,7 +231,7 @@ Every document opens with `schema_version`, `file_version`, `software_name`, and
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "file_version": "1",
   "software_name": "MyTool",
   "software_version": "^22\\..*",
@@ -243,7 +243,12 @@ Every document opens with `schema_version`, `file_version`, `software_name`, and
   "levels": {
     "ion": {
       "axis": {"var_keys": ["Precursor_Id"], "x_layer": "Intensity"},
-      "columns": {"var": {"select": {"Precursor_Id": "Peptide", "Charge": "Charge"}}},
+      "columns": {
+        "var": {
+          "select": {"Precursor_Id": "Peptide", "Charge": "Charge"},
+          "types": {"Charge": "integer"}
+        }
+      },
       "layers": [{"name": "Intensity", "source": "^(?P<sample>.+) Intensity$"}]
     }
   }
@@ -255,6 +260,12 @@ Two further objects — `columns.var.compute` (ProForma derivation) and `modific
 `apb` discovers `rules.json` automatically — no registry edits. The source and every effective level are validated by Pydantic.
 
 **Base and levels.** Shared objects live in the document's `base`; level-specific axis, columns, layers, and fragment behavior live under `levels.<level>`. APB deep-merges each level over the base before effective-rule validation. There are no inheritance paths or external base files.
+
+**Selected-column types.** Selected `obs` and `var` columns are exact text by default so
+identifiers such as leading-zero fractions and large numeric-looking accessions survive input.
+Declare only exceptions in the parallel `types` map, using `integer`, `number`, or `boolean`.
+APB selects the effective rule from the file header, reads its textual sources without pandas
+inference, and then strictly coerces declared exceptions before computing identifiers or keys.
 
 ## ProForma sequences & modifications
 

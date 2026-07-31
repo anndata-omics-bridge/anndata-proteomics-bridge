@@ -50,10 +50,10 @@ def build_index(df: pd.DataFrame, keys: list[str]) -> pd.Series:
     full, un-deduplicated frame the long converter scatters from.
     """
     if len(keys) == 1:
-        return df[keys[0]].astype(str)
-    joined = df[keys[0]].astype(str)
+        return df[keys[0]].astype("string")
+    joined = df[keys[0]].astype("string")
     for key in keys[1:]:
-        joined = joined + KEY_SEPARATOR + df[key].astype(str)
+        joined = joined + KEY_SEPARATOR + df[key].astype("string")
     return joined
 
 
@@ -70,6 +70,5 @@ def build_axis_frame(df: pd.DataFrame, keys: list[str], output_columns: list[str
     needed_cols = list(dict.fromkeys(list(keys) + present))
     block = df[needed_cols].drop_duplicates(subset=keys).copy()
     out = block[present].copy()
-    out.index = build_index(block, keys).values
-    out.index.name = KEY_SEPARATOR.join(keys)
+    out.index = pd.Index(build_index(block, keys), name=KEY_SEPARATOR.join(keys))
     return out

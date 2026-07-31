@@ -35,6 +35,7 @@ LEVELS: tuple[QuantificationLevel, ...] = (
     "fragment",
 )
 MUDATA = "mudata"
+_SAMPLE_PLACEHOLDER = "<sample>"
 
 ParameterVersionStatus = Literal["present", "missing"]
 RuleSelectionMethod = Literal[
@@ -118,6 +119,28 @@ class UnrecognizedSoftware:
 
 
 type SoftwareRecognition = RecognizedSoftware | UnrecognizedSoftware
+
+
+def string_sources_for_rules(rules: Iterable[ParseRule]) -> frozenset[str]:
+    """Return real vendor sources whose exact textual tokens must survive reading."""
+    source_types: dict[str, str] = {}
+    for rule in rules:
+        for group in (rule.columns.obs, rule.columns.var):
+            selected = {**group.select, **group.optional_select}
+            for output_name, source_name in selected.items():
+                if source_name == _SAMPLE_PLACEHOLDER:
+                    continue
+                logical_type = group.type_for(output_name)
+                if source_name in source_types and source_types[source_name] != logical_type:
+                    raise ValueError(
+                        "conflicting logical types for vendor source "
+                        f"{source_name!r}: {source_types[source_name]!r} and "
+                        f"{logical_type!r}"
+                    )
+                source_types[source_name] = logical_type
+    return frozenset(
+        source for source, logical_type in source_types.items() if logical_type == "string"
+    )
 
 
 def software_slug(software_name: str) -> str:

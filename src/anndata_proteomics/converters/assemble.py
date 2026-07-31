@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import math
-
 import pandas as pd
 
 from anndata_proteomics.converters._fragments import explode_fragments
 from anndata_proteomics.converters._pieces import ConversionPieces
+from anndata_proteomics.converters.axis_types import AxisColumnContext, AxisName, coerce_axis_column
 from anndata_proteomics.converters.checks import check_layer_occupancy
 from anndata_proteomics.converters.long import convert_long
 from anndata_proteomics.converters.wide import convert_wide
@@ -106,12 +105,16 @@ def _columns_needed_for_long(df: pd.DataFrame, rule: ParseRule) -> list[str]:
 def _materialize_columns(df: pd.DataFrame, rule: ParseRule) -> pd.DataFrame:
     """Materialize declared selected and computed columns on a working DataFrame."""
     out = df.copy()
-    _materialize_column_group(out, rule.columns.obs)
-    _materialize_column_group(out, rule.columns.var)
+    _materialize_column_group(out, rule.columns.obs, "obs")
+    _materialize_column_group(out, rule.columns.var, "var")
     return out
 
 
-def _materialize_column_group(df: pd.DataFrame, group: ColumnGroup) -> frozenset[str]:
+def _materialize_column_group(
+    df: pd.DataFrame,
+    group: ColumnGroup,
+    axis: AxisName,
+) -> frozenset[str]:
     """Materialize one group's columns; return the optional names whose source was absent.
 
     A ``select`` source must be present. An ``optional_select`` source that this export does
@@ -123,16 +126,39 @@ def _materialize_column_group(df: pd.DataFrame, group: ColumnGroup) -> frozenset
             continue
         if source not in df.columns:
             raise ValueError(f"cannot select column {name!r}; source {source!r} is missing")
-        df[name] = df[source]
+        df[name] = _coerce_selected_column(df[source], group, axis, name, source)
     skipped: set[str] = set()
     for name, source in group.optional_select.items():
         if source in df.columns:
-            df[name] = df[source]
+            df[name] = _coerce_selected_column(df[source], group, axis, name, source)
         else:
             skipped.add(name)
     for column in group.compute:
-        df[column.name] = _compute_column(df, column, allow_missing=frozenset(skipped))
+        df[column.name] = _compute_column(
+            df,
+            column,
+            allow_missing=frozenset(skipped),
+        ).astype("string")
     return frozenset(skipped)
+
+
+def _coerce_selected_column(
+    values: pd.Series,
+    group: ColumnGroup,
+    axis: AxisName,
+    output_name: str,
+    source_name: str,
+) -> pd.Series:
+    """Coerce one selected source through its rule-owned logical contract."""
+    return coerce_axis_column(
+        values,
+        AxisColumnContext(
+            axis=axis,
+            output_name=output_name,
+            source_name=source_name,
+            logical_type=group.type_for(output_name),
+        ),
+    )
 
 
 def _compute_generic_column(
@@ -181,19 +207,7 @@ def _compute_column(
             )
         return df[source_key]
     if column.how == "proforma_ion":
-        sequence_key, charge_key = column.from_
-        missing = [key for key in (sequence_key, charge_key) if key not in df.columns]
-        if missing:
-            raise ValueError(
-                f"cannot compute column {column.name!r}; source column(s) missing: {missing}"
-            )
-        return pd.Series(
-            [
-                f"{sequence}/{_format_charge(charge)}"
-                for sequence, charge in zip(df[sequence_key], df[charge_key], strict=True)
-            ],
-            index=df.index,
-        )
+        return _compute_proforma_ion(df, column)
     if column.how == "proforma_fragment":
         ion_key, label_key = column.from_
         missing = [key for key in (ion_key, label_key) if key not in df.columns]
@@ -235,23 +249,20 @@ def _join_nonempty_columns(
     return result.mask(~has_value, pd.NA)
 
 
-def _format_charge(value: object) -> str:
-    """Normalize charge values for ProForma ion identifiers."""
-    if value is None or (isinstance(value, float) and math.isnan(value)):
+def _compute_proforma_ion(df: pd.DataFrame, column: ColumnCompute) -> pd.Series:
+    """Combine a string peptidoform and already-typed positive integer charge."""
+    sequence_key, charge_key = column.from_
+    missing_sources = [key for key in (sequence_key, charge_key) if key not in df.columns]
+    if missing_sources:
+        raise ValueError(
+            f"cannot compute column {column.name!r}; source column(s) missing: {missing_sources}"
+        )
+    charges = df[charge_key]
+    if charges.isna().any():
         raise ValueError("cannot derive proforma_ion from missing charge")
-    if isinstance(value, (int, float)):
-        numeric = float(value)
-    else:
-        text = str(value).strip()
-        if not text:
-            raise ValueError("cannot derive proforma_ion from empty charge")
-        try:
-            numeric = float(text)
-        except ValueError as exc:
-            raise ValueError(f"charge must be numeric, got {value!r}") from exc
-    if not numeric.is_integer():
-        raise ValueError(f"charge must be an integer value, got {value!r}")
-    charge = int(numeric)
-    if charge <= 0:
-        raise ValueError(f"charge must be positive, got {value!r}")
-    return str(charge)
+    nonpositive = charges.le(0)
+    if nonpositive.any():
+        examples = charges.loc[nonpositive].drop_duplicates().head(5).tolist()
+        raise ValueError(f"charge must be positive; examples={examples}")
+    sequences = df[sequence_key].astype("string")
+    return sequences + "/" + charges.astype("string")
