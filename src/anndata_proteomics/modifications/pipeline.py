@@ -32,7 +32,7 @@ def _map_entries(mods: Modifications) -> tuple[MapEntry, ...]:
                 token=e.token,
                 name=record.name,
                 accession=record.accession,
-                target=record.target,
+                target=tuple(record.target),
                 position=record.position,
                 mass_delta=record.mass_delta,
             )
@@ -43,12 +43,10 @@ def _map_entries(mods: Modifications) -> tuple[MapEntry, ...]:
 def _to_runtime_rule(mods: TokenRegexModifications) -> ModificationRule:
     """Convert the validated token_regex model into the runtime dataclass."""
     return ModificationRule(
-        source_column=mods.source_column,
         token_pattern=mods.token_pattern,
         token_position=mods.token_position,
         case_sensitive=mods.case_sensitive,
         unknown_policy=mods.unknown_policy,
-        output_column=mods.output_column,
         entries=_map_entries(mods),
     )
 

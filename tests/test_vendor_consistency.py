@@ -51,9 +51,15 @@ def test_every_packaged_rule_has_a_registered_parser() -> None:
 
 
 def test_catalog_label_resolves_primary_parameter_file_owner() -> None:
-    assert registry.parser_slug("DIA-NN") == "diann"
-    assert registry.parser_slug("FragPipe (DIA-NN quant)") == "fragpipe"
-    assert registry.parser_slug("Unknown Tool") is None
+    diann = registry.recognize_parser("DIA-NN")
+    fragpipe = registry.recognize_parser("FragPipe (DIA-NN quant)")
+    unknown = registry.recognize_parser("Unknown Tool")
+
+    assert isinstance(diann, registry.RecognizedParameterParser)
+    assert diann.slug == "diann"
+    assert isinstance(fragpipe, registry.RecognizedParameterParser)
+    assert fragpipe.slug == "fragpipe"
+    assert isinstance(unknown, registry.UnrecognizedParameterParser)
 
 
 def test_packaged_rules_and_param_fixtures_cover_the_same_tools() -> None:

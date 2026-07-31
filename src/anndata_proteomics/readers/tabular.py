@@ -19,12 +19,11 @@ def detect_text_delimiter(path: Path | str) -> str:
     """Detect comma- versus tab-delimited text from a bounded content sample."""
     with Path(path).open(encoding="utf-8-sig", newline="") as handle:
         sample = handle.read(65536)
-    try:
-        return csv.Sniffer().sniff(sample, delimiters=_TEXT_DELIMITERS).delimiter
-    except csv.Error:
+    if not any(delimiter in sample for delimiter in _TEXT_DELIMITERS):
         # A one-column text file has no delimiter to detect. Preserve the historical
         # generic-.txt default so it still reads as one tabular column.
         return "\t"
+    return csv.Sniffer().sniff(sample, delimiters=_TEXT_DELIMITERS).delimiter
 
 
 def detect_decimal_separator(path: Path | str, *, delimiter: str) -> str:

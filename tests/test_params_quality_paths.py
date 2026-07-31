@@ -11,19 +11,19 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from anndata_proteomics.modifications.model import SearchedModification
-from anndata_proteomics.params import model
-from anndata_proteomics.params.anndata_io import (
-    read_search_parameters,
+from anndata_proteomics.adapters.anndata.params import (
+    has_search_parameters,
     write_search_parameters,
 )
+from anndata_proteomics.modifications.model import SearchedModification
+from anndata_proteomics.params import model
 from anndata_proteomics.params.model import MassTolerance, Parameters, Probability
 from anndata_proteomics.params.parsers import _common, alphapept, msaid, wombat
 
 
 class _Unseekable:
-    def seek(self, _position: int) -> None:
-        raise OSError("not seekable")
+    def seekable(self) -> bool:
+        return False
 
     def read(self) -> str:
         return "content"
@@ -105,11 +105,14 @@ def test_shared_parser_io_and_tolerance_errors(tmp_path: Path) -> None:
         _common.format_tolerance_range({"invalid": [1, 2]})
     assert _common.format_tolerance_range({"invalid": [0], "ppm": [-1, 1]}) == "[-1 ppm, 1 ppm]"
     assert _common.homogenize_paren_mods("known", {"known": "mapped"}) == "mapped"
+    assert _common.lookup_mass_mod(1.0, {1.0: "known"}) == (_common.MassModificationMatch("known"))
+    assert _common.lookup_mass_mod(2.0, {1.0: "known"}) == (
+        _common.UnrecognizedModificationMass(2.0)
+    )
 
 
 def test_vendor_specific_small_helpers() -> None:
-    with pytest.raises(TypeError, match="must be strings"):
-        alphapept._map_modifications([1])
+    assert alphapept._map_modifications(["cC", "oxM"]) == ("C[Carbamidomethyl], M[Oxidation]")
     assert msaid._homogenize_mods(" ") == ""
     assert wombat._homogenize_mod_xtandem("plain") == "plain"
     assert wombat._homogenize_mod_xtandem("Acetyl of N-term") == ("N-term[Acetyl]")
@@ -120,6 +123,6 @@ def test_vendor_specific_small_helpers() -> None:
 def test_parameter_storage_without_payload_or_source_path() -> None:
     target = ad.AnnData(np.ones((1, 1)))
     target.uns["anndata_proteomics"] = {"other": "metadata"}
-    assert read_search_parameters(target) is None
+    assert not has_search_parameters(target)
     write_search_parameters(target, Parameters())
     assert "search_parameters_path" not in target.uns["anndata_proteomics"]

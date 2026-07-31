@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from anndata_proteomics import serialization
 from anndata_proteomics.params.registry import get_parser
-from anndata_proteomics.readers import summary
 from anndata_proteomics.rules import loader
 from anndata_proteomics.rules.schema import (
     ParseRule,
@@ -218,7 +218,7 @@ def test_rule_document_missing_level_and_loader_paths(
     assert loader.read_rule_document(path)["software_name"] == "Synthetic"
     assert set(loader.load_rules(path)) == {"ion"}
     with pytest.raises(loader.RuleDocumentError, match="has no level"):
-        loader.load_rule(path, "protein")
+        loader.load_rule_from_path(path, "protein")
     with pytest.raises(ValueError, match="invalid software_version regex"):
         loader.software_version_matches("[", "1")
 
@@ -245,11 +245,12 @@ def test_rule_locator_rejects_ambiguous_non_equivalent_documents(
         "document_paths_for_software",
         lambda _software: tuple(paths),
     )
-    assert loader.resolve_rule_locator("synthetic", "ion", None) is None
+    resolution = loader.resolve_rule_locator_without_version("synthetic", "ion")
+    assert isinstance(resolution, loader.AmbiguousRuleLocators)
 
 
 def test_summary_json_compatibility_helper() -> None:
-    converted = summary._to_json_compatible(
+    converted = serialization.to_json_compatible(
         {
             "array": np.asarray([np.int64(1)]),
             "tuple": (np.float64(2.0),),

@@ -10,6 +10,7 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from anndata_proteomics.params.parsers import (
     alphapept,
@@ -54,6 +55,10 @@ def test_alphapept_and_wombat_non_trypsin_inputs() -> None:
     assert alpha.enzyme == "Lys-C"
     assert alpha.precursor_mass_tolerance is not None
     assert alpha.precursor_mass_tolerance.unit == "Da"
+    alpha_fasta = cast(dict[str, Any], alpha_document["fasta"])
+    alpha_fasta["mods_fixed"] = [1]
+    with pytest.raises(ValidationError, match="mods_fixed"):
+        alphapept.extract_params(StringIO(yaml.safe_dump(alpha_document)))
 
     wombat_document = {
         "version": "1",
@@ -83,26 +88,30 @@ def test_alphapept_and_wombat_non_trypsin_inputs() -> None:
 
 
 def test_diann_command_line_and_helper_guards() -> None:
-    assert diann._parse_cmdline("", "1.7")["mod"] == []
+    version_1_7 = diann._parse_diann_version("1.7")
+    version_2 = diann._parse_diann_version("2.0")
+    assert diann._parse_cmdline("", version_1_7)["mod"] == []
     with pytest.raises(ValueError, match="invalid `unimod`"):
-        diann._parse_cmdline("unimod4 value", "1.7")
-    assert diann._parse_cmdline("unimod999", "1.7")["mod"] == []
-    below = diann._parse_cmdline("unimod4 --unimod35", "1.7")
+        diann._parse_cmdline("unimod4 value", version_1_7)
+    assert diann._parse_cmdline("unimod999", version_1_7)["mod"] == []
+    below = diann._parse_cmdline("unimod4 --unimod35", version_1_7)
     assert below["mod"] == ["Carbamidomethyl (C)"]
     assert below["var-mod"] == ["Oxidation (M)"]
-    assert diann._parse_cmdline("mod value", "2.0")["mod"] == ["value"]
+    assert diann._parse_cmdline("mod value", version_2)["mod"] == ["value"]
 
-    assert diann._extract_cfg(["not-an-int"], r"(.*)", int, default=7) == 7
+    assert diann._extract_cfg_int_or_default(["no match"], r"(\d+)", 7) == 7
+    with pytest.raises(ValueError, match="invalid literal"):
+        diann._extract_cfg_int(["not-an-int"], r"(.*)")
     assert diann._extract_modifications(["x", "y"], [r"(x\n)"]) == "x"
     assert diann._protein_inference({"no-prot-inf": True}) == "Disabled"
     assert diann._quantification_strategy({"direct-quant": True}) == "Legacy"
     with pytest.raises(ValueError, match="requires a value"):
         diann._protein_inference({"pg-level": []})
     with pytest.raises(TypeError, match="must contain arguments"):
-        diann._from_cmdline({"qvalue": "wrong-type"})
-    with pytest.raises(TypeError, match="enzyme setting"):
+        diann._from_cmdline({"qvalue": True})
+    with pytest.raises(TypeError, match="must contain arguments"):
         diann._from_cmdline({"cut": True})
-    assert diann._from_cfg(["Normalisation disabled"])["abundance_normalization_ions"] == "None"
+    assert diann._from_cfg(["Normalisation disabled"]).get("abundance_normalization_ions") == "None"
 
 
 def test_diann_rejects_non_numeric_tolerance(
@@ -114,9 +123,18 @@ def test_diann_rejects_non_numeric_tolerance(
         lambda: {"fragment_mass_tolerance": object()},
     )
     monkeypatch.setattr(diann, "_from_cmdline", lambda _settings: {})
-    monkeypatch.setattr(diann, "_from_log_regex", lambda _lines, *, have: {})
+    monkeypatch.setattr(
+        diann,
+        "_from_log_regex",
+        lambda _lines, *, has_fragment_tolerance, has_precursor_tolerance: {},
+    )
     with pytest.raises(TypeError, match="must be numeric"):
         diann.extract_params(StringIO("diann --flag\n"))
+
+
+def test_maxquant_missing_length_key_fails_without_exception_fallback() -> None:
+    with pytest.raises(KeyError, match="minimum peptide length"):
+        maxquant._min_peptide_length(pd.Series(dtype="object"))
 
 
 def test_fragpipe_modification_and_workflow_variants() -> None:
@@ -138,71 +156,38 @@ def test_fragpipe_modification_and_workflow_variants() -> None:
     )
     assert "N-term M[Acetyl]" in variable
     assert "N-term[Acetyl]" in variable
-    assert fragpipe._lookup_mod_name(-17.026549) == "Gln->pyro-Glu"
-    assert fragpipe._lookup_mod_name(4.025107) == "Label:2H(4)"
-    assert fragpipe._lookup_mod_name(12.345678) is None
+    assert fragpipe._lookup_mod_name(-17.026549, "-17.026549") == "Gln->pyro-Glu"
+    assert fragpipe._lookup_mod_name(4.025107, "4.025107") == "Label:2H(4)"
+    assert fragpipe._lookup_mod_name(12.345678, "12.345678") == "12.345678"
 
     parsed = fragpipe._parse_lines(["flag", "key=value # comment"])
     assert parsed[0].value is None
-    _header, version, _fragpipe_version, _diann_version, _records = fragpipe._read_workflow(
+    workflow = fragpipe._read_workflow(
         "# Header\nfragpipe-config.bin-msfragger=/path/no-version.jar"
     )
-    assert version is None
+    assert isinstance(workflow.msfragger_version, fragpipe.WorkflowVersionUnavailable)
 
-    assert (
-        fragpipe._resolve_enzyme(
-            pd.Series(
-                {
-                    "msfragger.search_enzyme_name_1": "enzyme-a",
-                    "msfragger.search_enzyme_name_2": "enzyme-b",
-                }
-            )
-        )
-        == "enzyme-a|enzyme-b"
+    assert fragpipe._resolve_enzyme("enzyme-a", "enzyme-b") == "enzyme-a|enzyme-b"
+    assert fragpipe._resolve_enzyme("other", "null") == "other"
+    charge_range = fragpipe._bounded_charge_range("2", "5")
+    assert charge_range == fragpipe.BoundedChargeRange(minimum=2, maximum=5)
+    assert isinstance(charge_range, fragpipe.BoundedChargeRange)
+    digest_mass = fragpipe.DigestMassRange(minimum=500, maximum=5000)
+    assert fragpipe._precursor_mz_range(digest_mass, charge_range) == (
+        fragpipe.PrecursorMzRange(minimum=100, maximum=2500)
     )
-    assert (
-        fragpipe._resolve_enzyme(
-            pd.Series(
-                {
-                    "msfragger.search_enzyme_name_1": "other",
-                    "msfragger.search_enzyme_name_2": "null",
-                }
-            )
-        )
-        == "other"
+    default_charge = fragpipe.LowerBoundedChargeRange(minimum=1)
+    assert default_charge == fragpipe.LowerBoundedChargeRange(minimum=1)
+    assert isinstance(default_charge, fragpipe.LowerBoundedChargeRange)
+    assert fragpipe._maximum_precursor_mz(digest_mass, default_charge) == (
+        fragpipe.MaximumPrecursorMz(maximum=5000)
     )
-    assert fragpipe._charge_range(
-        pd.Series(
-            {
-                "msfragger.override_charge": "true",
-                "msfragger.misc.fragger.precursor-charge-lo": "2",
-                "msfragger.misc.fragger.precursor-charge-hi": "5",
-            }
-        )
-    ) == (2, 5)
-    assert (
-        fragpipe._protein_inference(
-            pd.Series(
-                {
-                    "protein-prophet.run-protein-prophet": "true",
-                    "protein-prophet.cmd-opts": "--best",
-                }
-            )
-        )
-        == "ProteinProphet: --best"
+    assert fragpipe._protein_inference("--best") == "ProteinProphet: --best"
+    assert isinstance(
+        fragpipe._phi_report_identification_fdrs(""),
+        fragpipe.PhiReportIdentificationFdrs,
     )
-    assert (
-        fragpipe._protein_inference(pd.Series({"protein-prophet.run-protein-prophet": "false"}))
-        is None
-    )
-    neither = pd.Series(
-        {
-            "diann.run-dia-nn": "false",
-            "phi-report.filter": "",
-            "quantitation.run-label-free-quant": "false",
-        }
-    )
-    assert fragpipe._fdr_and_mbr(neither)[4:] == (None, None)
+    assert isinstance(fragpipe.NoQuantification(), fragpipe.NoQuantification)
 
     workflow = (Path(__file__).parent / "params" / "fragpipe.workflow").read_text(encoding="utf-8")
     lines = [
@@ -249,10 +234,10 @@ def test_maxquant_xml_structure_and_scalar_guards(
 
 
 def test_metamorpheus_helpers_reject_invalid_shapes_and_render_termini() -> None:
-    with pytest.raises(TypeError, match="must be a table"):
-        metamorpheus._mapping([], "field")
-    with pytest.raises(TypeError, match="must be text"):
-        metamorpheus._text(1, "field")
+    with pytest.raises(ValueError, match="CommonParameters"):
+        metamorpheus.MetaMorpheusSettings.model_validate(
+            {"CommonParameters": [], "SearchParameters": {}}
+        )
     assert metamorpheus._homogenize_mod("plain") == "plain"
     assert metamorpheus._homogenize_mod("Acetyl on X (Prot N-Term)") == ("Protein N-term[Acetyl]")
     assert metamorpheus._homogenize_mod("Acetyl on X (Pep N-Term)") == ("N-term[Acetyl]")

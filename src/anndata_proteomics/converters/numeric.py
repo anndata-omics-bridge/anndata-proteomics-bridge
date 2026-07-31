@@ -7,6 +7,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from anndata_proteomics.converters._pieces import DenseLayerMatrix
+
 logger = logging.getLogger(__name__)
 
 # A layer this empty is almost always a rule defect (wrong source column, or a
@@ -15,27 +17,27 @@ logger = logging.getLogger(__name__)
 _ALL_MISSING_THRESHOLD = 0.999
 
 
-def coerce_numeric(
-    series: pd.Series, missing_values: list[float], value_pattern: str = ""
-) -> pd.Series:
-    """Coerce numeric values and replace rule-declared missing sentinels with NaN.
-
-    When `value_pattern` is set, its single capture group is extracted from each cell
-    first, so vendor columns holding structured strings (PEAKS `AScore` is
-    `site:modification:score`) yield the embedded number instead of NaN.
-    """
-    if value_pattern:
-        series = series.astype("string").str.extract(value_pattern, expand=False)
+def coerce_numeric(series: pd.Series, missing_values: list[float]) -> pd.Series:
+    """Coerce plain numeric values and replace declared missing values with NaN."""
     values = pd.to_numeric(series, errors="coerce")
-    if missing_values:
-        values = values.mask(values.isin(missing_values))
+    values = values.mask(values.isin(missing_values))
     # Layers are float64 end to end (see `_gather_layer_matrix`). `to_numeric` returns a
     # nullable dtype for nullable input, and pandas 2.3 `bfill(axis=1)` misbehaves on a
     # single-column nullable frame — it fills down the column instead of across.
     return values.astype("float64")
 
 
-def warn_if_all_missing(matrix: np.ndarray, layer_name: str) -> None:
+def coerce_regex_numeric(
+    series: pd.Series,
+    missing_values: list[float],
+    value_pattern: str,
+) -> pd.Series:
+    """Extract one regex capture from structured cells and coerce it to numeric."""
+    extracted = series.astype("string").str.extract(value_pattern, expand=False)
+    return coerce_numeric(extracted, missing_values)
+
+
+def warn_if_all_missing(matrix: DenseLayerMatrix, layer_name: str) -> None:
     """Warn when a captured layer is (near-)entirely NaN.
 
     A layer whose source columns were found but which holds no values at all points at

@@ -21,8 +21,10 @@ RESIDUE_MAP = {"[": "Protein N-term", "]": "Protein C-term", "^": "N-term", "$":
 
 def _lookup_mod_name(mass: float) -> str:
     """Return a modification name for a mass shift within tolerance, else the raw mass."""
-    canonical = unimod_registry.find_by_mass(mass, tolerance=MASS_TOLERANCE)
-    return canonical.name if canonical is not None else str(mass)
+    result = unimod_registry.find_by_mass(mass, tolerance=MASS_TOLERANCE)
+    if isinstance(result, unimod_registry.UnimodMatch):
+        return result.entry.name
+    return str(mass)
 
 
 def _parse_static_mods(mods: dict[str, float]) -> str:

@@ -1,34 +1,16 @@
-"""Validate peptide identifications against FASTA with Aho--Corasick.
-
-Validation is annotation only.  It never removes quantified features, including
-features reported for decoys or contaminants.  Per-feature facts are stored in
-``varm['fasta_validation']``.  For MuData objects, relationships that can be
-represented by existing feature nodes are added as directed peptide-feature to
-protein-feature edges in the MuLink-compatible
-``varp['feature_mapping']`` adjacency matrix.
-"""
+"""Pure peptide-to-FASTA validation and feature-edge calculations."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from anndata import AnnData
-from loguru import logger
-from mudata import MuData
 from prozor.annotate import annotate_peptides_streaming
 from scipy.sparse import csr_matrix
 
-from anndata_proteomics.annotation._sanitize import sanitize_columns
-from anndata_proteomics.annotation.var_fasta import (
-    leading_accession,
-    protein_group_accessions,
-    resolve_match_on,
-)
-from anndata_proteomics.fasta.anndata_io import write_fasta_config
+from anndata_proteomics.annotation.var_fasta import leading_accession
 from anndata_proteomics.fasta.annotation import (
     describe_sources,
     materialize_sources,
@@ -42,13 +24,7 @@ from anndata_proteomics.fasta.config import (
     matches_any,
 )
 from anndata_proteomics.fasta.parser import FastaSource, FastaSources, iter_fasta
-from anndata_proteomics.rules.anndata_io import read_stored_column_role
 
-_SCHEMA_VERSION = "0.2"
-_DEFAULT_SEQUENCE_FIELD = "ProForma_peptide"
-_VARM_KEY = "fasta_validation"
-_FEATURE_MAPPING_KEY = "feature_mapping"
-_OWNED_FEATURE_MAPPING_KEY = "_apb_fasta_feature_mapping_contribution"
 _MATCH_COLUMNS = [
     "sequence",
     "protein_id",
@@ -59,16 +35,39 @@ _MATCH_COLUMNS = [
     "is_decoy",
     "is_contaminant",
 ]
-_PEPTIDE_LEVELS = frozenset({"ion", "fragment", "peptidoform", "peptide"})
 _MAX_REPORTED = 5
+
+
+@dataclass(frozen=True, slots=True)
+class PeptideFastaMatchingConfig:
+    """Complete scientific configuration for peptide-to-FASTA matching."""
+
+    backend: str = "auto"
+    identifiers: FastaConfig = field(default_factory=FastaConfig)
+    il_equivalent: bool = False
+    is_uniprot: bool = True
+
+
+DEFAULT_PEPTIDE_FASTA_MATCHING_CONFIG = PeptideFastaMatchingConfig()
+
+
+@dataclass(frozen=True, slots=True)
+class PeptideSequenceCollection:
+    """One named feature-level peptide sequence series."""
+
+    name: str
+    sequences: pd.Series
 
 
 @dataclass(slots=True)
 class FastaValidationResult:
-    """Validation result for one peptide-derived feature modality."""
+    """FASTA matches and per-feature peptide-presence facts for one level."""
 
     summary: pd.DataFrame
     matches: pd.DataFrame
+    normalized_sequences: pd.Series
+    fasta_proteins: frozenset[str]
+    fasta_sources: tuple[str, ...]
     n_features: int
     n_unique_sequences: int
     n_invalid_sequences: int
@@ -76,352 +75,323 @@ class FastaValidationResult:
     n_unmatched_features: int
     requested_backend: str
     backend: str
-    sequence_field: str
-    leading_protein_field: str | None
     il_equivalent: bool
+    is_uniprot: bool
     fasta_config: ResolvedFastaConfig
-    unmatched_sequences: list[str]
+    unmatched_sequences: tuple[str, ...]
 
     @property
     def fraction_unmatched(self) -> float:
-        """Fraction of feature rows whose peptide was not found in the FASTA."""
+        """Return the fraction of features whose peptide was not found."""
         return self.n_unmatched_features / self.n_features if self.n_features else 0.0
 
     def sample_unmatched(self, k: int = _MAX_REPORTED) -> list[str]:
         """Return up to *k* distinct normalized unmatched sequences."""
-        return self.unmatched_sequences[:k]
-
-
-@dataclass(frozen=True, slots=True)
-class MuLinkStorageStats:
-    """Summary of the MuLink-compatible feature mapping update."""
-
-    n_fasta_edges: int = 0
-    n_unrepresented_fasta_proteins: int = 0
-    protein_match_on: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class FastaValidationConfig:
-    """Configuration shared by AnnData and MuData FASTA validation."""
-
-    sequence_field: str = _DEFAULT_SEQUENCE_FIELD
-    backend: str = "auto"
-    identifiers: FastaConfig = field(default_factory=FastaConfig)
-    leading_protein_field: str | None = None
-    protein_match_on: str | None = None
-    il_equivalent: bool = False
-    is_uniprot: bool = True
-
-
-DEFAULT_FASTA_VALIDATION_CONFIG = FastaValidationConfig()
+        return list(self.unmatched_sequences[:k])
 
 
 @dataclass(slots=True)
-class _TargetInput:
-    name: str
-    target: AnnData
-    normalized_sequences: pd.Series
-    leading_proteins: pd.Series
-    leading_protein_field: str | None
+class ProteinAssignmentValidation:
+    """Per-feature checks against reported leading proteins."""
+
+    summary: pd.DataFrame
 
 
-def validate_peptides_against_fasta(
-    adata: AnnData,
+@dataclass(frozen=True, slots=True)
+class ValidationTotals:
+    """Aggregate matching counts across one or more validated levels."""
+
+    n_levels: int
+    n_features: int
+    n_matched_features: int
+    n_unique_patterns: int
+    n_match_sites: int
+
+
+def combined_validation_summary(
+    matching: FastaValidationResult,
+    proteins: ProteinAssignmentValidation,
+) -> pd.DataFrame:
+    """Join per-feature FASTA facts with reported-protein diagnostics."""
+    return pd.concat([matching.summary, proteins.summary], axis="columns")
+
+
+def validation_totals(results: Iterable[FastaValidationResult]) -> ValidationTotals:
+    """Aggregate matching counts and distinct match sites across levels."""
+    collected = list(results)
+    unique_patterns = {
+        sequence
+        for result in collected
+        for sequence in result.normalized_sequences
+        if isinstance(sequence, str)
+    }
+    match_sites = pd.concat(
+        [result.matches for result in collected],
+        ignore_index=True,
+    ).drop_duplicates()
+    return ValidationTotals(
+        n_levels=len(collected),
+        n_features=sum(result.n_features for result in collected),
+        n_matched_features=sum(result.n_matched_features for result in collected),
+        n_unique_patterns=len(unique_patterns),
+        n_match_sites=len(match_sites),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PeptideFeatureNode:
+    """One normalized peptide feature at its global feature-axis position."""
+
+    position: int
+    sequence: str
+
+
+@dataclass(frozen=True, slots=True)
+class PeptideFeatureNodes:
+    """Peptide feature nodes participating in one MuLink edge calculation."""
+
+    nodes: tuple[PeptideFeatureNode, ...]
+    total_nodes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProteinFeatureNodes:
+    """Global protein-feature positions indexed by normalized accession."""
+
+    positions_by_accession: dict[str, tuple[int, ...]]
+    total_nodes: int
+
+
+@dataclass(frozen=True, slots=True)
+class PeptideProteinMatches:
+    """FASTA protein accessions reached by each normalized peptide sequence."""
+
+    accessions_by_sequence: dict[str, frozenset[str]]
+    all_accessions: frozenset[str]
+
+
+@dataclass(slots=True)
+class FeatureMappingResult:
+    """Calculated peptide-to-protein adjacency and representation diagnostics."""
+
+    mapping: csr_matrix[np.int8]
+    represented_accessions: frozenset[str]
+    unrepresented_accessions: frozenset[str]
+
+
+@dataclass(slots=True)
+class _FastaScan:
+    matches: pd.DataFrame
+    fasta_proteins: frozenset[str]
+    fasta_config: ResolvedFastaConfig
+    requested_backend: str
+    resolved_backend: str
+    fasta_sources: tuple[str, ...]
+
+
+def match_peptides_to_fasta(
+    sequences: pd.Series,
     fasta_sources: FastaSources,
-    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
+    config: PeptideFastaMatchingConfig = DEFAULT_PEPTIDE_FASTA_MATCHING_CONFIG,
 ) -> FastaValidationResult:
-    """Validate and annotate one peptide-derived AnnData.
-
-    Use :func:`validate_peptide_modality_against_fasta` for one MuData modality
-    or :func:`validate_peptide_modalities_against_fasta` for all peptide-derived
-    modalities.
-    """
-    name = _require_peptide_level(adata)
-    results = _validate_targets(
-        adata,
-        {name: adata},
-        fasta_sources,
-        config,
-    )
-    return results[name]
+    """Match one feature-level peptide series to a FASTA database."""
+    collection = PeptideSequenceCollection(name="features", sequences=sequences)
+    return match_peptide_collections_to_fasta((collection,), fasta_sources, config)[collection.name]
 
 
-def validate_peptide_modality_against_fasta(
-    mdata: MuData,
-    modality: str,
+def match_peptide_collections_to_fasta(
+    collections: tuple[PeptideSequenceCollection, ...],
     fasta_sources: FastaSources,
-    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
-) -> FastaValidationResult:
-    """Validate and annotate one explicitly selected MuData modality."""
-    target = _resolve_mudata_target(mdata, modality)
-    results = _validate_targets(
-        mdata,
-        {modality: target},
-        fasta_sources,
-        config,
-    )
-    return results[modality]
-
-
-def validate_peptide_modalities_against_fasta(
-    mdata: MuData,
-    fasta_sources: FastaSources,
-    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
+    config: PeptideFastaMatchingConfig = DEFAULT_PEPTIDE_FASTA_MATCHING_CONFIG,
 ) -> dict[str, FastaValidationResult]:
-    """Validate every peptide-derived modality using one automaton and FASTA scan."""
-    targets = _resolve_all_feature_targets(mdata)
-    return _validate_targets(
-        mdata,
-        targets,
-        fasta_sources,
-        config,
-    )
+    """Match multiple sequence collections with one shared FASTA scan."""
+    if not collections:
+        raise ValueError("at least one peptide sequence collection is required")
+    names = [collection.name for collection in collections]
+    if len(set(names)) != len(names):
+        raise ValueError(f"peptide sequence collection names must be unique: {names}")
 
-
-def _validate_targets(
-    owner: AnnData | MuData,
-    targets: dict[str, AnnData],
-    fasta_sources: FastaSources,
-    config: FastaValidationConfig,
-) -> dict[str, FastaValidationResult]:
-    if not targets:
-        raise ValueError("object has no peptide-derived modality to validate")
-
-    sources = materialize_sources(fasta_sources)
-    source_descriptions = describe_sources(sources)
-    prepared = {
-        name: _prepare_target(
-            name,
-            target,
-            sequence_field=config.sequence_field,
-            leading_protein_field=config.leading_protein_field,
+    normalized = {
+        collection.name: normalize_peptide_sequences(
+            collection.sequences,
             il_equivalent=config.il_equivalent,
-            is_uniprot=config.is_uniprot,
         )
-        for name, target in targets.items()
+        for collection in collections
     }
     patterns = sorted(
         {
             sequence
-            for item in prepared.values()
-            for sequence in item.normalized_sequences
-            if sequence is not None
+            for values in normalized.values()
+            for sequence in values
+            if isinstance(sequence, str)
         }
     )
-    matches, fasta_proteins, resolved_config, resolved_backend = _scan_fasta(
-        patterns,
-        sources,
-        backend=config.backend,
-        fasta_config=config.identifiers,
-        il_equivalent=config.il_equivalent,
-        is_uniprot=config.is_uniprot,
-    )
-    per_pattern = _per_pattern_stats(matches)
-    results: dict[str, FastaValidationResult] = {}
-    for name, item in prepared.items():
-        summary = _build_summary(item, per_pattern, fasta_proteins)
-        unique_sequences = {
-            sequence for sequence in item.normalized_sequences if sequence is not None
-        }
-        unmatched_sequences = sorted(
-            sequence for sequence in unique_sequences if sequence not in per_pattern
-        )
-        n_matched = int(summary["peptide_in_fasta"].sum())
-        results[name] = FastaValidationResult(
-            summary=summary,
-            matches=matches[matches["sequence"].isin(unique_sequences)].copy(),
-            n_features=len(summary),
-            n_unique_sequences=len(unique_sequences),
-            n_invalid_sequences=int(item.normalized_sequences.isna().sum()),
-            n_matched_features=n_matched,
-            n_unmatched_features=len(summary) - n_matched,
-            requested_backend=config.backend,
-            backend=resolved_backend,
-            sequence_field=config.sequence_field,
-            leading_protein_field=item.leading_protein_field,
-            il_equivalent=config.il_equivalent,
-            fasta_config=resolved_config,
-            unmatched_sequences=unmatched_sequences,
-        )
-
-    mulink_stats = MuLinkStorageStats()
-    write_fasta_config(owner, resolved_config)
-    if isinstance(owner, MuData) and "protein" in owner.mod:
-        mulink_stats = _store_mulink_feature_mapping(
-            owner,
-            prepared,
-            matches,
-            protein_match_on=config.protein_match_on,
-            is_uniprot=config.is_uniprot,
-        )
-    for name, item in prepared.items():
-        _store(
-            item.target,
-            summary=results[name].summary,
-            fasta_sources=source_descriptions,
-            result=results[name],
-            mulink_stats=mulink_stats,
-        )
-
-    total_features = sum(result.n_features for result in results.values())
-    total_matched = sum(result.n_matched_features for result in results.values())
-    logger.info(
-        "FASTA validation: {}/{} features matched across {} modality/modalities; "
-        "{} unique peptide patterns, {} match sites",
-        total_matched,
-        total_features,
-        len(results),
-        len(patterns),
-        len(matches),
-    )
-    return results
-
-
-def _prepare_target(
-    name: str,
-    target: AnnData,
-    *,
-    sequence_field: str,
-    leading_protein_field: str | None,
-    il_equivalent: bool,
-    is_uniprot: bool,
-) -> _TargetInput:
-    normalized = _feature_sequences(target, sequence_field, il_equivalent=il_equivalent)
-    resolved_leading_field = _resolve_leading_protein_field(target, leading_protein_field)
-    leading = _feature_leading_proteins(
-        target,
-        resolved_leading_field,
-        is_uniprot=is_uniprot,
-    )
-    return _TargetInput(
-        name=name,
-        target=target,
-        normalized_sequences=normalized,
-        leading_proteins=leading,
-        leading_protein_field=resolved_leading_field,
-    )
-
-
-def _require_peptide_level(adata: AnnData) -> str:
-    level = _level(adata)
-    if level not in _PEPTIDE_LEVELS:
-        raise ValueError(
-            "FASTA validation applies to peptide-derived layers "
-            f"(ion/fragment/peptidoform/peptide), got {level!r}"
-        )
-    return level
-
-
-def _resolve_mudata_target(mdata: MuData, modality: str) -> AnnData:
-    if modality not in mdata.mod:
-        raise ValueError(f"modality {modality!r} not in MuData; modalities: {list(mdata.mod)}")
-    target = mdata.mod[modality]
-    if not isinstance(target, AnnData):
-        raise TypeError(f"modality {modality!r} is not an AnnData")
-    if _level(target) not in _PEPTIDE_LEVELS:
-        raise ValueError(f"modality {modality!r} is not peptide-derived")
-    return target
-
-
-def _resolve_all_feature_targets(mdata: MuData) -> dict[str, AnnData]:
+    scan = _scan_fasta(patterns, fasta_sources, config)
+    per_pattern = _per_pattern_stats(scan.matches)
     return {
-        name: target
-        for name, target in mdata.mod.items()
-        if isinstance(target, AnnData) and _level(target) in _PEPTIDE_LEVELS
+        name: _build_validation_result(values, scan, per_pattern, config)
+        for name, values in normalized.items()
     }
 
 
-def _level(adata: AnnData) -> str | None:
-    return (adata.uns.get("anndata_proteomics") or {}).get("quantification_level")
-
-
-def _feature_sequences(
-    target: AnnData,
-    sequence_field: str,
+def normalize_peptide_sequences(
+    sequences: pd.Series,
     *,
     il_equivalent: bool,
 ) -> pd.Series:
-    if sequence_field not in target.var.columns:
-        raise ValueError(
-            f"sequence_field {sequence_field!r} not in var columns: {list(target.var.columns)}"
+    """Normalize valid peptide strings and mark all other values as missing."""
+    normalized = pd.Series(
+        pd.NA,
+        index=pd.Index(sequences.index).astype(str),
+        dtype="object",
+    )
+    for position, value in enumerate(sequences):
+        if not isinstance(value, str) or not value.strip():
+            continue
+        sequence = value.strip().upper()
+        normalized.iloc[position] = sequence.replace("I", "L") if il_equivalent else sequence
+    return normalized
+
+
+def validate_reported_proteins(
+    reported_proteins: pd.Series,
+    matches: FastaValidationResult,
+) -> ProteinAssignmentValidation:
+    """Validate reported leading proteins against peptide FASTA matches."""
+    reported = reported_proteins.copy()
+    reported.index = pd.Index(reported.index).astype(str)
+    if not reported.index.equals(matches.normalized_sequences.index):
+        raise ValueError("reported proteins and matched peptide features are not aligned")
+
+    per_pattern = _per_pattern_stats(matches.matches)
+    leading_in_fasta = pd.Series(
+        pd.NA,
+        index=matches.normalized_sequences.index,
+        dtype="boolean",
+    )
+    peptide_in_leading = leading_in_fasta.copy()
+    for position, (sequence, raw_protein) in enumerate(
+        zip(
+            matches.normalized_sequences,
+            reported,
+            strict=True,
         )
-    values = [
-        _normalize_sequence(value, il_equivalent=il_equivalent)
-        for value in target.var[sequence_field]
-    ]
-    return pd.Series(values, index=pd.Index(target.var_names).astype(str), dtype="object")
+    ):
+        if pd.isna(raw_protein) or not str(raw_protein).strip():
+            continue
+        leading = leading_accession(str(raw_protein), is_uniprot=matches.is_uniprot)
+        proteins = per_pattern.get(sequence, (0, ()))[1] if isinstance(sequence, str) else ()
+        leading_in_fasta.iloc[position] = leading in matches.fasta_proteins
+        if isinstance(sequence, str):
+            peptide_in_leading.iloc[position] = leading in proteins
+    return ProteinAssignmentValidation(
+        summary=_protein_assignment_frame(
+            matches.normalized_sequences.index,
+            leading_in_fasta,
+            peptide_in_leading,
+        )
+    )
 
 
-def _normalize_sequence(value: object, *, il_equivalent: bool) -> str | None:
-    if not isinstance(value, str):
-        return None
-    sequence = value.strip().upper()
-    if not sequence:
-        return None
-    return sequence.replace("I", "L") if il_equivalent else sequence
+def unavailable_reported_protein_validation(
+    feature_names: pd.Index,
+) -> ProteinAssignmentValidation:
+    """Return explicit unavailable values when no reported protein field exists."""
+    missing = pd.Series(
+        pd.NA,
+        index=pd.Index(feature_names).astype(str),
+        dtype="boolean",
+    )
+    return ProteinAssignmentValidation(
+        summary=_protein_assignment_frame(feature_names, missing, missing)
+    )
 
 
-def _resolve_leading_protein_field(target: AnnData, requested: str | None) -> str | None:
-    if requested is not None:
-        if requested not in target.var.columns:
-            raise ValueError(
-                f"leading_protein_field {requested!r} not in var columns: "
-                f"{list(target.var.columns)}"
-            )
-        return requested
-    return read_stored_column_role(target, "fasta_accessions")
+def peptide_protein_matches(matches: pd.DataFrame) -> PeptideProteinMatches:
+    """Index matched FASTA protein accessions by peptide sequence."""
+    by_sequence = {
+        str(sequence): frozenset(group["proteinname"].astype(str))
+        for sequence, group in matches.groupby("sequence", sort=False)
+    }
+    return PeptideProteinMatches(
+        accessions_by_sequence=by_sequence,
+        all_accessions=frozenset(matches["proteinname"].astype(str)),
+    )
 
 
-def _feature_leading_proteins(
-    target: AnnData,
-    field: str | None,
-    *,
-    is_uniprot: bool,
-) -> pd.Series:
-    index = pd.Index(target.var_names).astype(str)
-    if field is None:
-        return pd.Series([None] * len(index), index=index, dtype="object")
-    proteins: list[str | None] = []
-    for value in target.var[field]:
-        if pd.isna(value) or not str(value).strip():
-            proteins.append(None)
-        else:
-            proteins.append(leading_accession(str(value), is_uniprot=is_uniprot))
-    return pd.Series(proteins, index=index, dtype="object")
+def build_feature_mapping(
+    peptide_nodes: PeptideFeatureNodes,
+    protein_nodes: ProteinFeatureNodes,
+    matches: PeptideProteinMatches,
+) -> FeatureMappingResult:
+    """Calculate directed peptide-feature to protein-feature edges."""
+    if peptide_nodes.total_nodes != protein_nodes.total_nodes:
+        raise ValueError(
+            "peptide and protein nodes describe different global feature-axis sizes: "
+            f"{peptide_nodes.total_nodes} != {protein_nodes.total_nodes}"
+        )
+    rows: list[int] = []
+    columns: list[int] = []
+    represented: set[str] = set()
+    for peptide in peptide_nodes.nodes:
+        for accession in matches.accessions_by_sequence.get(peptide.sequence, frozenset()):
+            protein_positions = protein_nodes.positions_by_accession.get(accession, ())
+            rows.extend(peptide.position for _position in protein_positions)
+            columns.extend(protein_positions)
+            if protein_positions:
+                represented.add(accession)
+    mapping = csr_matrix(
+        (
+            np.ones(len(rows), dtype=np.int8),
+            (
+                np.asarray(rows, dtype=np.int64),
+                np.asarray(columns, dtype=np.int64),
+            ),
+        ),
+        shape=(peptide_nodes.total_nodes, peptide_nodes.total_nodes),
+    )
+    mapping.sum_duplicates()
+    if mapping.nnz:
+        mapping.data[:] = 1
+    represented_accessions = frozenset(represented)
+    return FeatureMappingResult(
+        mapping=mapping,
+        represented_accessions=represented_accessions,
+        unrepresented_accessions=matches.all_accessions - represented_accessions,
+    )
 
 
 def _scan_fasta(
     patterns: list[str],
-    fasta_sources: list[FastaSource],
-    *,
-    backend: str,
-    fasta_config: FastaConfig,
-    il_equivalent: bool,
-    is_uniprot: bool,
-) -> tuple[pd.DataFrame, set[str], ResolvedFastaConfig, str]:
-    accumulator = FastaConfigAccumulator(fasta_config)
+    fasta_sources: FastaSources,
+    config: PeptideFastaMatchingConfig,
+) -> _FastaScan:
+    sources = materialize_sources(fasta_sources)
+    source_descriptions = tuple(describe_sources(sources))
+    accumulator = FastaConfigAccumulator(config.identifiers)
     fasta_proteins: set[str] = set()
     records = _protein_records(
-        fasta_sources,
+        sources,
         accumulator,
         fasta_proteins,
-        il_equivalent=il_equivalent,
-        is_uniprot=is_uniprot,
+        il_equivalent=config.il_equivalent,
+        is_uniprot=config.is_uniprot,
     )
     if patterns:
-        annotations = annotate_peptides_streaming(patterns, records, backend=backend)
+        annotations = annotate_peptides_streaming(patterns, records, backend=config.backend)
     else:
-        for _ in records:
+        for _record in records:
             pass
-        annotations = annotate_peptides_streaming([], (), backend=backend)
+        annotations = annotate_peptides_streaming([], (), backend=config.backend)
 
     effective_config = accumulator.resolve()
     rows = [
         (
             annotation.peptide,
             annotation.protein_id,
-            uniprot_proteinname(annotation.protein_id) if is_uniprot else annotation.protein_id,
+            uniprot_proteinname(annotation.protein_id)
+            if config.is_uniprot
+            else annotation.protein_id,
             annotation.start,
             annotation.end,
             annotation.length,
@@ -435,7 +405,14 @@ def _scan_fasta(
         frame[column] = frame[column].astype("int64")
     for column in ("is_decoy", "is_contaminant"):
         frame[column] = frame[column].astype("bool")
-    return frame, fasta_proteins, effective_config, annotations.resolved_backend
+    return _FastaScan(
+        matches=frame,
+        fasta_proteins=frozenset(fasta_proteins),
+        fasta_config=effective_config,
+        requested_backend=config.backend,
+        resolved_backend=annotations.resolved_backend,
+        fasta_sources=source_descriptions,
+    )
 
 
 def _protein_records(
@@ -448,20 +425,52 @@ def _protein_records(
 ) -> Iterable[tuple[str, str]]:
     for source in fasta_sources:
         for record in iter_fasta(source):
-            fasta_id, _ = parse_header_id(record.header)
-            accumulator.observe(fasta_id)
-            proteinname = uniprot_proteinname(fasta_id) if is_uniprot else fasta_id
+            parsed = parse_header_id(record.header)
+            accumulator.observe(parsed.identifier)
+            proteinname = (
+                uniprot_proteinname(parsed.identifier) if is_uniprot else parsed.identifier
+            )
             fasta_proteins.add(proteinname)
             sequence = record.sequence.upper()
-            yield fasta_id, sequence.replace("I", "L") if il_equivalent else sequence
+            yield parsed.identifier, sequence.replace("I", "L") if il_equivalent else sequence
+
+
+def _build_validation_result(
+    normalized: pd.Series,
+    scan: _FastaScan,
+    per_pattern: dict[str, tuple[int, tuple[str, ...]]],
+    config: PeptideFastaMatchingConfig,
+) -> FastaValidationResult:
+    summary = _build_match_summary(normalized, per_pattern)
+    unique_sequences = {value for value in normalized if isinstance(value, str)}
+    unmatched = tuple(
+        sorted(sequence for sequence in unique_sequences if sequence not in per_pattern)
+    )
+    n_matched = int(summary["peptide_in_fasta"].sum())
+    return FastaValidationResult(
+        summary=summary,
+        matches=scan.matches[scan.matches["sequence"].isin(unique_sequences)].copy(),
+        normalized_sequences=normalized,
+        fasta_proteins=scan.fasta_proteins,
+        fasta_sources=scan.fasta_sources,
+        n_features=len(summary),
+        n_unique_sequences=len(unique_sequences),
+        n_invalid_sequences=int(normalized.isna().sum()),
+        n_matched_features=n_matched,
+        n_unmatched_features=len(summary) - n_matched,
+        requested_backend=scan.requested_backend,
+        backend=scan.resolved_backend,
+        il_equivalent=config.il_equivalent,
+        is_uniprot=config.is_uniprot,
+        fasta_config=scan.fasta_config,
+        unmatched_sequences=unmatched,
+    )
 
 
 def _per_pattern_stats(
     matches: pd.DataFrame,
 ) -> dict[str, tuple[int, tuple[str, ...]]]:
     """Map sequence to total match sites and distinct matching accessions."""
-    if matches.empty:
-        return {}
     stats: dict[str, tuple[int, tuple[str, ...]]] = {}
     for sequence, group in matches.groupby("sequence", sort=False):
         proteins = tuple(sorted(set(group["proteinname"].astype(str))))
@@ -469,320 +478,42 @@ def _per_pattern_stats(
     return stats
 
 
-def _build_summary(
-    item: _TargetInput,
+def _build_match_summary(
+    normalized: pd.Series,
     per_pattern: dict[str, tuple[int, tuple[str, ...]]],
-    fasta_proteins: set[str],
 ) -> pd.DataFrame:
     peptide_in_fasta: list[bool] = []
     site_counts: list[int] = []
     protein_counts: list[int] = []
     protein_ids: list[str] = []
-    leading_in_fasta: list[object] = []
-    peptide_in_leading: list[object] = []
-
-    for sequence, leading in zip(
-        item.normalized_sequences,
-        item.leading_proteins,
-        strict=True,
-    ):
+    for sequence in normalized:
         site_count, proteins = (
-            per_pattern.get(sequence, (0, ())) if sequence is not None else (0, ())
+            per_pattern.get(sequence, (0, ())) if isinstance(sequence, str) else (0, ())
         )
         peptide_in_fasta.append(site_count > 0)
         site_counts.append(site_count)
         protein_counts.append(len(proteins))
         protein_ids.append(";".join(proteins))
-        if leading is None:
-            leading_in_fasta.append(pd.NA)
-            peptide_in_leading.append(pd.NA)
-        else:
-            leading_in_fasta.append(leading in fasta_proteins)
-            peptide_in_leading.append(pd.NA if sequence is None else leading in proteins)
-
     return pd.DataFrame(
         {
             "peptide_in_fasta": peptide_in_fasta,
             "fasta_match_site_count": site_counts,
             "fasta_matching_protein_count": protein_counts,
             "fasta_matching_protein_ids": protein_ids,
-            "leading_protein_in_fasta": pd.Series(
-                leading_in_fasta,
-                dtype="boolean",
-            ).array,
-            "peptide_in_leading_protein": pd.Series(
-                peptide_in_leading,
-                dtype="boolean",
-            ).array,
         },
-        index=pd.Index(item.target.var_names).astype(str),
+        index=normalized.index,
     )
 
 
-def _store_mulink_feature_mapping(
-    mdata: MuData,
-    targets: dict[str, _TargetInput],
-    matches: pd.DataFrame,
-    *,
-    protein_match_on: str | None,
-    is_uniprot: bool,
-) -> MuLinkStorageStats:
-    if not mdata.var_names.is_unique:
-        raise ValueError("MuLink feature_mapping requires globally unique MuData var_names")
-    protein = _protein_modality(mdata)
-    resolved_match_on, accession_to_nodes = _protein_accession_nodes(
-        protein,
-        protein_match_on,
-        is_uniprot=is_uniprot,
+def _protein_assignment_frame(
+    feature_names: pd.Index,
+    leading_in_fasta: pd.Series,
+    peptide_in_leading: pd.Series,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "leading_protein_in_fasta": leading_in_fasta.array,
+            "peptide_in_leading_protein": peptide_in_leading.array,
+        },
+        index=pd.Index(feature_names).astype(str),
     )
-    matched_by_sequence = {
-        str(sequence): set(group["proteinname"].astype(str))
-        for sequence, group in matches.groupby("sequence", sort=False)
-    }
-    global_positions, target_row_mask = _target_feature_positions(mdata, targets)
-    all_matched_accessions = set(matches["proteinname"].astype(str))
-    new_mapping, represented_accessions = _build_feature_mapping(
-        targets,
-        matched_by_sequence,
-        accession_to_nodes,
-        global_positions,
-        shape=(mdata.n_vars, mdata.n_vars),
-    )
-    existing = _stored_feature_mapping(mdata, _FEATURE_MAPPING_KEY, new_mapping.shape)
-    old_owned = _stored_feature_mapping(
-        mdata,
-        _OWNED_FEATURE_MAPPING_KEY,
-        new_mapping.shape,
-    )
-    merged, owned = _replace_owned_feature_mapping(
-        existing,
-        old_owned,
-        new_mapping,
-        target_row_mask,
-    )
-    mdata.varp[_FEATURE_MAPPING_KEY] = merged
-    mdata.varp[_OWNED_FEATURE_MAPPING_KEY] = owned
-
-    return MuLinkStorageStats(
-        n_fasta_edges=new_mapping.nnz,
-        n_unrepresented_fasta_proteins=len(all_matched_accessions - represented_accessions),
-        protein_match_on=resolved_match_on,
-    )
-
-
-def _protein_modality(mdata: MuData) -> AnnData:
-    protein = mdata.mod["protein"]
-    if not isinstance(protein, AnnData):
-        raise TypeError("MuData 'protein' modality is not an AnnData")
-    return protein
-
-
-def _protein_accession_nodes(
-    protein: AnnData,
-    requested_match_on: str | None,
-    *,
-    is_uniprot: bool,
-) -> tuple[str, dict[str, list[str]]]:
-    resolved_match_on = resolve_match_on(protein, requested_match_on)
-    raw_groups = (
-        pd.Series(protein.var_names, index=protein.var_names)
-        if resolved_match_on == "index"
-        else protein.var[resolved_match_on]
-    )
-    accession_to_nodes: dict[str, list[str]] = {}
-    for node, raw_group in zip(protein.var_names, raw_groups, strict=True):
-        for accession in protein_group_accessions(
-            str(raw_group),
-            is_uniprot=is_uniprot,
-        ):
-            accession_to_nodes.setdefault(accession, []).append(str(node))
-    return resolved_match_on, accession_to_nodes
-
-
-def _target_feature_positions(
-    mdata: MuData,
-    targets: dict[str, _TargetInput],
-) -> tuple[dict[str, int], np.ndarray]:
-    positions = {str(name): position for position, name in enumerate(mdata.var_names)}
-    feature_names = [
-        str(feature_name) for item in targets.values() for feature_name in item.target.var_names
-    ]
-    missing = [name for name in feature_names if name not in positions]
-    if missing:
-        raise ValueError(
-            "peptide-derived feature names are absent from the MuData global var axis: "
-            f"{missing[:_MAX_REPORTED]}"
-        )
-    target_row_mask = np.zeros(mdata.n_vars, dtype=bool)
-    target_row_mask[[positions[name] for name in feature_names]] = True
-    return positions, target_row_mask
-
-
-def _build_feature_mapping(
-    targets: dict[str, _TargetInput],
-    matched_by_sequence: dict[str, set[str]],
-    accession_to_nodes: dict[str, list[str]],
-    global_positions: dict[str, int],
-    *,
-    shape: tuple[int, int],
-) -> tuple[csr_matrix[np.int8], set[str]]:
-    rows: list[int] = []
-    columns: list[int] = []
-    represented_accessions: set[str] = set()
-    for item in targets.values():
-        for feature_name, sequence in item.normalized_sequences.items():
-            if sequence is None:
-                continue
-            for accession in matched_by_sequence.get(sequence, set()):
-                protein_nodes = accession_to_nodes.get(accession, [])
-                rows.extend(global_positions[str(feature_name)] for _node in protein_nodes)
-                columns.extend(global_positions[node] for node in protein_nodes)
-                if protein_nodes:
-                    represented_accessions.add(accession)
-    mapping = csr_matrix(
-        (
-            np.ones(len(rows), dtype=np.int8),
-            (
-                np.asarray(rows, dtype=np.int64),
-                np.asarray(columns, dtype=np.int64),
-            ),
-        ),
-        shape=shape,
-    )
-    mapping.sum_duplicates()
-    if mapping.nnz:
-        mapping.data[:] = 1
-    return mapping, represented_accessions
-
-
-def _stored_feature_mapping(
-    mdata: MuData,
-    key: str,
-    expected_shape: tuple[int, int],
-) -> csr_matrix:
-    mapping = csr_matrix(
-        mdata.varp.get(
-            key,
-            _empty_int8_csr(expected_shape),
-        )
-    )
-    if mapping.shape != expected_shape:
-        raise ValueError(
-            f"existing varp[{key!r}] has shape {mapping.shape}, expected {expected_shape}"
-        )
-    return mapping
-
-
-def _empty_int8_csr(shape: tuple[int, int]) -> csr_matrix[np.int8]:
-    """Create a typed empty signed matrix for MuData feature mappings."""
-    empty_indices = np.empty(0, dtype=np.int64)
-    return csr_matrix(
-        (
-            np.empty(0, dtype=np.int8),
-            (empty_indices, empty_indices),
-        ),
-        shape=shape,
-    )
-
-
-def _replace_owned_feature_mapping(
-    existing: csr_matrix,
-    old_owned: csr_matrix,
-    new_mapping: csr_matrix,
-    target_row_mask: np.ndarray,
-) -> tuple[csr_matrix, csr_matrix]:
-    """Replace APB's contribution on selected rows of shared MuLink state."""
-    old_owned_coo = old_owned.tocoo()
-    targeted = target_row_mask[old_owned_coo.row]
-    retained_owned = csr_matrix(
-        (
-            old_owned_coo.data[~targeted],
-            (old_owned_coo.row[~targeted], old_owned_coo.col[~targeted]),
-        ),
-        shape=old_owned.shape,
-        dtype=old_owned.dtype,
-    )
-
-    # An owned entry is removed only while its value is still the one APB
-    # wrote.  If another producer changed that coordinate, preserve the new
-    # value and relinquish ownership.  Filtering COO entries avoids casting or
-    # subtracting the entire matrix, so even uint64 weights remain exact.
-    target_owned_rows = old_owned_coo.row[targeted].astype(np.int64, copy=False)
-    target_owned_cols = old_owned_coo.col[targeted].astype(np.int64, copy=False)
-    target_owned_data = old_owned_coo.data[targeted]
-    if target_owned_data.size:
-        current = np.asarray(existing[target_owned_rows, target_owned_cols]).ravel()
-        unchanged = current == target_owned_data
-        remove_keys = (
-            target_owned_rows[unchanged] * existing.shape[1] + target_owned_cols[unchanged]
-        )
-        existing_coo = existing.tocoo()
-        existing_rows = existing_coo.row.astype(np.int64, copy=False)
-        existing_cols = existing_coo.col.astype(np.int64, copy=False)
-        existing_keys = existing_rows * existing.shape[1] + existing_cols
-        keep = ~np.isin(existing_keys, remove_keys, assume_unique=True)
-        base = csr_matrix(
-            (
-                existing_coo.data[keep],
-                (existing_coo.row[keep], existing_coo.col[keep]),
-            ),
-            shape=existing.shape,
-            dtype=existing.dtype,
-        )
-    else:
-        base = existing.copy()
-
-    occupied = base.astype(bool).astype("int8")
-    new_owned = new_mapping - new_mapping.multiply(occupied)
-    new_owned.eliminate_zeros()
-    merged = base + new_owned.astype(base.dtype)
-    merged.eliminate_zeros()
-    return csr_matrix(merged), csr_matrix(retained_owned + new_owned)
-
-
-def _store(
-    target: AnnData,
-    *,
-    summary: pd.DataFrame,
-    fasta_sources: list[str],
-    result: FastaValidationResult,
-    mulink_stats: MuLinkStorageStats,
-) -> None:
-    """Attach the per-feature validation frame and an auditable provenance entry."""
-    stored = summary.copy()
-    stored.columns = sanitize_columns(list(stored.columns))
-    target.varm[_VARM_KEY] = stored
-
-    entry = {
-        "schema_version": _SCHEMA_VERSION,
-        "source": "fasta_validation",
-        "destination": f"varm[{_VARM_KEY!r}]",
-        "feature_mapping": (
-            f"varp[{_FEATURE_MAPPING_KEY!r}]" if mulink_stats.protein_match_on is not None else None
-        ),
-        "feature_mapping_ownership": (
-            f"varp[{_OWNED_FEATURE_MAPPING_KEY!r}]"
-            if mulink_stats.protein_match_on is not None
-            else None
-        ),
-        "fasta_sources": fasta_sources,
-        "fasta_config": result.fasta_config.model_dump(mode="json"),
-        "requested_backend": result.requested_backend,
-        "backend": result.backend,
-        "sequence_field": result.sequence_field,
-        "leading_protein_field": result.leading_protein_field,
-        "il_equivalent": result.il_equivalent,
-        "n_features": result.n_features,
-        "n_unique_sequences": result.n_unique_sequences,
-        "n_invalid_sequences": result.n_invalid_sequences,
-        "n_matched_features": result.n_matched_features,
-        "n_unmatched_features": result.n_unmatched_features,
-        "n_feature_mapping_edges": mulink_stats.n_fasta_edges,
-        "n_unrepresented_fasta_proteins": (mulink_stats.n_unrepresented_fasta_proteins),
-        "protein_match_on": mulink_stats.protein_match_on,
-    }
-    namespace = dict(target.uns.get("anndata_proteomics", {}))
-    existing = json.loads(namespace.get("var_annotations_json", "[]"))
-    existing.append(entry)
-    namespace["var_annotations_json"] = json.dumps(existing)
-    target.uns["anndata_proteomics"] = namespace

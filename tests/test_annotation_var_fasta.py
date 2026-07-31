@@ -17,20 +17,37 @@ import pandas as pd
 import pytest
 from mudata import MuData
 
-from anndata_proteomics.annotation.var_fasta import (
-    ProteinFastaAnnotationConfig,
-    annotate_var_from_fasta,
-    resolve_match_on,
+from anndata_proteomics.adapters.anndata.fasta import (
+    DEFAULT_ANNDATA_PROTEIN_FASTA_CONFIG,
+    FASTA_ACCESSIONS_INDEX,
+    AnnDataProteinFastaConfig,
+    FastaAccessionsColumn,
+    read_protein_annotation_input,
+    require_protein_mudata_target,
+    write_anndata_fasta_config,
+    write_mudata_fasta_config,
+    write_protein_annotation,
 )
-from anndata_proteomics.fasta.annotation import count_peptides
-from anndata_proteomics.params.anndata_io import write_search_parameters
+from anndata_proteomics.adapters.anndata.params import write_search_parameters
+from anndata_proteomics.annotation.var_fasta import (
+    ProteinFastaAnnotationResult,
+    SelectedFastaColumns,
+    annotate_proteins_from_fasta,
+)
+from anndata_proteomics.fasta.annotation import count_peptides, resolve_cleavage_name
+from anndata_proteomics.fasta.parser import FastaSources
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.readers.summary import describe
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import find_rule
+from anndata_proteomics.rules.registry import find_rule_for_version
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 from anndata_proteomics.scripts.cli import FastaCliOptions
 from anndata_proteomics.scripts.cli import fasta as fasta_cmd
+from anndata_proteomics.workflows.fasta import (
+    MaximumPeptideLength,
+    MinimumPeptideLength,
+    NamedCleavage,
+    resolve_protein_annotation_input,
+)
 
 # A few forward UniProt records (lifted from prolfquapp's fixture) + one contaminant
 # + one REV_ decoy. ≥2 carry GN=, so the gene_name column is emitted.
@@ -48,6 +65,42 @@ GSEERDLLAHYSAVDKQLQCKRALLHAREQQQQEAEARIERLEAELRGVVAGLNQLEMDH
 """
 
 SEQ_P03018 = "MDVSYLLDSLNDKQREAVAAPRSNLLVLAGAGSGKTRVLVHRIAWLMSVENCSPYSIMAV"
+TRYPSIN_CONFIG = AnnDataProteinFastaConfig(cleavage=NamedCleavage("Trypsin"))
+
+
+def annotate_var_from_fasta(
+    target: ad.AnnData,
+    fasta_sources: FastaSources,
+    config: AnnDataProteinFastaConfig = DEFAULT_ANNDATA_PROTEIN_FASTA_CONFIG,
+) -> ProteinFastaAnnotationResult:
+    """Compose protein annotation and AnnData persistence for tests."""
+    extracted = resolve_protein_annotation_input(read_protein_annotation_input(target, config))
+    result = annotate_proteins_from_fasta(
+        extracted.protein_groups,
+        fasta_sources,
+        extracted.config,
+    )
+    write_protein_annotation(target, result, extracted.provenance)
+    write_anndata_fasta_config(target, result.fasta_config)
+    return result
+
+
+def annotate_protein_mudata_from_fasta(
+    target: MuData,
+    fasta_sources: FastaSources,
+    config: AnnDataProteinFastaConfig = DEFAULT_ANNDATA_PROTEIN_FASTA_CONFIG,
+) -> ProteinFastaAnnotationResult:
+    """Compose protein annotation and MuData persistence for tests."""
+    protein = require_protein_mudata_target(target)
+    extracted = resolve_protein_annotation_input(read_protein_annotation_input(protein, config))
+    result = annotate_proteins_from_fasta(
+        extracted.protein_groups,
+        fasta_sources,
+        extracted.config,
+    )
+    write_protein_annotation(protein, result, extracted.provenance)
+    write_mudata_fasta_config(target, result.fasta_config)
+    return result
 
 
 def _protein_adata(
@@ -107,7 +160,7 @@ def _attach_test_role_rule(
 
 def _attach_diann_rule(adata: ad.AnnData, level: QuantificationLevel) -> None:
     """Attach a packaged DIA-NN rule as conversion provenance."""
-    rule = load_rule(find_rule("diann", level, "1.9.2"))
+    rule = load_rule(find_rule_for_version("diann", level, "1.9.2"))
     adata.uns["anndata_proteomics"]["rule_json"] = rule.model_dump_json(by_alias=True)
 
 
@@ -136,7 +189,7 @@ def test_varm_fasta_has_expected_columns() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
     fa = _varm_frame(adata)
     assert {
@@ -158,7 +211,7 @@ def test_leading_accession_join_splits_group_and_uniprot_form() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
     fa = _varm_frame(adata)
     assert fa.loc["P04982;Q99999", "gene_name"] == "rbsD"
@@ -174,7 +227,7 @@ def test_declared_protein_role_wins_over_plausible_columns() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
 
     assert _varm_frame(adata).loc["feature", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
@@ -184,17 +237,17 @@ def test_match_column_is_not_guessed_without_conversion_rule() -> None:
     adata = _protein_adata(["feature"], with_rule=False)
 
     with pytest.raises(ValueError, match="does not declare column_roles.fasta_accessions"):
-        resolve_match_on(adata, None)
+        annotate_var_from_fasta(adata, FASTA, TRYPSIN_CONFIG)
 
 
 def test_match_column_does_not_cascade_from_assignment_role() -> None:
-    adata = _protein_adata(["feature"], level="ion", with_group_column=False)
+    adata = _protein_adata(["feature"], level="protein", with_group_column=False)
     adata.var["Genes"] = ["PLSL_HUMAN"]
-    rule = load_rule(find_rule("alphadia", "ion", "1.10.3"))
+    rule = load_rule(find_rule_for_version("alphadia", "ion", "1.10.3"))
     adata.uns["anndata_proteomics"]["rule_json"] = rule.model_dump_json(by_alias=True)
 
     with pytest.raises(ValueError, match="does not declare column_roles.fasta_accessions"):
-        resolve_match_on(adata, None)
+        annotate_var_from_fasta(adata, FASTA, TRYPSIN_CONFIG)
 
 
 def test_match_on_index_strips_prt_prefix() -> None:
@@ -202,7 +255,10 @@ def test_match_on_index_strips_prt_prefix() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(match_on="index", cleavage="Trypsin"),
+        AnnDataProteinFastaConfig(
+            match_on=FASTA_ACCESSIONS_INDEX,
+            cleavage=NamedCleavage("Trypsin"),
+        ),
     )
     assert _varm_frame(adata).loc["prt:P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
 
@@ -212,9 +268,9 @@ def test_columns_subset_restricts_stored_columns() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(
-            cleavage="Trypsin",
-            columns=("nr_peptides",),
+        AnnDataProteinFastaConfig(
+            cleavage=NamedCleavage("Trypsin"),
+            columns=SelectedFastaColumns(("nr_peptides",)),
         ),
     )
     assert list(_varm_frame(adata).columns) == ["nr_peptides"]
@@ -224,8 +280,18 @@ def test_columns_subset_restricts_stored_columns() -> None:
 
 
 def test_enzyme_read_from_search_parameters_drives_count() -> None:
-    lysc = count_peptides(SEQ_P03018, cleavage="Lys-C", min_length=7, max_length=30)
-    trypsin = count_peptides(SEQ_P03018, cleavage="Trypsin", min_length=7, max_length=30)
+    lysc = count_peptides(
+        SEQ_P03018,
+        cleavage=resolve_cleavage_name("Lys-C").rule,
+        min_length=7,
+        max_length=30,
+    )
+    trypsin = count_peptides(
+        SEQ_P03018,
+        cleavage=resolve_cleavage_name("Trypsin").rule,
+        min_length=7,
+        max_length=30,
+    )
     assert lysc != trypsin  # precondition: the enzyme must matter for this protein
 
     adata = _protein_adata(["P03018"])
@@ -243,13 +309,18 @@ def test_cleavage_override_wins_over_params() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(
-            cleavage="Trypsin/P",
-            min_length=7,
-            max_length=30,
+        AnnDataProteinFastaConfig(
+            cleavage=NamedCleavage("Trypsin/P"),
+            minimum_length=MinimumPeptideLength(7),
+            maximum_length=MaximumPeptideLength(30),
         ),
     )
-    expected = count_peptides(SEQ_P03018, cleavage="Trypsin/P", min_length=7, max_length=30)
+    expected = count_peptides(
+        SEQ_P03018,
+        cleavage=resolve_cleavage_name("Trypsin/P").rule,
+        min_length=7,
+        max_length=30,
+    )
     assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
@@ -258,7 +329,12 @@ def test_no_params_warns_and_defaults_to_trypsin(capsys: pytest.CaptureFixture[s
     annotate_var_from_fasta(adata, FASTA)
     err = capsys.readouterr().err
     assert "no enzyme in search parameters" in err
-    expected = count_peptides(SEQ_P03018, cleavage="Trypsin", min_length=7, max_length=30)
+    expected = count_peptides(
+        SEQ_P03018,
+        cleavage=resolve_cleavage_name("Trypsin").rule,
+        min_length=7,
+        max_length=30,
+    )
     assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
@@ -269,14 +345,19 @@ def test_unknown_enzyme_override_warns_and_falls_back(
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(
-            cleavage="Pepsin",
-            min_length=7,
-            max_length=30,
+        AnnDataProteinFastaConfig(
+            cleavage=NamedCleavage("Pepsin"),
+            minimum_length=MinimumPeptideLength(7),
+            maximum_length=MaximumPeptideLength(30),
         ),
     )
     assert "unknown enzyme 'Pepsin'" in capsys.readouterr().err
-    expected = count_peptides(SEQ_P03018, cleavage="Trypsin", min_length=7, max_length=30)
+    expected = count_peptides(
+        SEQ_P03018,
+        cleavage=resolve_cleavage_name("Trypsin").rule,
+        min_length=7,
+        max_length=30,
+    )
     assert _varm_frame(adata).loc["P03018", "nr_peptides"] == expected
 
 
@@ -288,10 +369,13 @@ def test_mudata_annotates_protein_modality_only() -> None:
     ion = _ion_adata(["ion:a", "ion:b"])
     with mudata.set_options(pull_on_update=False):
         md = MuData({"ion": ion, "protein": prot}, axis=0)
-    annotate_var_from_fasta(
+    annotate_protein_mudata_from_fasta(
         md,
         FASTA,
-        ProteinFastaAnnotationConfig(match_on="index", cleavage="Trypsin"),
+        AnnDataProteinFastaConfig(
+            match_on=FASTA_ACCESSIONS_INDEX,
+            cleavage=NamedCleavage("Trypsin"),
+        ),
     )
     assert "fasta" in md.mod["protein"].varm
     assert "fasta" not in md.mod["ion"].varm
@@ -302,10 +386,13 @@ def test_mudata_roundtrips_through_h5mu(tmp_path: Path) -> None:
     ion = _ion_adata(["ion:a", "ion:b"])
     with mudata.set_options(pull_on_update=False):
         md = MuData({"ion": ion, "protein": prot}, axis=0)
-    annotate_var_from_fasta(
+    annotate_protein_mudata_from_fasta(
         md,
         FASTA,
-        ProteinFastaAnnotationConfig(match_on="index", cleavage="Trypsin"),
+        AnnDataProteinFastaConfig(
+            match_on=FASTA_ACCESSIONS_INDEX,
+            cleavage=NamedCleavage("Trypsin"),
+        ),
     )
 
     out = tmp_path / "md.annotated.h5mu"
@@ -321,10 +408,10 @@ def test_mudata_without_protein_modality_raises() -> None:
     with mudata.set_options(pull_on_update=False):
         md = MuData({"ion": ion}, axis=0)
     with pytest.raises(ValueError, match="no 'protein' modality"):
-        annotate_var_from_fasta(
+        annotate_protein_mudata_from_fasta(
             md,
             FASTA,
-            ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+            TRYPSIN_CONFIG,
         )
 
 
@@ -337,7 +424,7 @@ def test_non_protein_anndata_raises() -> None:
         annotate_var_from_fasta(
             adata,
             FASTA,
-            ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+            TRYPSIN_CONFIG,
         )
 
 
@@ -347,7 +434,7 @@ def test_zero_match_raises() -> None:
         annotate_var_from_fasta(
             adata,
             FASTA,
-            ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+            TRYPSIN_CONFIG,
         )
 
 
@@ -359,7 +446,7 @@ def test_partial_match_warns_and_roundtrips_nullable_flags(
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
     assert "1/2 var rows had no matching" in capsys.readouterr().err
     fa = _varm_frame(adata)
@@ -381,13 +468,13 @@ def test_rerun_varm_collision_raises() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
     with pytest.raises(ValueError, match="already present"):
         annotate_var_from_fasta(
             adata,
             FASTA,
-            ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+            TRYPSIN_CONFIG,
         )
 
 
@@ -397,9 +484,9 @@ def test_unknown_match_on_column_raises() -> None:
         annotate_var_from_fasta(
             adata,
             FASTA,
-            ProteinFastaAnnotationConfig(
-                match_on="Protein_Group",
-                cleavage="Trypsin",
+            AnnDataProteinFastaConfig(
+                match_on=FastaAccessionsColumn("Protein_Group"),
+                cleavage=NamedCleavage("Trypsin"),
             ),
         )
 
@@ -412,7 +499,7 @@ def test_decoy_quantification_is_retained_and_annotated() -> None:
     annotate_var_from_fasta(
         adata,
         FASTA,
-        ProteinFastaAnnotationConfig(cleavage="Trypsin"),
+        TRYPSIN_CONFIG,
     )
     assert adata.n_vars == 1
     np.testing.assert_array_equal(adata.X, before)
@@ -460,7 +547,7 @@ def test_cli_fasta_writes_annotated_file(tmp_path: Path) -> None:
 
     rt = ad.read_h5ad(out)
     assert _varm_frame(rt).loc["P03018", "fasta.id"] == "sp|P03018|UVRD_ECOLI"
-    annotation = describe(rt)["annotations"]["var"][-1]
+    annotation = json.loads(rt.uns["anndata_proteomics"]["var_annotations_json"])[-1]
     assert annotation["source"] == "fasta"
     assert annotation["destination"] == "varm['fasta']"
     assert annotation["n_var_matched"] == 2
@@ -475,6 +562,7 @@ def test_cli_fasta_requires_a_fasta_file(tmp_path: Path) -> None:
 
 def test_cli_fasta_validates_all_mudata_layers_by_default(tmp_path: Path) -> None:
     protein = _protein_adata(["prt:P03018"], with_group_column=False)
+    _attach_diann_rule(protein, "protein")
     ion = ad.AnnData(
         X=np.ones((2, 1)),
         obs=pd.DataFrame(index=["run1", "run2"]),
@@ -487,6 +575,7 @@ def test_cli_fasta_validates_all_mudata_layers_by_default(tmp_path: Path) -> Non
         ),
     )
     ion.uns["anndata_proteomics"] = {"quantification_level": "ion"}
+    _attach_diann_rule(ion, "ion")
     with mudata.set_options(pull_on_update=False):
         mdata = MuData({"ion": ion, "protein": protein}, axis=0)
     data_path = tmp_path / "levels.h5mu"
@@ -521,6 +610,7 @@ def test_cli_fasta_validates_all_mudata_layers_by_default(tmp_path: Path) -> Non
 
 def test_cli_fasta_no_validate_only_annotates_proteins(tmp_path: Path) -> None:
     protein = _protein_adata(["prt:P03018"], with_group_column=False)
+    _attach_diann_rule(protein, "protein")
     ion = ad.AnnData(
         X=np.ones((2, 1)),
         obs=pd.DataFrame(index=["run1", "run2"]),
@@ -530,6 +620,7 @@ def test_cli_fasta_no_validate_only_annotates_proteins(tmp_path: Path) -> None:
         ),
     )
     ion.uns["anndata_proteomics"] = {"quantification_level": "ion"}
+    _attach_diann_rule(ion, "ion")
     with mudata.set_options(pull_on_update=False):
         mdata = MuData({"ion": ion, "protein": protein}, axis=0)
     data_path = tmp_path / "levels.h5mu"

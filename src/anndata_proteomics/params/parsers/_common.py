@@ -3,10 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
 Source = str | Path | IO[bytes] | IO[str]
+
+
+@dataclass(frozen=True)
+class MassModificationMatch:
+    """A vendor mass table matched a modification name."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class UnrecognizedModificationMass:
+    """A vendor mass table contains no entry for a mass."""
+
+    mass: float
 
 
 def read_text(source: Source, *, errors: str = "strict") -> str:
@@ -19,10 +34,8 @@ def read_text(source: Source, *, errors: str = "strict") -> str:
     if isinstance(source, str | Path):
         return Path(source).read_text(encoding="utf-8", errors=errors)
 
-    try:
+    if source.seekable():
         source.seek(0)
-    except (OSError, ValueError):
-        pass
     raw = source.read()
     if isinstance(raw, bytes):
         return raw.decode("utf-8", errors=errors)
@@ -79,13 +92,18 @@ def homogenize_paren_mods(mod: str, mapping: Mapping[str, str]) -> str:
     return ", ".join(f"{aa}[{name}]" for aa in residues)
 
 
-def lookup_mass_mod(mass: float, mapping: Mapping[float, str], *, tol: float = 0.001) -> str | None:
-    """Return the modification name whose reference mass is within *tol* of *mass*, else ``None``.
+def lookup_mass_mod(
+    mass: float,
+    mapping: Mapping[float, str],
+    *,
+    tol: float = 0.001,
+) -> MassModificationMatch | UnrecognizedModificationMass:
+    """Look up a modification name in a vendor mass table.
 
     The mass→name table and any fallback are per-vendor; only this nearest-match
-    lookup is shared.
+    lookup is shared. An unmatched mass is an explicit domain result.
     """
     for ref_mass, name in mapping.items():
         if abs(mass - ref_mass) < tol:
-            return name
-    return None
+            return MassModificationMatch(name)
+    return UnrecognizedModificationMass(mass)

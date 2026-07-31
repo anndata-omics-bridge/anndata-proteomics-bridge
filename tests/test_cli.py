@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from anndata_proteomics.rules.registry import find_rule, packaged_rules_root
+from anndata_proteomics.rules.registry import find_rule_for_version, packaged_rules_root
 from anndata_proteomics.scripts.cli import (
     ConvertCliOptions,
     _write_atomically,
@@ -104,7 +104,7 @@ def test_validate_no_args_walks_packaged(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_validate_single_path_happy(capsys: pytest.CaptureFixture[str]) -> None:
-    path = find_rule("diann", "ion", "2.0.0").path
+    path = find_rule_for_version("diann", "ion", "2.0.0").path
     rc = validate(path)
     err = capsys.readouterr().err
     assert rc == 0
@@ -123,7 +123,7 @@ def test_validate_single_path_bad(tmp_path: Path, capsys: pytest.CaptureFixture[
 
 
 def test_validate_multiple_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    good = find_rule("wombat", "ion", "0.9.11").path
+    good = find_rule_for_version("wombat", "ion", "0.9.11").path
     bad = tmp_path / "bad.json"
     bad.write_text("[[")
     rc = validate(good, bad)

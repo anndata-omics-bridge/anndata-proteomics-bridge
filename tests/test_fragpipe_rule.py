@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pandas as pd
+from conversion_support import convert_to_anndata
 
-from anndata_proteomics._matrix_types import named_layers
-from anndata_proteomics.converters.assemble import convert
+from anndata_proteomics.adapters.anndata.matrix import layer_names
 from anndata_proteomics.rules.loader import load_packaged_rule
 
 
@@ -28,10 +28,10 @@ def test_fragpipe_rule_aligns_auxiliary_group_suffixes_to_intensity_runs() -> No
         }
     )
 
-    result = convert(frame, load_packaged_rule("fragpipe", "ion"))
+    result = convert_to_anndata(frame, load_packaged_rule("fragpipe", "ion"))
 
     assert result.obs_names.tolist() == ["LFQ_Run_01"]
-    assert set(named_layers(result)) == {
+    assert set(layer_names(result)) == {
         "Intensity",
         "Spectral_Count",
         "Apex_Retention_Time",

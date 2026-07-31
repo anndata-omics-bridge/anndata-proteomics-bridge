@@ -12,11 +12,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conversion_support import convert_parameterized_level_to_anndata
 
-from anndata_proteomics.converters.pipeline import convert_level, resolve_parameters
+from anndata_proteomics.converters.pipeline import PresentRuleVersion, resolve_parameters
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_locator
+from anndata_proteomics.rules.loader import (
+    RuleLocatorUnavailable,
+    load_packaged_rule_for_version,
+    resolve_parameterized_rule_locator_for_version,
+    resolve_parameterized_rule_locator_without_version,
+    resolve_rule_locator_for_version,
+)
+from anndata_proteomics.rules.registry import RuleLocator
 
 ROOT = Path(__file__).resolve().parents[1] / "test_data_download" / "json_dir"
 
@@ -109,14 +117,12 @@ def _convert(case: CorpusCase):
         pytest.skip(f"cached parameter file is absent beside {case.input_path}")
     param_path = param_paths[0]
     resolution = resolve_parameters(param_path, case.slug)
-    assert resolution.version == case.expected_version
-    return convert_level(
+    assert resolution.version == PresentRuleVersion(case.expected_version)
+    return convert_parameterized_level_to_anndata(
         read_table(case.input_path),
         case.slug,
         "ion",
-        resolution.version,
-        params_path=param_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
 
@@ -174,7 +180,7 @@ def test_maxquant_1_5_2_8_uses_title_case_leading_protein_columns() -> None:
 
 def test_maxquant_optional_columns_stay_declared() -> None:
     """The volatile columns move to `optional_select`; only `Raw file` stays required."""
-    rule = load_packaged_rule("maxquant", "ion", "2.6.7.0")
+    rule = load_packaged_rule_for_version("maxquant", "ion", "2.6.7.0")
 
     assert rule.columns.obs.select == {"Raw_File": "Raw file"}
     assert rule.columns.obs.optional_select == {
@@ -227,17 +233,56 @@ def test_sage_level_follows_combine_charge_states_not_the_version() -> None:
     collapsed = Parameters(software_name="Sage", combine_charge_states=True)
     resolved = Parameters(software_name="Sage", combine_charge_states=False)
 
-    for version in ("0.14.6", "0.15.0", "0.15.0-beta.2", "0.16.0", None):
-        assert resolve_rule_locator("sage", "ion", version, collapsed) is None
-        assert resolve_rule_locator("sage", "peptidoform", version, collapsed) is not None
-        assert resolve_rule_locator("sage", "ion", version, resolved) is not None
-        assert resolve_rule_locator("sage", "peptidoform", version, resolved) is None
+    for version in ("0.14.6", "0.15.0", "0.15.0-beta.2", "0.16.0"):
+        assert isinstance(
+            resolve_parameterized_rule_locator_for_version("sage", "ion", version, collapsed),
+            RuleLocatorUnavailable,
+        )
+        assert isinstance(
+            resolve_parameterized_rule_locator_for_version(
+                "sage", "peptidoform", version, collapsed
+            ),
+            RuleLocator,
+        )
+        assert isinstance(
+            resolve_parameterized_rule_locator_for_version("sage", "ion", version, resolved),
+            RuleLocator,
+        )
+        assert isinstance(
+            resolve_parameterized_rule_locator_for_version(
+                "sage", "peptidoform", version, resolved
+            ),
+            RuleLocatorUnavailable,
+        )
+
+    assert isinstance(
+        resolve_parameterized_rule_locator_without_version("sage", "ion", collapsed),
+        RuleLocatorUnavailable,
+    )
+    assert isinstance(
+        resolve_parameterized_rule_locator_without_version("sage", "peptidoform", collapsed),
+        RuleLocator,
+    )
+    assert isinstance(
+        resolve_parameterized_rule_locator_without_version("sage", "ion", resolved),
+        RuleLocator,
+    )
+    assert isinstance(
+        resolve_parameterized_rule_locator_without_version("sage", "peptidoform", resolved),
+        RuleLocatorUnavailable,
+    )
 
 
 def test_sage_gated_levels_are_unavailable_without_parameters() -> None:
     """No parameters means no charge-state decision: offer nothing rather than guess wrong."""
-    assert resolve_rule_locator("sage", "ion", "0.15.0", None) is None
-    assert resolve_rule_locator("sage", "peptidoform", "0.15.0", None) is None
+    assert isinstance(
+        resolve_rule_locator_for_version("sage", "ion", "0.15.0"),
+        RuleLocatorUnavailable,
+    )
+    assert isinstance(
+        resolve_rule_locator_for_version("sage", "peptidoform", "0.15.0"),
+        RuleLocatorUnavailable,
+    )
 
 
 def test_sage_charge_collapsed_export_converts_as_peptidoform() -> None:
@@ -250,13 +295,11 @@ def test_sage_charge_collapsed_export_converts_as_peptidoform() -> None:
     assert resolution.parameters is not None
     assert resolution.parameters.combine_charge_states is True
 
-    result = convert_level(
+    result = convert_parameterized_level_to_anndata(
         read_table(case.input_path),
         "sage",
         "peptidoform",
-        resolution.version,
-        params_path=param_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
     assert result.n_obs == 6
@@ -276,15 +319,21 @@ def test_sage_charge_resolved_export_is_not_reachable_as_peptidoform() -> None:
     assert resolution.parameters is not None
 
     assert resolution.parameters.combine_charge_states is False
-    assert (
-        resolve_rule_locator("sage", "peptidoform", resolution.version, resolution.parameters)
-        is None
+    assert isinstance(resolution.version, PresentRuleVersion)
+    assert isinstance(
+        resolve_parameterized_rule_locator_for_version(
+            "sage",
+            "peptidoform",
+            resolution.version.value,
+            resolution.parameters,
+        ),
+        RuleLocatorUnavailable,
     )
 
 
 def test_alphapept_intensity_layer_is_the_proteobench_column() -> None:
     """`ms1_int_sum_apex_dn` reproduces ProteoBench's per-run intensities; the others do not."""
-    rule = load_packaged_rule("alphapept", "ion", "0.5.3")
+    rule = load_packaged_rule_for_version("alphapept", "ion", "0.5.3")
     x_layer = next(layer for layer in rule.layers if layer.name == rule.axis.x_layer)
 
     assert x_layer.source == "ms1_int_sum_apex_dn"

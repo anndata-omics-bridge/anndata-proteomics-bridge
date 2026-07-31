@@ -50,21 +50,6 @@ class CleavageRule:
     after: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class FastaAnnotationConfig:
-    """Configuration for building a protein annotation table from FASTA."""
-
-    identifiers: FastaConfig = field(default_factory=FastaConfig)
-    is_uniprot: bool = True
-    cleavage: str | CleavageRule | None = None
-    min_length: int = 7
-    max_length: int = 30
-    include_sequence: bool = False
-
-
-DEFAULT_FASTA_ANNOTATION_CONFIG = FastaAnnotationConfig()
-
-
 # Enzyme → cleavage rule, keyed by the canonical display names emitted by
 # ``params.model.Parameters.enzyme`` (the ``_ENZYME_MAP`` values) so the two
 # cannot drift. 99% of searches are trypsin, but Lys-C / Glu-C / etc. happen,
@@ -81,30 +66,95 @@ _CLEAVAGE_RULES: dict[str, CleavageRule] = {
 _DEFAULT_ENZYME = "Trypsin"
 
 
-def resolve_cleavage(cleavage: str | CleavageRule | None) -> tuple[CleavageRule, str]:
-    """Resolve a cleavage spec to ``(rule, effective_enzyme_name)``.
+@dataclass(frozen=True, slots=True)
+class ResolvedCleavage:
+    """A cleavage rule paired with the effective enzyme name."""
 
-    ``None`` is the documented trypsin default (no warning). An unknown enzyme
-    name warns once and falls back to trypsin. A pre-built :class:`CleavageRule`
-    is returned verbatim with the name ``"custom"``.
-    """
-    if isinstance(cleavage, CleavageRule):
-        return cleavage, "custom"
-    if cleavage is None:
-        return _CLEAVAGE_RULES[_DEFAULT_ENZYME], _DEFAULT_ENZYME
-    rule = _CLEAVAGE_RULES.get(cleavage)
+    rule: CleavageRule
+    enzyme: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeneName:
+    """A UniProt header declares one concrete gene name."""
+
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class MissingGeneName:
+    """A FASTA header contains no UniProt ``GN=`` field."""
+
+
+type GeneNameResult = GeneName | MissingGeneName
+
+
+@dataclass(frozen=True, slots=True)
+class FastaHeaderDescription:
+    """Text following the identifier in one FASTA header."""
+
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class MissingFastaHeaderDescription:
+    """A FASTA header contains only its identifier."""
+
+
+type FastaHeaderDescriptionResult = FastaHeaderDescription | MissingFastaHeaderDescription
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedFastaHeader:
+    """Explicit identifier and description result parsed from one FASTA header."""
+
+    identifier: str
+    description: FastaHeaderDescriptionResult
+
+
+DEFAULT_CLEAVAGE = ResolvedCleavage(
+    rule=_CLEAVAGE_RULES[_DEFAULT_ENZYME],
+    enzyme=_DEFAULT_ENZYME,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FastaAnnotationConfig:
+    """Configuration for building a protein annotation table from FASTA."""
+
+    identifiers: FastaConfig = field(default_factory=FastaConfig)
+    is_uniprot: bool = True
+    cleavage: ResolvedCleavage = DEFAULT_CLEAVAGE
+    min_length: int = 7
+    max_length: int = 30
+    include_sequence: bool = False
+
+
+DEFAULT_FASTA_ANNOTATION_CONFIG = FastaAnnotationConfig()
+
+
+def resolve_cleavage_name(enzyme: str) -> ResolvedCleavage:
+    """Resolve one enzyme name, falling back visibly to trypsin when unknown."""
+    rule = _CLEAVAGE_RULES.get(enzyme)
     if rule is None:
         logger.warning(
-            f"unknown enzyme {cleavage!r}; using {_DEFAULT_ENZYME} cleavage rule for peptide count"
+            f"unknown enzyme {enzyme!r}; using {_DEFAULT_ENZYME} cleavage rule for peptide count"
         )
-        return _CLEAVAGE_RULES[_DEFAULT_ENZYME], _DEFAULT_ENZYME
-    return rule, cleavage
+        return DEFAULT_CLEAVAGE
+    return ResolvedCleavage(rule=rule, enzyme=enzyme)
 
 
-def extract_gene_name(header: str) -> str:
-    """Return the UniProt ``GN=`` value from a FASTA header, or ``""`` if absent."""
+def custom_cleavage(rule: CleavageRule) -> ResolvedCleavage:
+    """Name an explicitly supplied cleavage rule for provenance."""
+    return ResolvedCleavage(rule=rule, enzyme="custom")
+
+
+def extract_gene_name(header: str) -> GeneNameResult:
+    """Return the declared UniProt gene name or an explicit missing result."""
     match = _GN_RE.search(header)
-    return match.group(1) if match else ""
+    if match is None:
+        return MissingGeneName()
+    return GeneName(match.group(1))
 
 
 def _find_cleavage_sites(sequence: str, rule: CleavageRule) -> list[int]:
@@ -126,7 +176,7 @@ def _find_cleavage_sites(sequence: str, rule: CleavageRule) -> list[int]:
 def count_peptides(
     sequence: str,
     *,
-    cleavage: str | CleavageRule | None = None,
+    cleavage: CleavageRule = DEFAULT_CLEAVAGE.rule,
     min_length: int = 6,
     max_length: int = 30,
 ) -> int:
@@ -135,11 +185,10 @@ def count_peptides(
     The in-silico digest count behind the ``nr_peptides`` column. Mirrors the
     algorithm of prolfquapp's ``nr_tryptic_peptides`` (the upper bound is strict
     ``<``, not inclusive, even though the R docstring says "maximum length"), but
-    the cleavage rule is configurable via *cleavage* — an enzyme name, a
-    :class:`CleavageRule`, or ``None`` for trypsin — so it is not trypsin-specific.
+    the cleavage rule is configurable via *cleavage*, so it is not
+    trypsin-specific.
     """
-    rule, _ = resolve_cleavage(cleavage)
-    cleavage_sites = _find_cleavage_sites(sequence, rule)
+    cleavage_sites = _find_cleavage_sites(sequence, cleavage)
     starts = [0, *cleavage_sites]
     ends = [*cleavage_sites, len(sequence)]
     return sum(
@@ -149,12 +198,14 @@ def count_peptides(
     )
 
 
-def parse_header_id(header: str) -> tuple[str, str]:
-    """Split a header on the first whitespace into (fasta.id, fasta.header)."""
+def parse_header_id(header: str) -> ParsedFastaHeader:
+    """Split a header into an identifier and explicit description result."""
     parts = header.split(maxsplit=1)
     fasta_id = parts[0].lstrip(">").rstrip(";")
-    fasta_header = parts[1] if len(parts) > 1 else ""
-    return fasta_id, fasta_header
+    description: FastaHeaderDescriptionResult = (
+        FastaHeaderDescription(parts[1]) if len(parts) > 1 else MissingFastaHeaderDescription()
+    )
+    return ParsedFastaHeader(identifier=fasta_id, description=description)
 
 
 def uniprot_proteinname(fasta_id: str) -> str:
@@ -188,11 +239,11 @@ def fasta_to_dataframe_with_config(
     config: FastaAnnotationConfig = DEFAULT_FASTA_ANNOTATION_CONFIG,
 ) -> tuple[pd.DataFrame, ResolvedFastaConfig]:
     """Build the annotation frame and return its resolved ID configuration."""
-    records: list[tuple[str, str, str]] = []
+    records: list[tuple[str, FastaHeaderDescriptionResult, str]] = []
     for source in _iter_sources(sources):
         for record in iter_fasta(source):
-            fasta_id, fasta_header = parse_header_id(record.header)
-            records.append((fasta_id, fasta_header, record.sequence))
+            parsed = parse_header_id(record.header)
+            records.append((parsed.identifier, parsed.description, record.sequence))
 
     resolved = resolve_fasta_config(
         (fasta_id for fasta_id, _, _ in records),
@@ -204,7 +255,13 @@ def fasta_to_dataframe_with_config(
 
     frame = pd.DataFrame(
         [
-            {"fasta.id": fasta_id, "fasta.header": header, "sequence": sequence}
+            {
+                "fasta.id": fasta_id,
+                "fasta.header": (
+                    header.value if isinstance(header, FastaHeaderDescription) else pd.NA
+                ),
+                "sequence": sequence,
+            }
             for fasta_id, header, sequence in records
         ]
     )
@@ -235,16 +292,22 @@ def _add_annotation_columns(
     else:
         frame["proteinname"] = frame["fasta.id"]
 
-    gene_names = frame["fasta.header"].map(extract_gene_name)
-    if (gene_names != "").sum() > 1:
-        frame["gene_name"] = gene_names
+    gene_names = frame["fasta.header"].map(
+        lambda header: extract_gene_name(str(header)) if not pd.isna(header) else MissingGeneName()
+    )
+    present_gene_names = gene_names.map(lambda result: isinstance(result, GeneName))
+    if int(present_gene_names.sum()) > 1:
+        frame["gene_name"] = pd.Series(
+            [result.value if isinstance(result, GeneName) else pd.NA for result in gene_names],
+            index=frame.index,
+            dtype="string",
+        )
 
-    rule, _ = resolve_cleavage(config.cleavage)
     frame["protein_length"] = frame["sequence"].map(len)
     frame["nr_peptides"] = frame["sequence"].map(
         lambda seq: count_peptides(
             str(seq),
-            cleavage=rule,
+            cleavage=config.cleavage.rule,
             min_length=config.min_length,
             max_length=config.max_length,
         )

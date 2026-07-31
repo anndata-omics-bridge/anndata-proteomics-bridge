@@ -1,5 +1,31 @@
 # Changes
 
+- 2026-07-31: Finish the typed computation boundary (`TODO/TODO_fix_dependency_injection_further.md`).
+  Three things moved to where the architecture already said they belonged. (1) The MuLink
+  sparse merge and feature-node assembly left `workflows/fasta.py` for a new pure
+  `annotation/mulink.py`; the workflow now holds only ordering and contains no pandas, NumPy
+  or SciPy call, which a test enforces by pointing the existing scientific-manipulation
+  detector at `workflows/*.py` instead of only `scripts/cli.py`. (2) `readers/summary.py`
+  became `workflows/summary.py` taking injected `StoredDescriptionReaders`, with the HDF5
+  wiring in `adapters/anndata/description.py`, so no module outside `adapters/` and the CLI
+  imports the adapter — also enforced. (3) Namespace reads stopped deep-decoding: a keyed
+  `read_namespace_text` plus tagged `read_stored_rule`/`read_search_parameters` cut one
+  `apb fasta` run on a two-modality MuData from ~6 `ParseRule` and ~6 `Parameters`
+  validations, each preceded by a full namespace copy, to one validation per read with no
+  copy. Also: the guarded file set is now derived (everything outside `adapters/`/`scripts/`
+  minus a reasoned allowlist, so a future `qc/` package is guarded on creation);
+  unparameterized `np.ndarray` is banned and the eight sites got `converters/_pieces.py`
+  contract aliases; `tests/test_fasta_architecture.py` folded into
+  `test_architecture_boundaries.py` with one adapter entry-point table replacing two
+  hand-written lists; `assume_unique=True` dropped from the edge-deletion path;
+  `"anndata_proteomics"` named in one module; obs provenance modelled as two Pydantic
+  variants; `PEPTIDE_LEVELS` moved to `rules/schema.py`; the last narrowing `assert`
+  replaced by a precise error; and `convert_levels_from_parameters` (zero callers) deleted.
+  Removing the conversion workflow's per-level `data.copy()` exposed why it existed —
+  `apply_modifications` adds columns in place — so `convert_table` now owns that defensive
+  copy and non-modification rules no longer copy the frame per level. One behaviour change:
+  a non-string `rule_json` now raises a `TypeError` naming the key and the type found.
+
 - 2026-07-31: Detect a comma decimal separator in delimited text and read the file in the
   number format it was actually written with. Vendors export numbers in the regional
   format of the producing machine and nothing in the file declares which one, so two

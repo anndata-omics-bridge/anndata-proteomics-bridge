@@ -1,13 +1,9 @@
-"""Assemble ConversionPieces into an AnnData object with provenance metadata."""
+"""Convert vendor tables into backend-neutral quantitative pieces."""
 
 from __future__ import annotations
 
-import json
-import logging
 import math
-from pathlib import Path
 
-import anndata as ad
 import pandas as pd
 
 from anndata_proteomics.converters._fragments import explode_fragments
@@ -16,45 +12,16 @@ from anndata_proteomics.converters.checks import check_layer_occupancy
 from anndata_proteomics.converters.long import convert_long
 from anndata_proteomics.converters.wide import convert_wide
 from anndata_proteomics.modifications.pipeline import apply_modifications
-from anndata_proteomics.params.anndata_io import write_search_parameters
-from anndata_proteomics.params.registry import available_software, parse_params
 from anndata_proteomics.rules.schema import ColumnCompute, ColumnGroup, ParseRule
 
-logger = logging.getLogger(__name__)
 
-
-def to_anndata(pieces: ConversionPieces, rule: ParseRule) -> ad.AnnData:
-    """Build an AnnData from the converter pieces, recording the rule under `uns`.
-
-    The full rule is stored as a JSON string under `uns['anndata_proteomics']['rule_json']`
-    rather than a nested dict — h5py can't serialize the heterogeneous list-of-dicts
-    structure of `layers`. Top-level fields are duplicated as plain strings for
-    convenience (no need to parse JSON to read software_name, etc.).
-    """
-    adata = ad.AnnData(
-        X=pieces.X,
-        obs=pieces.obs,
-        var=pieces.var,
-        layers=pieces.layers,
-    )
-    adata.uns["anndata_proteomics"] = {
-        "rule_json": json.dumps(rule.model_dump(mode="json", by_alias=True)),
-        "schema_version": rule.schema_version,
-        "software_name": rule.software_name,
-        "input_shape": rule.input_shape,
-        "quantification_level": rule.quantification_level,
-    }
-    return adata
-
-
-def convert(
+def convert_table(
     df: pd.DataFrame,
     rule: ParseRule,
     *,
-    params_path: str | Path | None = None,
     strict: bool = False,
-) -> ad.AnnData:
-    """One-shot: normalize modifications, dispatch long/wide, then assemble.
+) -> ConversionPieces:
+    """Normalize and convert one vendor table into backend-neutral pieces.
 
     Parameters
     ----------
@@ -64,12 +31,6 @@ def convert(
         Parsed JSON rule.
     strict
         Promote non-``X`` layer-contract warnings to errors.
-    params_path
-        Optional vendor parameter file. When provided, the matching
-        parameter parser (looked up by ``rule.software_name``) is invoked
-        and its result is stored under
-        ``uns['anndata_proteomics']['search_parameters']``.
-
     Notes
     -----
     If ``rule.modifications`` is set *and* a ``proforma_sequence`` /
@@ -80,7 +41,9 @@ def convert(
     output is identical and the per-row tokenization cost is avoided.
     """
     if rule.modifications is not None and _modifications_consumed(rule):
-        df = apply_modifications(df, rule.modifications)
+        # apply_modifications adds its output columns in place, so copy first: callers
+        # converting several levels from one table must not see another level's columns.
+        df = apply_modifications(df.copy(), rule.modifications)
 
     if rule.fragments is not None:
         # Fan packed per-precursor fragment lists out to one row per fragment before
@@ -99,10 +62,7 @@ def convert(
         pieces = convert_wide(df, rule)
 
     check_layer_occupancy(pieces.layers, x_layer=rule.axis.x_layer, strict=strict)
-    adata = to_anndata(pieces, rule)
-    if params_path is not None:
-        _attach_search_parameters(adata, params_path, rule.software_name)
-    return adata
+    return pieces
 
 
 def _modifications_consumed(rule: ParseRule) -> bool:
@@ -198,7 +158,10 @@ def _compute_generic_column(
         )
     if column.how == "coalesce":
         return _coalesce_columns(df, sources)
-    assert column.separator is not None
+    if column.separator is None:
+        raise ValueError(
+            f"cannot compute column {column.name!r}; how={column.how!r} requires a separator"
+        )
     return _join_nonempty_columns(df, sources, column.separator)
 
 
@@ -292,19 +255,3 @@ def _format_charge(value: object) -> str:
     if charge <= 0:
         raise ValueError(f"charge must be positive, got {value!r}")
     return str(charge)
-
-
-def _attach_search_parameters(adata: ad.AnnData, params_path: str | Path, software: str) -> None:
-    """Parse ``params_path`` and store the result under ``uns``."""
-    software_key = software.lower()
-    available = {s.lower() for s in available_software()}
-    if software_key not in available:
-        # No parser yet for this vendor — keep the path as provenance, skip parsing.
-        adata.uns["anndata_proteomics"]["search_parameters_path"] = str(params_path)
-        return
-    params = parse_params(params_path, software=software_key)
-    write_search_parameters(adata, params, source_path=str(params_path))
-    version_status = "present" if params.software_version is not None else "missing"
-    adata.uns["anndata_proteomics"]["search_parameters_version_status"] = version_status
-    if version_status == "missing":
-        logger.warning("no software version in search parameters %s", params_path)

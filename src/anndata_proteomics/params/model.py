@@ -20,6 +20,7 @@ from pydantic import (
 
 from anndata_proteomics.modifications import unimod_registry
 from anndata_proteomics.modifications.model import SearchedModification
+from anndata_proteomics.serialization import JsonObject, JsonValue, to_json_compatible
 
 
 class ParamsError(Exception):
@@ -86,6 +87,7 @@ _RANGE_RE = re.compile(
 )
 _ABSOLUTE_RE = re.compile(r"^(?P<value>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]*)$")
 _SEARCH_MOD_RE = re.compile(r"^(?P<target>.*?)\[(?P<identity>[^\[\]]+)\]$")
+_MASS_IDENTITY_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 class _Strict(BaseModel):
@@ -357,10 +359,9 @@ class Parameters(_Strict):
             return int(value) if value.is_integer() else str(value)
         if isinstance(value, str):
             text = value.strip()
-            try:
-                numeric = float(text)
-            except ValueError:
+            if not _MASS_IDENTITY_RE.fullmatch(text):
                 return text
+            numeric = float(text)
             return int(numeric) if numeric.is_integer() else text
         return value
 
@@ -410,16 +411,16 @@ class Parameters(_Strict):
     def from_series(cls, series: pd.Series) -> Parameters:
         """Build a ``Parameters`` instance from a ProteoBench-style Series."""
         fields = set(cls.model_fields)
-        data: dict[str, object] = {}
+        data: JsonObject = {}
         unparsed: list[UnparsedParameter] = []
         for key, value in series.items():
             name = str(key)
             if name == "acquisition_method":
                 if _is_missing(value) and not _is_unknown_literal(value):
                     continue
-                data[name] = "unknown" if _is_unknown_literal(value) else value
+                data[name] = "unknown" if _is_unknown_literal(value) else _series_json_value(value)
                 continue
-            normalized = None if _is_missing(value) else value
+            normalized = None if _is_missing(value) else _series_json_value(value)
             if name in fields:
                 data[name] = normalized
             else:
@@ -427,19 +428,23 @@ class Parameters(_Strict):
                     UnparsedParameter(name=name, value=_to_scalar(normalized), source="series")
                 )
         if unparsed:
-            data["unparsed_parameters"] = unparsed
+            data["unparsed_parameters"] = [
+                to_json_compatible(parameter.model_dump(mode="json")) for parameter in unparsed
+            ]
         return cls.model_validate(data)
 
-    def _legacy_value(self, field: str) -> object:
-        value = getattr(self, field)
+    def _legacy_value(self, field: str) -> JsonValue:
         if field == "acquisition_method":
-            return value
+            return self.acquisition_method
+        if field == "fixed_mods":
+            return _serialize_modifications(self.fixed_mods)
+        if field == "variable_mods":
+            return _serialize_modifications(self.variable_mods)
+        value = getattr(self, field)
         if isinstance(value, Probability):
             return value.value
         if isinstance(value, MassTolerance):
-            return value.model_dump(exclude_none=True)
-        if isinstance(value, list):
-            return _serialize_modifications(value)
+            return to_json_compatible(value.model_dump(exclude_none=True, mode="json"))
         return _to_scalar(value)
 
 
@@ -464,7 +469,16 @@ def _is_unknown_literal(value: object) -> bool:
     return isinstance(value, str) and value.strip().lower() == "unknown"
 
 
-def _normalize_unit(unit: str | None) -> ToleranceUnit:
+def _series_json_value(value: object) -> JsonValue:
+    """Narrow one pandas cell to the JSON values accepted by Parameters."""
+    if isinstance(value, BaseModel):
+        return to_json_compatible(value.model_dump(mode="json"))
+    if isinstance(value, list | tuple | set):
+        return [_series_json_value(item) for item in value]
+    return to_json_compatible(value)
+
+
+def _normalize_unit(unit: str) -> ToleranceUnit:
     if not unit:
         raise ValueError("mass tolerance requires unit ppm or Da")
     lookup: dict[str, ToleranceUnit] = {"ppm": "ppm", "da": "Da", "th": "Da"}
@@ -506,9 +520,10 @@ def _modification_from_token(token: str) -> SearchedModification:
     """Canonicalize a known identity while preserving the token-shaped API."""
     match = _SEARCH_MOD_RE.fullmatch(token)
     identity = match.group("identity") if match is not None else token
-    entry = _find_modification(identity)
-    if entry is None:
+    result = _find_modification(identity)
+    if not isinstance(result, unimod_registry.UnimodMatch):
         return SearchedModification(name=token, source=token)
+    entry = result.entry
 
     if match is None:
         canonical_token = entry.name
@@ -522,16 +537,20 @@ def _modification_from_token(token: str) -> SearchedModification:
     )
 
 
-def _find_modification(identity: str) -> unimod_registry.UnimodEntry | None:
+def _find_modification(
+    identity: str,
+) -> (
+    unimod_registry.UnimodMatch
+    | unimod_registry.UnrecognizedUnimodName
+    | unimod_registry.UnrecognizedUnimodMass
+):
     """Resolve a known name/accession/mass without consuming unknown tokens."""
-    entry = unimod_registry.find_by_name(identity)
-    if entry is not None:
-        return entry
-    try:
-        mass_delta = float(identity)
-    except ValueError:
-        return None
-    return unimod_registry.find_by_mass(mass_delta)
+    name_result = unimod_registry.find_by_name(identity)
+    if isinstance(name_result, unimod_registry.UnimodMatch):
+        return name_result
+    if not _MASS_IDENTITY_RE.fullmatch(identity.strip()):
+        return name_result
+    return unimod_registry.find_by_mass(float(identity))
 
 
 def _serialize_modifications(value: list[SearchedModification]) -> str | None:

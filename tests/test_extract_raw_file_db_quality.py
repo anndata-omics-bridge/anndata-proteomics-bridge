@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
+from pydantic import ValidationError
 
 from anndata_proteomics.scripts import extract_raw_file_db as rawdb
 
@@ -37,8 +38,8 @@ def _zip_bytes(files: dict[str, bytes]) -> bytes:
 
 
 def test_feature_count_and_safe_zip_extraction(tmp_path: Path) -> None:
-    assert rawdb._feature_count({"nr_feature": 3, "nr_prec": 2}) == 3
-    assert rawdb._feature_count({"nr_feature": None, "nr_prec": 2}) == 2
+    assert rawdb._feature_count(rawdb._SubmissionMetadata(nr_feature=3, nr_prec=2)) == 3
+    assert rawdb._feature_count(rawdb._SubmissionMetadata(nr_feature=None, nr_prec=2)) == 2
 
     with zipfile.ZipFile(io.BytesIO(_zip_bytes({"root/file.txt": b"x"}))) as archive:
         rawdb._extract_zip(archive, tmp_path)
@@ -245,6 +246,9 @@ def test_catalog_and_selection_commands(
     )
     monkeypatch.setattr(rawdb, "_download_module_jsons", lambda *_args: metadata)
     catalog_csv = tmp_path / "catalog.csv"
+    with pytest.raises(ValidationError, match="Invalid JSON"):
+        rawdb.catalog(catalog_csv=catalog_csv, cache_dir=tmp_path / "cache")
+    (metadata / "bad.json").unlink()
     rawdb.catalog(catalog_csv=catalog_csv, cache_dir=tmp_path / "cache")
     catalog = pd.read_csv(catalog_csv)
     assert catalog["intermediate_hash"].tolist() == ["hash-b"]

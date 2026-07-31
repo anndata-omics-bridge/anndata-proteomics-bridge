@@ -32,44 +32,57 @@ DEFAULT_CONTAMINANT_CANDIDATES = (
 )
 
 
+def _require_valid_regexes(patterns: tuple[str, ...]) -> tuple[str, ...]:
+    for pattern in patterns:
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise ValueError(f"invalid FASTA identifier regex {pattern!r}: {error}") from error
+    return patterns
+
+
+class InferredPatterns(BaseModel):
+    """Infer effective patterns from candidate regexes observed in the FASTA."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: Literal["infer"] = "infer"
+    candidates: tuple[str, ...]
+
+    @field_validator("candidates")
+    @classmethod
+    def _valid_regexes(cls, patterns: tuple[str, ...]) -> tuple[str, ...]:
+        return _require_valid_regexes(patterns)
+
+
+class ExplicitPatterns(BaseModel):
+    """Use exactly the supplied identifier regexes, including an empty set."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: Literal["explicit"] = "explicit"
+    patterns: tuple[str, ...]
+
+    @field_validator("patterns")
+    @classmethod
+    def _valid_regexes(cls, patterns: tuple[str, ...]) -> tuple[str, ...]:
+        return _require_valid_regexes(patterns)
+
+
+type PatternPolicy = InferredPatterns | ExplicitPatterns
+
+
+DEFAULT_DECOY_POLICY = InferredPatterns(candidates=DEFAULT_DECOY_CANDIDATES)
+DEFAULT_CONTAMINANT_POLICY = InferredPatterns(candidates=DEFAULT_CONTAMINANT_CANDIDATES)
+
+
 class FastaConfig(BaseModel):
     """Input policy for resolving FASTA identifier classifications."""
 
     model_config = ConfigDict(frozen=True)
 
-    decoy_patterns: tuple[str, ...] | None = None
-    contaminant_patterns: tuple[str, ...] | None = None
-    decoy_candidates: tuple[str, ...] = DEFAULT_DECOY_CANDIDATES
-    contaminant_candidates: tuple[str, ...] = DEFAULT_CONTAMINANT_CANDIDATES
-
-    @classmethod
-    def from_single_patterns(
-        cls,
-        decoy_pattern: str | None,
-        contaminant_pattern: str | None,
-    ) -> FastaConfig:
-        """Build a configuration from CLI-style single-pattern values."""
-        return cls(
-            decoy_patterns=_single_pattern(decoy_pattern),
-            contaminant_patterns=_single_pattern(contaminant_pattern),
-        )
-
-    @field_validator(
-        "decoy_patterns",
-        "contaminant_patterns",
-        "decoy_candidates",
-        "contaminant_candidates",
-    )
-    @classmethod
-    def _valid_regexes(cls, patterns: tuple[str, ...] | None) -> tuple[str, ...] | None:
-        if patterns is None:
-            return None
-        for pattern in patterns:
-            try:
-                re.compile(pattern)
-            except re.error as error:
-                raise ValueError(f"invalid FASTA identifier regex {pattern!r}: {error}") from error
-        return patterns
+    decoy: PatternPolicy = DEFAULT_DECOY_POLICY
+    contaminant: PatternPolicy = DEFAULT_CONTAMINANT_POLICY
 
 
 class ResolvedPatternConfig(BaseModel):
@@ -98,14 +111,8 @@ class FastaConfigAccumulator:
 
     def __init__(self, config: FastaConfig) -> None:
         self._config = config
-        self._decoy_tested = (
-            config.decoy_candidates if config.decoy_patterns is None else config.decoy_patterns
-        )
-        self._contaminant_tested = (
-            config.contaminant_candidates
-            if config.contaminant_patterns is None
-            else config.contaminant_patterns
-        )
+        self._decoy_tested = _tested_patterns(config.decoy)
+        self._contaminant_tested = _tested_patterns(config.contaminant)
         self._decoy_counts = dict.fromkeys(self._decoy_tested, 0)
         self._contaminant_counts = dict.fromkeys(self._contaminant_tested, 0)
         self._n_fasta_ids = 0
@@ -131,9 +138,9 @@ class FastaConfigAccumulator:
     def resolve(self) -> ResolvedFastaConfig:
         """Return immutable effective patterns and the complete count audit."""
         return ResolvedFastaConfig(
-            decoy=_resolve_patterns(self._config.decoy_patterns, self._decoy_counts),
+            decoy=_resolve_patterns(self._config.decoy, self._decoy_counts),
             contaminant=_resolve_patterns(
-                self._config.contaminant_patterns,
+                self._config.contaminant,
                 self._contaminant_counts,
             ),
             n_fasta_ids=self._n_fasta_ids,
@@ -156,19 +163,13 @@ def matches_any(value: str, patterns: tuple[str, ...]) -> bool:
     return any(regex.search(value) for regex in _compile_patterns(patterns))
 
 
-def _single_pattern(pattern: str | None) -> tuple[str, ...] | None:
-    if pattern is None:
-        return None
-    return (pattern,) if pattern else ()
-
-
 def _resolve_patterns(
-    explicit: tuple[str, ...] | None,
+    policy: PatternPolicy,
     counts: dict[str, int],
 ) -> ResolvedPatternConfig:
-    if explicit is not None:
+    if isinstance(policy, ExplicitPatterns):
         return ResolvedPatternConfig(
-            patterns=explicit,
+            patterns=policy.patterns,
             source="explicit",
             match_counts=counts,
         )
@@ -178,6 +179,10 @@ def _resolve_patterns(
         source="inferred" if inferred else "none",
         match_counts=counts,
     )
+
+
+def _tested_patterns(policy: PatternPolicy) -> tuple[str, ...]:
+    return policy.patterns if isinstance(policy, ExplicitPatterns) else policy.candidates
 
 
 @cache

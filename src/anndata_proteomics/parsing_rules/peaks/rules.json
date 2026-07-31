@@ -125,7 +125,10 @@
         {
           "name": "AScore",
           "source": "^(?P<sample>LFQ_.+?)(?:\\.raw|_raw)? AScore$",
-          "value_pattern": ":(-?\\d+(?:\\.\\d+)?)(?:;|$)"
+          "value_pattern": {
+            "mode": "regex",
+            "pattern": ":(-?\\d+(?:\\.\\d+)?)(?:;|$)"
+          }
         }
       ]
     }

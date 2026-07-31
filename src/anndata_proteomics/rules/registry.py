@@ -19,12 +19,23 @@ from anndata_proteomics.rules._discovery import (
 from anndata_proteomics.rules._discovery import (
     packaged_rules_root as packaged_rules_root,
 )
-from anndata_proteomics.rules.loader import load_rule_document, resolve_rule_locator
+from anndata_proteomics.rules.loader import (
+    AmbiguousRuleLocators,
+    RuleLocatorResolution,
+    RuleLocatorUnavailable,
+    load_rule_document,
+    resolve_rule_locator_for_version,
+    resolve_rule_locator_without_version,
+)
 from anndata_proteomics.rules.schema import QuantificationLevel
 
 
 class RuleNotFound(LookupError):
     """Raised when no packaged document level covers a requested software version."""
+
+
+class AmbiguousRuleError(LookupError):
+    """Raised when several packaged locators satisfy lookup evidence."""
 
 
 def iter_packaged_rules() -> Iterator[RuleLocator]:
@@ -38,12 +49,23 @@ def iter_packaged_rules() -> Iterator[RuleLocator]:
 def find_rule(
     software: str,
     level: QuantificationLevel,
-    version: str | None = None,
 ) -> RuleLocator:
-    """Resolve a packaged level locator or raise :class:`RuleNotFound`."""
-    locator = resolve_rule_locator(software, level, version)
-    if locator is None:
-        raise RuleNotFound(
-            f"no packaged rule for software={software!r} level={level!r} version={version!r}"
-        )
-    return locator
+    """Require one unambiguous packaged locator without version evidence."""
+    return _require_locator(resolve_rule_locator_without_version(software, level))
+
+
+def find_rule_for_version(
+    software: str,
+    level: QuantificationLevel,
+    version: str,
+) -> RuleLocator:
+    """Require one packaged locator for a concrete software version."""
+    return _require_locator(resolve_rule_locator_for_version(software, level, version))
+
+
+def _require_locator(resolution: RuleLocatorResolution) -> RuleLocator:
+    if isinstance(resolution, RuleLocatorUnavailable):
+        raise RuleNotFound(resolution.reason)
+    if isinstance(resolution, AmbiguousRuleLocators):
+        raise AmbiguousRuleError(resolution.reason)
+    return resolution

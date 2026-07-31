@@ -11,15 +11,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from conftest import ConversionFixture
+from conversion_support import convert_versioned_level_to_anndata
 
-from anndata_proteomics.converters import pipeline as ui
 from anndata_proteomics.rules.schema import QuantificationLevel
 
 _LEVELS: tuple[QuantificationLevel, ...] = ("ion", "protein", "fragment")
 
 
 def _convert(fixture: ConversionFixture, level: QuantificationLevel):
-    return ui.convert_level(fixture["df"].copy(), fixture["slug"], level, fixture["version"])
+    return convert_versioned_level_to_anndata(
+        fixture["df"].copy(),
+        fixture["slug"],
+        level,
+        fixture["version"],
+    )
 
 
 def test_each_level_converts_to_nonempty_anndata(

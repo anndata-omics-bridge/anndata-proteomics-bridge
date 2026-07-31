@@ -11,17 +11,26 @@ import mudata
 import numpy as np
 import pandas as pd
 import pytest
+from description_support import describe_anndata as describe
 from mudata import MuData
+from numpy.typing import NDArray
 from pydantic import ValidationError
 from scipy import sparse
 
-from anndata_proteomics.annotation.apply import annotate_obs
-from anndata_proteomics.annotation.loader import AnnotationTable
-from anndata_proteomics.annotation.validate_fasta import (
-    FastaValidationConfig,
-    validate_peptides_against_fasta,
+from anndata_proteomics.adapters.anndata import fasta as fasta_adapter
+from anndata_proteomics.adapters.anndata import proteobench as proteobench_adapter
+from anndata_proteomics.adapters.anndata.annotation import (
+    read_observation_frames,
+    write_sample_annotation,
 )
-from anndata_proteomics.proteobench import intermediate, mapping, metrics, resolve
+from anndata_proteomics.adapters.anndata.proteobench import (
+    resolve_roles,
+)
+from anndata_proteomics.annotation.loader import (
+    AnnotationTable,
+    InMemoryAnnotationOrigin,
+)
+from anndata_proteomics.proteobench import intermediate, mapping, metrics
 from anndata_proteomics.proteobench.config import (
     ExpectedRatio,
     ModuleGeneral,
@@ -29,16 +38,19 @@ from anndata_proteomics.proteobench.config import (
     SampleSettings,
     load_module_settings,
 )
+from anndata_proteomics.proteobench.contracts import QuantMatrix
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
 from anndata_proteomics.proteobench.mapping import (
     render_proteobench_features,
 )
-from anndata_proteomics.proteobench.metrics import build_scores, compute_roc_auc
-from anndata_proteomics.proteobench.pipeline import score_quantification
-from anndata_proteomics.proteobench.resolve import resolve_roles
-from anndata_proteomics.readers.summary import describe
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.proteobench.metrics import ScoreConfig, build_scores, compute_roc_auc
+from anndata_proteomics.proteobench.pipeline import ProteoBenchResult
+from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 from anndata_proteomics.scripts.cli import proteobench as proteobench_cmd
+from anndata_proteomics.workflows import fasta as fasta_workflow
+from anndata_proteomics.workflows import proteobench as proteobench_workflow
+from anndata_proteomics.workflows.proteobench import ProteoBenchLevelInput
+from anndata_proteomics.workflows.sample_annotation import run_sample_annotation
 
 GOLDEN_LEGACY_INTERMEDIATE = (
     Path(__file__).parent / "data" / "proteobench" / "small_legacy_intermediate.txt"
@@ -91,8 +103,8 @@ def _rule() -> ParseRule:
     )
 
 
-def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
-    values = np.asarray(
+def _matrix_values() -> NDArray[np.float64]:
+    return np.asarray(
         [
             [10, 20, 5, 10, 10, 10],
             [10, 20, 5, 10, 10, 0],
@@ -101,7 +113,9 @@ def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
         ],
         dtype=np.float64,
     )
-    matrix = sparse.csr_matrix(np.nan_to_num(values, nan=0.0)) if sparse_x else values
+
+
+def _observations(*, annotated: bool) -> pd.DataFrame:
     obs_data = {"Run": ["run_A1", "run_A2", "run_B1", "run_B2"]}
     if annotated:
         obs_data.update(
@@ -110,8 +124,11 @@ def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
                 "condition": ["A", "A", "B", "B"],
             }
         )
-    obs = pd.DataFrame(obs_data, index=["run_A1", "run_A2", "run_B1", "run_B2"])
-    var = pd.DataFrame(
+    return pd.DataFrame(obs_data, index=["run_A1", "run_A2", "run_B1", "run_B2"])
+
+
+def _features() -> pd.DataFrame:
+    return pd.DataFrame(
         {
             "Protein_Ids": [
                 "P1_HUMAN",
@@ -124,10 +141,14 @@ def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
             "ProForma_ion": ["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"],
             "ProForma_peptide": ["H", "Y", "E", "C", "M", "N"],
         },
-        # A real ion rule keeps ProForma_ion in axis.var_keys, so var_names *are* those values.
         index=["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"],
     )
-    result = ad.AnnData(X=matrix, obs=obs, var=var)
+
+
+def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
+    values = _matrix_values()
+    matrix = sparse.csr_matrix(np.nan_to_num(values, nan=0.0)) if sparse_x else values
+    result = ad.AnnData(X=matrix, obs=_observations(annotated=annotated), var=_features())
     result.uns["anndata_proteomics"] = {
         "quantification_level": "ion",
         "software_name": "DIA-NN",
@@ -136,21 +157,41 @@ def _adata(*, sparse_x: bool = False, annotated: bool = True) -> ad.AnnData:
     return result
 
 
-def _intermediate(adata: ad.AnnData, *, level: str | None = None):
+def _score_quantification(
+    obj: ad.AnnData | MuData,
+    module_settings: ModuleSettings,
+) -> ad.AnnData | MuData:
+    """Compose the AnnData adapter with the backend-independent scoring workflow."""
+    targets = tuple(proteobench_adapter.resolve_targets(obj))
+    extracted = tuple(proteobench_adapter.read_level(target) for target in targets)
+    results = proteobench_workflow.score_levels(
+        tuple(level.calculation for level in extracted),
+        module_settings,
+    )
+    for target, level, result in zip(targets, extracted, results, strict=True):
+        proteobench_adapter.store_result(target, result, level.roles)
+    return obj
+
+
+def _plain_intermediate(
+    matrix: QuantMatrix,
+    level: QuantificationLevel,
+) -> intermediate.IntermediateResult:
     module = _module_settings()
-    rule, roles = resolve_roles(adata)
-    design = align_runs(adata, module)
+    features = _features()
+    design = align_runs(_observations(annotated=True), module)
     return compute_intermediate(
-        adata,
+        matrix,
+        features.index,
+        features["Protein_Ids"],
         module,
-        roles,
         design,
-        level=level or rule.quantification_level,
+        level,
     )
 
 
 def test_matrix_intermediate_matches_hand_computed_values() -> None:
-    result = _intermediate(_adata())
+    result = _plain_intermediate(_matrix_values(), "ion")
     frame = result.varm
 
     assert frame.index.tolist() == ["H/2", "Y/2", "E/2", "C/2", "M/2", "N/2"]
@@ -165,16 +206,104 @@ def test_matrix_intermediate_matches_hand_computed_values() -> None:
 
 
 def test_complete_legacy_intermediate_and_hash_match_golden() -> None:
-    result = _intermediate(_adata())
+    result = _plain_intermediate(_matrix_values(), "ion")
     expected = pd.read_csv(GOLDEN_LEGACY_INTERMEDIATE, index_col=0)
 
     pd.testing.assert_frame_equal(result.legacy, expected, check_dtype=False)
     assert result.intermediate_hash == GOLDEN_LEGACY_INTERMEDIATE_HASH
 
 
+def test_workflow_scores_plain_inputs_without_a_storage_container() -> None:
+    features = _features()
+    (result,) = proteobench_workflow.score_levels(
+        (
+            ProteoBenchLevelInput(
+                observations=_observations(annotated=True),
+                matrix=_matrix_values(),
+                feature_ids=features.index,
+                reported_proteins=features["Protein_Ids"],
+                level="ion",
+            ),
+        ),
+        _module_settings(),
+    )
+
+    assert result.intermediate.intermediate_hash == GOLDEN_LEGACY_INTERMEDIATE_HASH
+
+
+def test_in_memory_boundaries_drive_proteobench_workflow() -> None:
+    features = _features()
+    source = {
+        "ion": ProteoBenchLevelInput(
+            observations=_observations(annotated=True),
+            matrix=_matrix_values(),
+            feature_ids=features.index,
+            reported_proteins=features["Protein_Ids"],
+            level="ion",
+        )
+    }
+    persisted: dict[QuantificationLevel, intermediate.IntermediateResult] = {}
+
+    def read_levels() -> tuple[ProteoBenchLevelInput, ...]:
+        return tuple(source.values())
+
+    def write_results(results: tuple[ProteoBenchResult, ...]) -> None:
+        for inputs, result in zip(source.values(), results, strict=True):
+            persisted[inputs.level] = result.intermediate
+
+    calculated = proteobench_workflow.score_levels(read_levels(), _module_settings())
+    write_results(calculated)
+
+    assert persisted["ion"].intermediate_hash == GOLDEN_LEGACY_INTERMEDIATE_HASH
+
+
+def test_proteobench_adapter_extracts_typed_level_separately() -> None:
+    target = _adata()
+
+    extracted = proteobench_adapter.read_level(target)
+
+    assert extracted.calculation.observations is target.obs
+    assert extracted.calculation.matrix is target.X
+    assert extracted.calculation.feature_ids.equals(target.var_names)
+    assert extracted.calculation.reported_proteins.equals(target.var["Protein_Ids"])
+    assert extracted.calculation.level == "ion"
+    assert extracted.roles.proteins == "Protein_Ids"
+
+
+def test_proteobench_adapter_persists_typed_result_separately() -> None:
+    features = _features()
+    (calculated,) = proteobench_workflow.score_levels(
+        (
+            ProteoBenchLevelInput(
+                observations=_observations(annotated=True),
+                matrix=_matrix_values(),
+                feature_ids=features.index,
+                reported_proteins=features["Protein_Ids"],
+                level="ion",
+            ),
+        ),
+        _module_settings(),
+    )
+    target = _adata()
+
+    proteobench_adapter.store_result(
+        target,
+        calculated,
+        proteobench_adapter.ResolvedRoles(proteins="Protein_Ids"),
+    )
+
+    stored = target.varm["proteobench"]
+    assert isinstance(stored, pd.DataFrame)
+    assert stored.equals(calculated.intermediate.varm)
+    assert target.uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
+
+
 def test_dense_and_sparse_intermediates_are_equal() -> None:
-    dense = _intermediate(_adata())
-    sparse_result = _intermediate(_adata(sparse_x=True))
+    dense = _plain_intermediate(_matrix_values(), "ion")
+    sparse_result = _plain_intermediate(
+        sparse.csr_matrix(np.nan_to_num(_matrix_values(), nan=0.0)),
+        "ion",
+    )
     pd.testing.assert_frame_equal(dense.varm, sparse_result.varm)
     pd.testing.assert_frame_equal(dense.legacy, sparse_result.legacy)
 
@@ -210,16 +339,16 @@ def test_legacy_feature_rendering_can_match_before_aa_false_parser() -> None:
 
 
 def test_scores_keep_proteobench_names_and_thresholds() -> None:
-    result = _intermediate(_adata())
-    scores = build_scores(result.legacy, result.intermediate_hash)
+    result = _plain_intermediate(_matrix_values(), "ion")
+    scores = build_scores(result.legacy, result.intermediate_hash, ScoreConfig())
 
-    assert list(scores["results"]) == ["1", "2", "3", "4", "5", "6"]
-    assert scores["results"]["1"]["nr_feature"] == 3
-    assert scores["results"]["1"]["roc_auc"] == 1.0
-    assert scores["results"]["5"]["nr_feature"] == 0
-    assert scores["results"]["5"]["CV_median"] is None
-    assert scores["nr_feature"] == 3
-    assert scores["intermediate_hash"] == result.intermediate_hash
+    assert list(scores.results) == ["1", "2", "3", "4", "5", "6"]
+    assert scores.results["1"].root["nr_feature"] == 3
+    assert scores.results["1"].root["roc_auc"] == 1.0
+    assert scores.results["5"].root["nr_feature"] == 0
+    assert np.isnan(scores.results["5"].root["CV_median"])
+    assert scores.nr_feature == 3
+    assert scores.intermediate_hash == result.intermediate_hash
 
 
 def test_roc_auc_handles_ties_and_missing_class() -> None:
@@ -240,7 +369,7 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
     adata = _adata()
     adata.varm["fasta"] = pd.DataFrame({"accession": ["x"] * adata.n_vars}, index=adata.var_names)
 
-    returned = score_quantification(adata, _module_settings())
+    returned = _score_quantification(adata, _module_settings())
     assert returned is adata
     assert "proteobench" in adata.varm
     assert "proteobench" not in adata.uns
@@ -276,14 +405,14 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
 
 def test_pipeline_refuses_collisions_and_invalid_annotations() -> None:
     adata = _adata()
-    score_quantification(adata, _module_settings())
+    _score_quantification(adata, _module_settings())
     with pytest.raises(ValueError, match="refusing to overwrite"):
-        score_quantification(adata, _module_settings())
+        _score_quantification(adata, _module_settings())
 
     conflicting = _adata()
     conflicting.obs["condition"] = ["B", "A", "B", "B"]
     with pytest.raises(ValueError, match="does not match module condition"):
-        score_quantification(conflicting, _module_settings())
+        _score_quantification(conflicting, _module_settings())
 
 
 def test_scoring_requires_annotation_while_fasta_remains_independent() -> None:
@@ -300,15 +429,28 @@ def test_scoring_requires_annotation_while_fasta_remains_independent() -> None:
 
     unannotated = _adata(annotated=False)
     with pytest.raises(ValueError, match="Run 'apb annotate' first"):
-        score_quantification(unannotated, _module_settings())
+        _score_quantification(unannotated, _module_settings())
 
-    annotate_obs(unannotated, annotation)
-    score_quantification(unannotated, _module_settings())
-    validate_peptides_against_fasta(
-        unannotated,
-        fasta,
-        FastaValidationConfig(backend="ahocorapy"),
+    annotation_result = run_sample_annotation(
+        read_observation_frames(unannotated),
+        annotation,
+        InMemoryAnnotationOrigin(),
     )
+    write_sample_annotation(unannotated, annotation_result)
+    _score_quantification(unannotated, _module_settings())
+    fasta_config = fasta_adapter.AnnDataPeptideFastaConfig()
+    fasta_input = fasta_adapter.read_peptide_anndata_input(unannotated, fasta_config)
+    fasta_result = fasta_workflow.validate_peptide_levels(
+        (fasta_input,),
+        fasta,
+        fasta_config.matching,
+    )
+    fasta_adapter.write_peptide_validation(
+        unannotated,
+        fasta_result.levels[fasta_input.name],
+        fasta_config.sequence_field,
+    )
+    fasta_adapter.write_anndata_fasta_config(unannotated, fasta_result.fasta_config)
 
     assert unannotated.uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
     assert "fasta_validation" in unannotated.varm
@@ -352,7 +494,12 @@ def test_cli_scores_annotated_h5ad_and_describe_exposes_scores(
     assert result == 0
     restored = ad.read_h5ad(output_path)
     assert restored.uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
-    assert describe(restored)["proteobench"]["scores"]["nr_feature"] == 3
+    summary = describe(restored)
+    summary_proteobench = summary["proteobench"]
+    assert isinstance(summary_proteobench, dict)
+    summary_scores = summary_proteobench["scores"]
+    assert isinstance(summary_scores, dict)
+    assert summary_scores["nr_feature"] == 3
     assert "proteobench" not in ad.read_h5ad(input_path).uns
 
 
@@ -477,7 +624,7 @@ def test_configuration_models_reject_inconsistent_contracts() -> None:
 
 
 def test_role_target_and_optional_role_validation() -> None:
-    roles = resolve.ResolvedRoles(proteins="Protein_Ids")
+    roles = proteobench_adapter.ResolvedRoles(proteins="Protein_Ids")
     stored = roles.as_dict()
     assert stored["Sample name"] == "obs:sample_name"
     assert stored["Condition"] == "obs:condition"
@@ -486,19 +633,20 @@ def test_role_target_and_optional_role_validation() -> None:
 
     # An AnnData is its own only target; a MuData yields every modality, in order.
     adata = _adata()
-    assert resolve.resolve_targets(adata) == [adata]
+    assert proteobench_adapter.resolve_targets(adata) == [adata]
     other = _adata()
     # Distinct feature names keep the MuData global var axis unique.
     other.var_names = [f"other:{name}" for name in other.var_names]
     with mudata.set_options(pull_on_update=False):
         combined = MuData({"a": adata, "b": other})
-        assert resolve.resolve_targets(combined) == [adata, other]
+        assert proteobench_adapter.resolve_targets(combined) == [adata, other]
         with pytest.raises(ValueError, match="no modality to score"):
-            resolve.resolve_targets(MuData({}))
+            proteobench_adapter.resolve_targets(MuData({}))
 
     missing_rule = _adata()
     missing_rule.uns["anndata_proteomics"]["rule_json"] = {}
-    with pytest.raises(ValueError, match="no string"):
+    # The namespace owner reports the offending key and the type it actually found.
+    with pytest.raises(TypeError, match="rule_json'\\] must be a JSON string; got dict"):
         resolve_roles(missing_rule)
 
     no_roles = _adata()
@@ -523,56 +671,57 @@ def test_alignment_and_intermediate_identity_guards() -> None:
     unknown = _adata()
     unknown.obs["sample_name"] = ["unknown", "A2", "B1", "B2"]
     with pytest.raises(ValueError, match="does not match"):
-        align_runs(unknown, module)
+        align_runs(proteobench_adapter.extract_observations(unknown), module)
 
     repeated = _adata()
     repeated.obs["sample_name"] = ["A1", "A1", "B1", "B2"]
     with pytest.raises(ValueError, match="one-to-one"):
-        align_runs(repeated, module)
+        align_runs(proteobench_adapter.extract_observations(repeated), module)
 
     incomplete = _adata()[[0, 1, 2], :].copy()
     with pytest.raises(ValueError, match="sample alignment is incomplete"):
-        align_runs(incomplete, module)
+        align_runs(proteobench_adapter.extract_observations(incomplete), module)
 
     conflicting = _adata()
     conflicting.obs["condition"] = ["B", "A", "B", "B"]
     with pytest.raises(ValueError, match="does not match module condition"):
-        align_runs(conflicting, module)
+        align_runs(proteobench_adapter.extract_observations(conflicting), module)
 
     missing_annotation = _adata(annotated=False)
     with pytest.raises(ValueError, match="Run 'apb annotate' first"):
-        align_runs(missing_annotation, module)
+        align_runs(proteobench_adapter.extract_observations(missing_annotation), module)
 
     incomplete_annotation = _adata()
     cast(pd.DataFrame, incomplete_annotation.obs).loc["run_A1", "sample_name"] = None
     with pytest.raises(ValueError, match="complete sample annotation"):
-        align_runs(incomplete_annotation, module)
+        align_runs(proteobench_adapter.extract_observations(incomplete_annotation), module)
 
     # var_names *is* the feature axis, so its uniqueness check is the feature-identity check.
     duplicate_names = _adata()
     duplicate_names.var_names = ["duplicate"] * duplicate_names.n_vars
     with pytest.raises(ValueError, match="unique var_names"):
         compute_intermediate(
-            duplicate_names,
+            proteobench_adapter.extract_quant_matrix(duplicate_names),
+            duplicate_names.var_names.copy(),
+            duplicate_names.var[roles.proteins].copy(),
             module,
-            roles,
-            align_runs(_adata(), module),
-            level="ion",
+            align_runs(proteobench_adapter.extract_observations(_adata()), module),
+            "ion",
         )
 
 
 def test_legacy_feature_column_follows_the_scored_level() -> None:
     """ProteoBench names its feature column per level; levels it has no module for use the level."""
-    assert _intermediate(_adata()).legacy.columns[0] == "precursor ion"
-    assert _intermediate(_adata(), level="peptidoform").legacy.columns[0] == "peptidoform"
-    assert _intermediate(_adata(), level="fragment").legacy.columns[0] == "fragment"
-    assert _intermediate(_adata(), level="protein").legacy.columns[0] == "protein"
+    assert _plain_intermediate(_matrix_values(), "ion").legacy.columns[0] == "precursor ion"
+    assert _plain_intermediate(_matrix_values(), "peptidoform").legacy.columns[0] == "peptidoform"
+    assert _plain_intermediate(_matrix_values(), "fragment").legacy.columns[0] == "fragment"
+    assert _plain_intermediate(_matrix_values(), "protein").legacy.columns[0] == "protein"
 
 
 def test_intermediate_low_level_edge_paths() -> None:
     collapsed = intermediate._collapse_positive_matrix(
         np.asarray([[0.0, np.nan]]),
-        np.asarray([0, 1]),
+        np.asarray([0, 1], dtype=np.intp),
         2,
         np.asarray([True, True], dtype=np.bool_),
         np.float64,
@@ -598,23 +747,25 @@ def test_mapping_helpers_cover_empty_tokens() -> None:
     assert mapped.unmatched_token_occurrences == 1
 
 
+def test_mapping_preserves_missing_assignments_as_explicit_missing_values() -> None:
+    mapped = mapping.map_reported_proteins(pd.Series([pd.NA], dtype="string"))
+
+    assert pd.isna(mapped.proteins.iloc[0])
+    assert mapped.matched_token_occurrences == 0
+    assert mapped.unmatched_token_occurrences == 0
+
+
 def test_metric_and_pipeline_edge_paths() -> None:
-    result = _intermediate(_adata())
-    with pytest.raises(ValueError, match="default cutoff"):
-        build_scores(result.legacy, "hash", default_cutoff=0)
+    with pytest.raises(ValueError, match="default_cutoff"):
+        ScoreConfig(default_cutoff=7, max_nr_observed=6)
     empty = pd.DataFrame()
     assert np.isnan(compute_roc_auc(empty))
     missing_ratios = pd.DataFrame(columns=["species", "log2_A_vs_B", "log2_expectedRatio"])
     assert np.isnan(compute_roc_auc(missing_ratios))
     with pytest.raises(ValueError, match="unsupported aggregation"):
         metrics._absolute_aggregate("mode")
-    assert metrics._json_compatible((np.int64(2), np.float64(np.nan), np.bool_(True))) == [
-        2,
-        None,
-        True,
-    ]
 
     collision = _adata()
     collision.uns["anndata_proteomics"]["proteobench"] = {"scores": {}}
     with pytest.raises(ValueError, match=r"\['scores'\]"):
-        score_quantification(collision, _module_settings())
+        _score_quantification(collision, _module_settings())

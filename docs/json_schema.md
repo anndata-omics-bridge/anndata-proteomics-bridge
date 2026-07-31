@@ -280,13 +280,12 @@ A layer is one reported measurement varying over `obs × var`:
   factor category codes. Several tools write `0` for "not quantified" rather than
   leaving the cell empty (FragPipe, Sage, PEAKS); without this the layer reports 0%
   missingness.
-- `value_pattern` is a regex with exactly one capture group, applied per cell before
-  numeric coercion, for vendor columns whose cells are structured strings rather than
-  bare numbers. PEAKS `AScore` cells read `site:modification:score`, so the layer needs
-  `":(-?\\d+(?:\\.\\d+)?)(?:;|$)"` to yield the score; the first match wins and cells
-  that do not match become `NaN`. Numeric layers only — a `factor` layer must use
-  `categories`. Without it such a column coerces to an all-NaN layer, which APB warns
-  about but cannot repair.
+- `value_pattern` explicitly declares either `{ "mode": "none" }` (the default) or
+  `{ "mode": "regex", "pattern": "..." }`. A regex pattern has exactly one capture
+  group and is applied per cell before numeric coercion for structured vendor values.
+  PEAKS `AScore` cells read `site:modification:score`, so the layer uses a regex pattern
+  `":(-?\\d+(?:\\.\\d+)?)(?:;|$)"`; the first match wins and cells that do not match
+  become `NaN`. Regex extraction is valid only for numeric layers.
 - `required` defaults to false, but `axis.x_layer` is always required.
 
 Store a value as a layer only when it varies by sample for the same feature.

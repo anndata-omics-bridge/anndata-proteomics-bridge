@@ -102,7 +102,6 @@ WIDE_EXAMPLE: dict[str, Any] = {
             "categories": {"Localized": 1, "Ambiguous": 0},
         },
     ],
-    "sample_name_cleanup": {"pattern": ""},
 }
 
 
@@ -214,14 +213,20 @@ def test_factor_rejects_missing_values():
 
 def test_factor_rejects_value_pattern():
     bad = copy.deepcopy(WIDE_EXAMPLE)
-    bad["layers"][2]["value_pattern"] = r":(\d+)$"
+    bad["layers"][2]["value_pattern"] = {
+        "mode": "regex",
+        "pattern": r":(\d+)$",
+    }
     with pytest.raises(ValidationError, match="only valid for numeric"):
         _parse(bad)
 
 
 def test_value_pattern_must_be_a_valid_regex():
     bad = copy.deepcopy(WIDE_EXAMPLE)
-    bad["layers"][0]["value_pattern"] = r"([unclosed"
+    bad["layers"][0]["value_pattern"] = {
+        "mode": "regex",
+        "pattern": r"([unclosed",
+    }
     with pytest.raises(ValidationError, match="not a valid regex"):
         _parse(bad)
 
@@ -229,7 +234,7 @@ def test_value_pattern_must_be_a_valid_regex():
 @pytest.mark.parametrize("pattern", [r":\d+$", r"(\w+):(\d+)$"])
 def test_value_pattern_requires_exactly_one_capture_group(pattern: str):
     bad = copy.deepcopy(WIDE_EXAMPLE)
-    bad["layers"][0]["value_pattern"] = pattern
+    bad["layers"][0]["value_pattern"] = {"mode": "regex", "pattern": pattern}
     with pytest.raises(ValidationError, match="exactly one capture group"):
         _parse(bad)
 
@@ -270,6 +275,13 @@ def test_unknown_top_level_key_rejected():
 def test_sample_name_cleanup_rejected_for_long():
     bad = {**copy.deepcopy(LONG_EXAMPLE), "sample_name_cleanup": {"pattern": "(.+)"}}
     with pytest.raises(ValidationError, match="sample_name_cleanup"):
+        _parse(bad)
+
+
+def test_sample_name_cleanup_rejects_empty_pattern():
+    bad = copy.deepcopy(WIDE_EXAMPLE)
+    bad["sample_name_cleanup"] = {"pattern": ""}
+    with pytest.raises(ValidationError, match="pattern"):
         _parse(bad)
 
 

@@ -118,6 +118,24 @@ def test_convert_long_replaces_declared_numeric_missing_values() -> None:
     assert intensity[1, 1] == 40.0
 
 
+def test_convert_long_extracts_numeric_values_with_explicit_regex() -> None:
+    df = _df_without_score()
+    df["Score"] = ["site:0.9", "site:-1", "site:0.7", "unmatched"]
+    document = _build_long_rule().model_dump(by_alias=True)
+    document["layers"][1]["value_pattern"] = {
+        "mode": "regex",
+        "pattern": r":(-?\d+(?:\.\d+)?)$",
+    }
+    document["layers"][1]["missing_values"] = [-1]
+
+    score = convert_long(df, ParseRule.model_validate(document)).layers["Score"]
+
+    assert score[0, 0] == 0.9
+    assert np.isnan(score[0, 1])
+    assert score[1, 0] == 0.7
+    assert np.isnan(score[1, 1])
+
+
 def test_convert_long_duplicate_modes_are_honored() -> None:
     df = pd.DataFrame(
         {

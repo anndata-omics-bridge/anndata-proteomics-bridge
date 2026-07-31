@@ -54,7 +54,9 @@ def map_reported_proteins(proteins: pd.Series) -> ProteinMappingResult:
                 normalized.append(replacement)
         return ";".join(normalized)
 
-    mapped = proteins.map(normalize)
+    # Preserve pandas' explicit missing scalar. Missing protein assignments are not
+    # empty accessions and must never enter token-mapping control flow.
+    mapped = proteins.astype("string").map(normalize, na_action="ignore")
     return ProteinMappingResult(
         proteins=mapped,
         mapper_sha256=mapper_sha256,
@@ -83,7 +85,9 @@ def render_proteobench_features(
         name = names.get(accession)
         return f"[{name}]" if name is not None else match.group(0)
 
-    rendered = features.astype("string").fillna("")
+    rendered = features.astype("string")
+    if rendered.isna().any():
+        raise ValueError("ProteoBench feature identifiers must not be missing")
     if drop_final_residue_modifications:
         # ProteoBench 0.17's ``before_aa = false`` parser does not visit the
         # position after the final residue. Preserve that behavior in the

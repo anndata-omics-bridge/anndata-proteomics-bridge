@@ -8,6 +8,7 @@ gitignored, regenerated with ``apb-testdata``, and consumed by the test suite.
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 
 from anndata_proteomics.rules.loader import software_version_matches
@@ -66,101 +67,161 @@ _PROTEOBENCH_PARAM_FIXTURES: dict[str, str] = {
 }
 
 
-def find_test_data(software_name: str, version_pattern: str | None = None) -> Path | None:
-    """Return the first cached input for `software_name`, or None if absent.
+@dataclass(frozen=True, slots=True)
+class VendorDataUnavailable:
+    """A cached vendor input could not be located."""
 
-    Matches rows where `status == "ok"`. Returns None when the cache index
-    file does not exist (cache not regenerated yet).
+    software_name: str
 
-    Pass a rule's ``software_version`` as ``version_pattern`` to restrict the result to a
-    submission that rule actually covers. Without it, a vendor whose cached submissions
-    span several export schemas can return a file no packaged rule was written for — e.g.
-    Sage's charge-collapsed 0.14.6 ``lfq.tsv``, which the charge-resolved ion rule cannot
-    convert.
+
+@dataclass(frozen=True, slots=True)
+class FastaUnavailable:
+    """A cached FASTA could not be located for the requested module."""
+
+    module: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetFastaUnavailable:
+    """A cached FASTA could not be located for a requested dataset."""
+
+    dataset_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotationUnavailable:
+    """A cached sample annotation could not be located for a module."""
+
+    module: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetModuleUnavailable:
+    """A cached dataset path could not be associated with a module."""
+
+    dataset_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterFileUnavailable:
+    """No registered parameter fixture exists for a software name."""
+
+    software_name: str
+
+
+def find_test_data(software_name: str) -> Path | VendorDataUnavailable:
+    """Return the first cached input for ``software_name``.
+
+    Matches rows where ``status == "ok"``. A typed unavailable result records
+    that the cache index or matching artifact is absent.
     """
     if not DOWNLOADED_DB.exists():
-        return None
+        return VendorDataUnavailable(software_name)
+    with open(DOWNLOADED_DB) as f:
+        for row in csv.DictReader(f):
+            if row["software_name"] == software_name and row.get("status") == "ok":
+                return TEST_DATA_DIR / "json_dir" / row["input_file_path"]
+    return VendorDataUnavailable(software_name)
+
+
+def find_test_data_for_version(
+    software_name: str,
+    version_pattern: str,
+) -> Path | VendorDataUnavailable:
+    """Return the first cached input covered by one software-version pattern.
+
+    This is deliberately distinct from :func:`find_test_data`: version-aware
+    selection is a different lookup, not optional behavior on the same function.
+    """
+    if not DOWNLOADED_DB.exists():
+        return VendorDataUnavailable(software_name)
     with open(DOWNLOADED_DB) as f:
         for row in csv.DictReader(f):
             if row["software_name"] != software_name or row.get("status") != "ok":
                 continue
-            if version_pattern is not None and not software_version_matches(
+            if not software_version_matches(
                 version_pattern,
                 row["software_version"],
             ):
                 continue
             return TEST_DATA_DIR / "json_dir" / row["input_file_path"]
-    return None
+    return VendorDataUnavailable(software_name)
 
 
-def find_fasta(
+def find_fasta_for_module(
+    module: str,
     *,
-    dataset_dir: Path | None = None,
-    module: str | None = None,
     test_data_dir: Path = TEST_DATA_DIR,
-) -> Path | None:
-    """Return the cached ProteoBench FASTA for a module, or None if missing.
+) -> Path | FastaUnavailable:
+    """Return the cached ProteoBench FASTA for one explicit module.
 
-    Pass either ``module`` (the ProteoBench module key as it appears in
-    the ``module`` column of ``raw_file_db_downloaded.csv`` — e.g.
-    ``"dia_singlecell"``) or ``dataset_dir`` (a path inside the cached
-    ``test_data_download/json_dir/...`` tree; the module is read from
-    the index). ``test_data_dir`` selects an explicit cache root. When both
-    ``module`` and ``dataset_dir`` are given, ``module`` wins.
-
-    Returns the absolute path to the unzipped FASTA, or ``None`` when
-    the FASTA cache has not been downloaded yet
-    (``apb-testdata fasta``).
+    ``test_data_dir`` selects an explicit cache root. A typed unavailable
+    result records an unknown module or an absent downloaded FASTA.
     """
     test_data_dir = test_data_dir.expanduser().resolve()
-    if module is None and dataset_dir is not None:
-        module = _module_for_dataset(dataset_dir, test_data_dir=test_data_dir)
-    if module is None:
-        return None
     fasta_name = _MODULE_FASTA.get(module)
     if fasta_name is None:
-        return None
+        return FastaUnavailable(module)
     path = test_data_dir / "fasta" / fasta_name
-    return path if path.exists() else None
+    return path if path.exists() else FastaUnavailable(module)
+
+
+def find_fasta_for_dataset(
+    dataset_dir: Path,
+    *,
+    test_data_dir: Path = TEST_DATA_DIR,
+) -> Path | DatasetFastaUnavailable:
+    """Resolve a cached dataset to its module and then locate that module's FASTA."""
+    module = _module_for_dataset(dataset_dir, test_data_dir=test_data_dir)
+    if isinstance(module, DatasetModuleUnavailable):
+        return DatasetFastaUnavailable(dataset_dir)
+    fasta = find_fasta_for_module(module, test_data_dir=test_data_dir)
+    return DatasetFastaUnavailable(dataset_dir) if isinstance(fasta, FastaUnavailable) else fasta
 
 
 def find_annotation(
     *,
     module: str,
     test_data_dir: Path = TEST_DATA_DIR,
-) -> Path | None:
-    """Return the downloaded ProteoBench module annotation TOML, if available."""
+) -> Path | AnnotationUnavailable:
+    """Return the downloaded ProteoBench module annotation TOML."""
     filename = _MODULE_ANNOTATION.get(module)
     if filename is None:
-        return None
+        return AnnotationUnavailable(module)
     path = test_data_dir.expanduser().resolve() / "annotations" / filename
-    return path if path.is_file() else None
+    return path if path.is_file() else AnnotationUnavailable(module)
 
 
-def _module_for_dataset(dataset_dir: Path, *, test_data_dir: Path = TEST_DATA_DIR) -> str | None:
+def _module_for_dataset(
+    dataset_dir: Path,
+    *,
+    test_data_dir: Path = TEST_DATA_DIR,
+) -> str | DatasetModuleUnavailable:
     """Look up the ``module`` column for a cached dataset path."""
     test_data_dir = test_data_dir.expanduser().resolve()
     downloaded_db = test_data_dir / "raw_file_db_downloaded.csv"
     if not downloaded_db.exists():
-        return None
+        return DatasetModuleUnavailable(dataset_dir)
     target = str(dataset_dir.resolve())
     with open(downloaded_db) as f:
         for row in csv.DictReader(f):
             cached = test_data_dir / "json_dir" / row["input_file_path"]
             if str(cached.resolve()) == target or str(cached.parent.resolve()) == target:
-                return row.get("module")
-    return None
+                module = row.get("module")
+                if module:
+                    return module
+                return DatasetModuleUnavailable(dataset_dir)
+    return DatasetModuleUnavailable(dataset_dir)
 
 
-def find_param_file(software_name: str) -> Path | None:
-    """Return a sample parameter file for ``software_name``, or None.
+def find_param_file(software_name: str) -> Path | ParameterFileUnavailable:
+    """Return a sample parameter file for ``software_name``.
 
-    Resolves against the in-repo ``tests/params/`` fixtures directory. Returns
-    None when no fixture is registered for the tool or the file is missing on
-    disk.
+    Resolves against the in-repo ``tests/params/`` fixtures directory. A typed
+    unavailable result records an unregistered or missing fixture.
     """
     fixture = _PROTEOBENCH_PARAM_FIXTURES.get(software_name)
     if fixture is None:
-        return None
+        return ParameterFileUnavailable(software_name)
     path = PARAM_FIXTURE_DIR / fixture
-    return path if path.exists() else None
+    return path if path.exists() else ParameterFileUnavailable(software_name)

@@ -6,7 +6,6 @@ import inspect
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import anndata as ad
@@ -14,11 +13,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from anndata_proteomics.adapters.anndata import conversion as conversion_adapter
+from anndata_proteomics.adapters.anndata.params import require_search_parameters
 from anndata_proteomics.converters import assemble, pipeline, wide
 from anndata_proteomics.converters._pieces import ConversionPieces
 from anndata_proteomics.converters.long import _aggfunc_for, convert_long
 from anndata_proteomics.converters.numeric import warn_if_all_missing
-from anndata_proteomics.params.anndata_io import read_search_parameters
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.rules.schema import (
     ColumnCompute,
@@ -26,6 +26,8 @@ from anndata_proteomics.rules.schema import (
     QuantificationLevel,
     SampleNameCleanup,
 )
+from anndata_proteomics.workflows import conversion as conversion_workflow
+from anndata_proteomics.workflows.conversion import LevelConversion
 
 
 def _long_document() -> dict[str, Any]:
@@ -77,9 +79,40 @@ def _wide_rule() -> ParseRule:
     return ParseRule.model_validate(_wide_document())
 
 
+def test_in_memory_boundaries_drive_conversion_workflow() -> None:
+    source = {
+        "table": pd.DataFrame(
+            {
+                "Run": ["S1"],
+                "Feature": ["F1"],
+                "Intensity": [7.0],
+            }
+        )
+    }
+    persisted: dict[QuantificationLevel, LevelConversion] = {}
+
+    def read_table() -> pd.DataFrame:
+        return source["table"].copy()
+
+    def write_result(result: LevelConversion) -> None:
+        persisted[result.level] = result
+
+    rule = _long_rule()
+    calculated = conversion_workflow.convert_selected_level(
+        read_table(),
+        rule.quantification_level,
+        pipeline.RuleSelection(rule, "rule_config"),
+    )
+    write_result(calculated)
+
+    assert persisted == {"ion": calculated}
+    assert calculated.pieces.X.shape == (1, 1)
+    assert calculated.pieces.X[0, 0] == 7.0
+    assert source["table"].columns.tolist() == ["Run", "Feature", "Intensity"]
+
+
 def test_assemble_helper_guards(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     rule = _long_rule()
     pieces = ConversionPieces(
@@ -88,7 +121,12 @@ def test_assemble_helper_guards(
         var=pd.DataFrame({"Feature": ["F1"]}, index=["F1"]),
         layers={"Intensity": np.asarray([[1.0]])},
     )
-    assert set(assemble.to_anndata(pieces, rule).uns) == {"anndata_proteomics"}
+    conversion = LevelConversion(
+        level="ion",
+        selection=pipeline.RuleSelection(rule, "software_version"),
+        pieces=pieces,
+    )
+    assert set(conversion_adapter.to_anndata(conversion).uns) == {"anndata_proteomics"}
 
     group = rule.columns.var.model_copy(update={"select": {"Missing": "not-present"}})
     with pytest.raises(ValueError, match="cannot select"):
@@ -143,30 +181,6 @@ def test_assemble_helper_guards(
         with pytest.raises(ValueError, match=message):
             assemble._format_charge(value)
 
-    target = ad.AnnData(np.ones((1, 1)))
-    target.uns["anndata_proteomics"] = {}
-    monkeypatch.setattr(assemble, "available_software", lambda: ("Synthetic",))
-    monkeypatch.setattr(
-        assemble,
-        "parse_params",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad params")),
-    )
-    with pytest.raises(ValueError, match="bad params"):
-        assemble._attach_search_parameters(target, "params.txt", "Synthetic")
-
-    missing_version = ad.AnnData(np.ones((1, 1)))
-    missing_version.uns["anndata_proteomics"] = {}
-    monkeypatch.setattr(
-        assemble,
-        "parse_params",
-        lambda *_args, **_kwargs: Parameters(software_name="Synthetic"),
-    )
-    assemble._attach_search_parameters(missing_version, "params.txt", "Synthetic")
-    assert (
-        missing_version.uns["anndata_proteomics"]["search_parameters_version_status"] == "missing"
-    )
-    assert "no software version" in caplog.text
-
 
 def test_assemble_column_selection_and_fragment_column_inventory() -> None:
     plain_rule = _long_rule()
@@ -206,87 +220,21 @@ def test_assemble_column_selection_and_fragment_column_inventory() -> None:
     )
 
 
-def test_pipeline_empty_targets_version_failures_and_mudata_paths(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert pipeline.param_version(None, "tool") is None
-    monkeypatch.setattr(
-        pipeline,
-        "parse_params",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad")),
-    )
-    with pytest.raises(ValueError, match="bad"):
-        pipeline.param_version(tmp_path / "bad.params", "tool")
-
-    monkeypatch.setattr(pipeline, "convertible_levels", lambda *_args, **_kwargs: [])
-    assert pipeline.available_targets("tool", None, []) == []
-    monkeypatch.setattr(
-        pipeline,
-        "_available_rule_selections",
-        lambda *_args, **_kwargs: {},
-    )
-    with pytest.raises(ValueError, match="no level resolves"):
-        pipeline.build_mudata(pd.DataFrame(), "tool", None)
+def test_empty_level_conversion_and_persistence_are_rejected() -> None:
     with pytest.raises(ValueError, match="no levels supplied"):
-        pipeline.build_mudata_from_rules(pd.DataFrame(), {})
-
-    rule = _long_rule()
-    monkeypatch.setattr(
-        pipeline,
-        "_available_rule_selections",
-        lambda *_args, **_kwargs: {"ion": (rule, "software_version")},
-    )
-    captured: dict[str, Any] = {}
-
-    def fake_builder(
-        _df: pd.DataFrame,
-        rules: dict[str, ParseRule],
-        **kwargs: Any,
-    ) -> str:
-        captured["rules"] = rules
-        captured["kwargs"] = kwargs
-        return "built"
-
-    monkeypatch.setattr(pipeline, "build_mudata_from_rules", fake_builder)
-    assert (
-        pipeline.build_mudata(
-            pd.DataFrame({"x": [1]}),
-            "tool",
-            "1",
-        )
-        == "built"
-    )
-    assert set(captured["rules"]) == {"ion"}
-    assert "skipping levels" in capsys.readouterr().err
-
-    all_selections = dict.fromkeys(
-        pipeline.LEVELS,
-        (rule, "software_version"),
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "_available_rule_selections",
-        lambda *_args, **_kwargs: all_selections,
-    )
-    assert (
-        pipeline.build_mudata(
-            pd.DataFrame({"x": [1]}),
-            "tool",
-            "1",
-        )
-        == "built"
-    )
-    assert "skipping levels" not in capsys.readouterr().err
+        conversion_workflow.convert_selected_levels(pd.DataFrame(), {})
+    with pytest.raises(ValueError, match="no level conversions supplied"):
+        conversion_adapter.to_mudata({})
 
 
 @pytest.mark.parametrize(
     "converter",
     [
-        pipeline.convert_level,
-        pipeline.build_mudata,
-        pipeline.build_mudata_from_rules,
+        conversion_workflow.convert_selected_level,
+        conversion_workflow.convert_selected_levels,
+        conversion_workflow.convert_level_from_parameters,
+        conversion_workflow.select_rule_from_parameters,
+        conversion_workflow.select_rules_from_parameters,
     ],
 )
 def test_pipeline_diagnostics_do_not_use_callback_contract(
@@ -295,32 +243,27 @@ def test_pipeline_diagnostics_do_not_use_callback_contract(
     assert "log" not in inspect.signature(converter).parameters
 
 
-def test_build_mudata_reuses_each_resolved_rule(
+def test_available_rules_skip_unavailable_levels_without_exception_control_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = _long_rule()
     resolved: list[QuantificationLevel] = []
 
-    def select(
+    def find(
         _slug: str,
         level: QuantificationLevel,
-        _version: str | None,
+        _version: str,
         _headers: object,
-        **_kwargs: object,
-    ) -> tuple[ParseRule, pipeline.RuleSelectionMethod]:
+    ) -> pipeline.RuleLookup:
         resolved.append(level)
         if level == "ion":
-            return rule, "software_version"
-        raise pipeline.RuleUnavailableError(f"{level} is unavailable")
+            return pipeline.RuleSelection(rule, "software_version")
+        return pipeline.RuleUnavailable(f"{level} is unavailable")
 
-    monkeypatch.setattr(pipeline, "_select_rule", select)
-    monkeypatch.setattr(
-        pipeline,
-        "build_mudata_from_rules",
-        lambda *_args, **_kwargs: "built",
-    )
+    monkeypatch.setattr(pipeline, "find_rule_for_version", find)
 
-    assert pipeline.build_mudata(pd.DataFrame({"x": [1]}), "tool", "1") == "built"
+    selections = pipeline.available_rules_for_version("tool", "1", [])
+    assert list(selections) == ["ion"]
     assert resolved == list(pipeline.LEVELS)
 
 
@@ -338,8 +281,7 @@ def test_parameter_resolution_reports_missing_version_and_propagates_parse_failu
 
     missing = pipeline.resolve_parameters(source, "peaks")
 
-    assert missing.version is None
-    assert missing.version_status == "missing"
+    assert missing.version == pipeline.MissingRuleVersion()
     monkeypatch.setattr(
         pipeline,
         "parse_params",
@@ -350,156 +292,75 @@ def test_parameter_resolution_reports_missing_version_and_propagates_parse_failu
         pipeline.resolve_parameters(source, "peaks")
 
 
-def test_build_mudata_resolves_params_before_materializing_rules(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    parameters = Parameters(
-        software_version="2.6.0",
-        acquisition_method="DDA",
-    )
-    resolution = pipeline.ParameterResolution(
-        source_path=tmp_path / "params.txt",
-        parameters=parameters,
-        version="2.6.0",
-        version_status="present",
-    )
-    captured: dict[str, object] = {}
-    monkeypatch.setattr(pipeline, "resolve_parameters", lambda *_args: resolution)
-
-    def available_rule_selections(
-        _slug: str,
-        version: str | None,
-        _headers: object,
-        **kwargs: object,
-    ) -> dict[QuantificationLevel, tuple[ParseRule, pipeline.RuleSelectionMethod]]:
-        captured["version"] = version
-        captured["search_parameters"] = kwargs["search_parameters"]
-        return {"ion": (_long_rule(), "software_version")}
-
-    monkeypatch.setattr(
-        pipeline,
-        "_available_rule_selections",
-        available_rule_selections,
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "build_mudata_from_rules",
-        lambda *_args, **_kwargs: "built",
-    )
-
-    result = pipeline.build_mudata(
-        pd.DataFrame({"Intensity": [1.0]}),
-        "diann",
-        None,
-        params_path=resolution.source_path,
-    )
-
-    assert result == "built"
-    assert captured == {
-        "version": "2.6.0",
-        "search_parameters": parameters,
-    }
-
-
-def test_missing_version_resolution_attaches_parameters_without_selection_method(
+def test_parameter_resolution_persistence_is_separate_from_rule_selection(
     tmp_path: Path,
 ) -> None:
     target = ad.AnnData(np.ones((1, 1)))
     resolution = pipeline.ParameterResolution(
         source_path=tmp_path / "params.txt",
         parameters=Parameters(software_name="Synthetic"),
-        version=None,
-        version_status="missing",
+        version=pipeline.MissingRuleVersion(),
     )
 
-    pipeline.attach_parameter_resolution(
-        target,
-        resolution,
-        selection_method=None,
-        warn_missing=False,
-    )
+    conversion_adapter.write_parameter_resolution(target, resolution)
 
     metadata = target.uns["anndata_proteomics"]
     assert "rule_selection_method" not in metadata
     assert metadata["search_parameters_version_status"] == "missing"
-    stored = read_search_parameters(target)
-    assert stored is not None
+    stored = require_search_parameters(target)
     assert stored.software_name == "Synthetic"
 
 
-def test_build_mudata_attaches_parameters_and_prefixes_features(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from anndata_proteomics.converters import assemble as assemble_module
-
+def test_mudata_adapter_prefixes_features_and_preserves_selection_provenance() -> None:
     rule = _long_rule()
-    converted = ad.AnnData(
-        np.ones((1, 1)),
-        obs=pd.DataFrame(index=["S1"]),
-        var=pd.DataFrame(index=["F1"]),
+    conversion = LevelConversion(
+        level="ion",
+        selection=pipeline.RuleSelection(rule, "software_version"),
+        pieces=ConversionPieces(
+            X=np.ones((1, 1)),
+            obs=pd.DataFrame(index=["S1"]),
+            var=pd.DataFrame(index=["F1"]),
+            layers={"Intensity": np.ones((1, 1))},
+        ),
     )
-    monkeypatch.setattr(
-        assemble_module,
-        "convert",
-        lambda *_args, **_kwargs: converted.copy(),
-    )
-    parameters = SimpleNamespace(software_name="Synthetic")
-    monkeypatch.setattr(pipeline, "parse_params", lambda *_args, **_kwargs: parameters)
-    writes: list[tuple[Any, Any, str]] = []
-    monkeypatch.setattr(
-        pipeline,
-        "write_search_parameters",
-        lambda target, params, *, source_path: writes.append((target, params, source_path)),
-    )
-    result = pipeline.build_mudata_from_rules(
-        pd.DataFrame({"x": [1]}),
-        {"ion": rule},
-        params_path="params.txt",
-        software="synthetic",
-    )
+
+    result = conversion_adapter.to_mudata({"ion": conversion})
 
     assert result.mod["ion"].var_names.tolist() == ["ion:F1"]
-    assert writes[0][1:] == (parameters, "params.txt")
+    for target in (result, result.mod["ion"]):
+        assert target.uns["anndata_proteomics"]["rule_selection_method"] == "software_version"
 
 
-def test_build_mudata_records_parameter_and_selection_provenance(
+def test_parameter_resolution_can_be_persisted_to_collection_and_modalities(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from anndata_proteomics.converters import assemble as assemble_module
-
-    converted = ad.AnnData(
-        np.ones((1, 1)),
-        obs=pd.DataFrame(index=["S1"]),
-        var=pd.DataFrame(index=["F1"]),
+    rule = _long_rule()
+    conversion = LevelConversion(
+        level="ion",
+        selection=pipeline.RuleSelection(rule, "columns"),
+        pieces=ConversionPieces(
+            X=np.ones((1, 1)),
+            obs=pd.DataFrame(index=["S1"]),
+            var=pd.DataFrame(index=["F1"]),
+            layers={"Intensity": np.ones((1, 1))},
+        ),
     )
-    monkeypatch.setattr(
-        assemble_module,
-        "convert",
-        lambda *_args, **_kwargs: converted.copy(),
-    )
+    result = conversion_adapter.to_mudata({"ion": conversion})
     resolution = pipeline.ParameterResolution(
         source_path=tmp_path / "params.txt",
         parameters=Parameters(software_name="PEAKS"),
-        version=None,
-        version_status="missing",
+        version=pipeline.MissingRuleVersion(),
     )
-
-    result = pipeline.build_mudata_from_rules(
-        pd.DataFrame({"x": [1]}),
-        {"ion": _long_rule()},
-        parameter_resolution=resolution,
-        rule_selection_method="columns",
-    )
+    for target in (result, result.mod["ion"]):
+        conversion_adapter.write_parameter_resolution(target, resolution)
 
     for target in (result, result.mod["ion"]):
         metadata = target.uns["anndata_proteomics"]
         assert metadata["rule_selection_method"] == "columns"
         assert metadata["search_parameters_version_status"] == "missing"
         assert metadata["search_parameters_path"] == str(resolution.source_path)
-    assert capsys.readouterr().err.count("selected rule by columns") == 1
+        stored = require_search_parameters(target)
+        assert stored.software_name == "PEAKS"
 
 
 def test_matching_rules_excludes_nonmatches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -545,8 +406,8 @@ def test_long_converter_wrong_shape_factor_and_raw_duplicate_mode() -> None:
 
 
 def test_wide_helpers_and_converter_guards() -> None:
-    assert wide._matching_columns(["S1 Intensity"], r"^S1 Intensity$") == [
-        ("S1 Intensity", "S1 Intensity")
+    assert wide._matching_columns(["S1 Intensity"], r"^(?P<sample>S1) Intensity$") == [
+        ("S1 Intensity", "S1")
     ]
 
     rule = _wide_rule()

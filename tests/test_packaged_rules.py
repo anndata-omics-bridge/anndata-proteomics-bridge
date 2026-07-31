@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from anndata_proteomics.rules.loader import load_packaged_rule, load_rule, load_rule_document
+from anndata_proteomics.rules.loader import (
+    load_packaged_rule_for_version,
+    load_rule,
+    load_rule_document,
+)
 from anndata_proteomics.rules.registry import (
     RuleLocator,
     iter_packaged_documents,
@@ -51,7 +55,7 @@ def test_documents_use_uniform_base_and_levels_shape() -> None:
 
 
 def test_fragpipe_intensity_declares_zero_as_missing() -> None:
-    rule = load_packaged_rule("fragpipe", "ion", "22.1-build02")
+    rule = load_packaged_rule_for_version("fragpipe", "ion", "22.1-build02")
     by_name = {layer.name: layer for layer in rule.layers}
     assert by_name["Intensity"].missing_values == [0.0]
     assert by_name["Spectral_Count"].missing_values == []
@@ -59,7 +63,7 @@ def test_fragpipe_intensity_declares_zero_as_missing() -> None:
 
 
 def test_fragpipe_combines_leading_and_mapped_proteins() -> None:
-    rule = load_packaged_rule("fragpipe", "ion", "22.1-build02")
+    rule = load_packaged_rule_for_version("fragpipe", "ion", "22.1-build02")
     protein = next(column for column in rule.columns.var.compute if column.name == "Protein")
 
     assert rule.columns.var.select["Mapped_Proteins"] == "Mapped Proteins"
@@ -70,7 +74,7 @@ def test_fragpipe_combines_leading_and_mapped_proteins() -> None:
 
 
 def test_maxquant_fills_missing_proteins_from_leading_proteins() -> None:
-    rule = load_packaged_rule("maxquant", "ion", "2.6.7.0")
+    rule = load_packaged_rule_for_version("maxquant", "ion", "2.6.7.0")
     proteins = next(column for column in rule.columns.var.compute if column.name == "Proteins")
 
     assert rule.axis.duplicates.mode == "aggregate"

@@ -15,10 +15,19 @@ import numpy as np
 import pandas as pd
 
 from anndata_proteomics.converters._axis import build_axis_frame, build_index
-from anndata_proteomics.converters._pieces import ConversionPieces
+from anndata_proteomics.converters._pieces import (
+    CategoryCodes,
+    ConversionPieces,
+    DenseLayerMatrix,
+    ValidKeyMask,
+)
 from anndata_proteomics.converters.factors import encode_factor
-from anndata_proteomics.converters.numeric import coerce_numeric, warn_if_all_missing
-from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.converters.numeric import (
+    coerce_numeric,
+    coerce_regex_numeric,
+    warn_if_all_missing,
+)
+from anndata_proteomics.rules.schema import ParseRule, RegexValuePattern
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +60,14 @@ def _raise_on_duplicate_cells(df: pd.DataFrame, rule: ParseRule) -> None:
 
 
 def _build_matrix(
-    obs_codes: np.ndarray,
-    var_codes: np.ndarray,
-    values: np.ndarray,
-    key_ok: np.ndarray,
+    obs_codes: CategoryCodes,
+    var_codes: CategoryCodes,
+    values: DenseLayerMatrix,
+    key_ok: ValidKeyMask,
     n_obs: int,
     n_var: int,
     aggfunc: str,
-) -> np.ndarray:
+) -> DenseLayerMatrix:
     """Scatter ``values`` into a dense (n_obs × n_var) matrix.
 
     Mirrors ``pivot_table`` semantics: rows with a null axis key are dropped (as the
@@ -105,7 +114,7 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
     aggfunc = _aggfunc_for(rule)
     n_obs, n_var = len(obs_df), len(var_df)
 
-    layers: dict[str, np.ndarray] = {}
+    layers: dict[str, DenseLayerMatrix] = {}
     for layer in rule.layers:
         if layer.source not in df.columns:
             if not rule.layer_required(layer):
@@ -122,8 +131,14 @@ def convert_long(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
         values = df[layer.source]
         if layer.encoding_mode == "factor":
             values = encode_factor(values, layer.categories)
+        elif isinstance(layer.value_pattern, RegexValuePattern):
+            values = coerce_regex_numeric(
+                values,
+                layer.missing_values,
+                layer.value_pattern.pattern,
+            )
         else:
-            values = coerce_numeric(values, layer.missing_values, layer.value_pattern)
+            values = coerce_numeric(values, layer.missing_values)
 
         layers[layer.name] = _build_matrix(
             obs_codes,

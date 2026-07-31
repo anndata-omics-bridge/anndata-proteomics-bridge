@@ -9,11 +9,13 @@ import pytest
 
 from anndata_proteomics.fasta.annotation import (
     FastaAnnotationConfig,
+    GeneName,
+    MissingGeneName,
     count_peptides,
     extract_gene_name,
     fasta_to_dataframe,
 )
-from anndata_proteomics.fasta.config import FastaConfig
+from anndata_proteomics.fasta.config import ExplicitPatterns, FastaConfig
 from anndata_proteomics.fasta.parser import iter_fasta
 
 # Fixture string lifted from prolfquapp's get_annot_from_FASTA.R (.getSequences()).
@@ -60,11 +62,12 @@ def test_parser_reads_wrapped_sequences():
 
 def test_extract_gene_name_uniprot():
     header = "Protein YgdT OS=Escherichia coli (strain K12) OX=83333 GN=ygdT PE=4 SV=1"
-    assert extract_gene_name(header) == "ygdT"
+    assert extract_gene_name(header) == GeneName("ygdT")
 
 
-def test_extract_gene_name_non_uniprot_returns_empty():
-    assert extract_gene_name("zz_FGCZCont0000_P61626_LYSC_HUMAN blastp") == ""
+def test_extract_gene_name_non_uniprot_returns_missing_result():
+    result = extract_gene_name("zz_FGCZCont0000_P61626_LYSC_HUMAN blastp")
+    assert isinstance(result, MissingGeneName)
 
 
 def test_count_peptides_matches_prolfquapp_docstring():
@@ -111,7 +114,7 @@ def test_empty_decoy_pattern_disables_classification_without_filtering():
     df = fasta_to_dataframe(
         PROLFQUAPP_FIXTURE,
         FastaAnnotationConfig(
-            identifiers=FastaConfig.from_single_patterns("", None),
+            identifiers=FastaConfig(decoy=ExplicitPatterns(patterns=())),
         ),
     )
     assert len(df) == 11

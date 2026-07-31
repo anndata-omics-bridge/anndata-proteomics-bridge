@@ -9,7 +9,10 @@ from pydantic import ValidationError
 
 from anndata_proteomics.modifications.pipeline import _to_runtime_rule
 from anndata_proteomics.modifications.unimod_registry import (
+    UnimodMatch,
     UnimodRegistry,
+    UnrecognizedUnimodMass,
+    UnrecognizedUnimodName,
     find_by_mass,
     find_by_name,
     load_registry,
@@ -95,14 +98,16 @@ def test_find_by_name_resolves_canonical_names_and_declared_synonyms(
     name: str,
     accession: str,
 ) -> None:
-    entry = find_by_name(name)
+    result = find_by_name(name)
 
-    assert entry is not None
-    assert entry.accession == accession
+    assert isinstance(result, UnimodMatch)
+    assert result.entry.accession == accession
 
 
 def test_find_by_name_preserves_unknown_vendor_vocabulary() -> None:
-    assert find_by_name("Vendor-specific label") is None
+    result = find_by_name("Vendor-specific label")
+
+    assert result == UnrecognizedUnimodName("Vendor-specific label")
 
 
 @pytest.mark.parametrize(
@@ -121,14 +126,14 @@ def test_find_by_mass_uses_registry_monoisotopic_constants(
     mass_delta: float,
     accession: str,
 ) -> None:
-    entry = find_by_mass(mass_delta)
+    result = find_by_mass(mass_delta)
 
-    assert entry is not None
-    assert entry.accession == accession
+    assert isinstance(result, UnimodMatch)
+    assert result.entry.accession == accession
 
 
-def test_find_by_mass_returns_none_for_unknown_mass() -> None:
-    assert find_by_mass(12.345678) is None
+def test_find_by_mass_tags_unknown_mass() -> None:
+    assert find_by_mass(12.345678) == UnrecognizedUnimodMass(12.345678)
 
 
 def test_resolve_unknown_accession_raises():
@@ -201,7 +206,7 @@ def test_runtime_rule_resolves_canonical_fields_from_accession():
     assert rule.modifications.parser == "token_regex"
     runtime = _to_runtime_rule(rule.modifications)
     assert runtime.entries[0].name == "Oxidation"
-    assert runtime.entries[0].target == ["M"]
+    assert runtime.entries[0].target == ("M",)
     assert runtime.entries[0].position == "Anywhere"
     assert runtime.entries[0].mass_delta == pytest.approx(15.994915)
 

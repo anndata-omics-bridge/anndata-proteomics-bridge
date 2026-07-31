@@ -11,17 +11,27 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import pytest
+from description_support import describe_anndata as describe
 
-from anndata_proteomics.annotation.apply import annotate_obs
+from anndata_proteomics.adapters.anndata import proteobench as proteobench_adapter
+from anndata_proteomics.adapters.anndata.annotation import (
+    read_observation_frames,
+    write_sample_annotation,
+)
+from anndata_proteomics.adapters.anndata.conversion import (
+    to_anndata,
+    write_parameter_resolution,
+)
+from anndata_proteomics.adapters.anndata.proteobench import resolve_roles
 from anndata_proteomics.annotation.loader import load_annotation
-from anndata_proteomics.converters.pipeline import convert_level, param_version
+from anndata_proteomics.converters.pipeline import resolve_parameters
 from anndata_proteomics.proteobench.config import load_module_settings
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
-from anndata_proteomics.proteobench.metrics import build_scores
-from anndata_proteomics.proteobench.resolve import resolve_roles
+from anndata_proteomics.proteobench.metrics import ScoreConfig, build_scores
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.readers.summary import describe
 from anndata_proteomics.rules.schema import ParseRule
+from anndata_proteomics.workflows.conversion import convert_level_from_parameters
+from anndata_proteomics.workflows.sample_annotation import run_sample_annotation
 
 ROOT = Path(__file__).parents[1]
 FIXTURE = (
@@ -43,6 +53,16 @@ DDA_FIXTURE = (
     / "300beac4bd267751972cf484bb1cdee2fda0b3a4"
 )
 DDA_REQUIRED = (DDA_FIXTURE / "input_file.parquet", DDA_FIXTURE / "param_0..txt")
+
+
+def _annotate_from_file(target: ad.AnnData, path: Path) -> None:
+    loaded = load_annotation(path)
+    result = run_sample_annotation(
+        read_observation_frames(target),
+        loaded.table,
+        loaded.origin,
+    )
+    write_sample_annotation(target, result)
 
 
 @dataclass(frozen=True)
@@ -125,12 +145,19 @@ GOLDEN_CONVERSION_CASES = (
 )
 def test_diann_dia_astral_uses_precursor_normalised() -> None:
     target = _load_plain_converted_fixture()
-    annotate_obs(target, load_annotation(MODULE_TOML))
+    _annotate_from_file(target, MODULE_TOML)
     module = load_module_settings(MODULE_TOML)
     rule, roles = resolve_roles(target)
-    design = align_runs(target, module)
+    design = align_runs(proteobench_adapter.extract_observations(target), module)
 
-    result = compute_intermediate(target, module, roles, design, level=rule.quantification_level)
+    result = compute_intermediate(
+        proteobench_adapter.extract_quant_matrix(target),
+        target.var_names.copy(),
+        target.var[roles.proteins].copy(),
+        module,
+        design,
+        rule.quantification_level,
+    )
     expected = pd.read_csv(FIXTURE / "result_performance.csv")
 
     assert rule.axis.x_layer == "Precursor_Normalised"
@@ -139,7 +166,10 @@ def test_diann_dia_astral_uses_precursor_normalised() -> None:
         np.asarray(cast(Any, target.layers["Precursor_Normalised"])),
         equal_nan=True,
     )
-    assert describe(target)["column_mapping"]["X"] == {
+    description = describe(target)
+    column_mapping = description["column_mapping"]
+    assert isinstance(column_mapping, dict)
+    assert column_mapping["X"] == {
         "layer": "Precursor_Normalised",
         "source": "Precursor.Normalised",
         "source_kind": "column",
@@ -151,14 +181,19 @@ def test_diann_dia_astral_uses_precursor_normalised() -> None:
     scores = build_scores(
         result.legacy,
         result.intermediate_hash,
-        default_cutoff=module.general.default_cutoff_min_feature,
-        max_nr_observed=module.general.max_nr_observed,
+        ScoreConfig(
+            default_cutoff=module.general.default_cutoff_min_feature,
+            max_nr_observed=module.general.max_nr_observed,
+        ),
     )
-    assert scores["nr_feature"] == 111_679
-    assert scores["proteobench_version"] == golden["proteobench_version"]
-    assert len(scores["intermediate_hash"]) == 40
-    assert scores["results"].keys() == golden["results"].keys()
-    assert {threshold: values["nr_feature"] for threshold, values in scores["results"].items()} == {
+    stored_scores = json.loads(scores.model_dump_json())
+    assert stored_scores["nr_feature"] == 111_679
+    assert stored_scores["proteobench_version"] == golden["proteobench_version"]
+    assert len(stored_scores["intermediate_hash"]) == 40
+    assert stored_scores["results"].keys() == golden["results"].keys()
+    assert {
+        threshold: values["nr_feature"] for threshold, values in stored_scores["results"].items()
+    } == {
         "1": 111_679,
         "2": 100_607,
         "3": 94_507,
@@ -177,13 +212,16 @@ def test_diann_dda_astral_uses_ms1_normalised() -> None:
     data = read_table(DDA_FIXTURE / "input_file.parquet")
     params = DDA_FIXTURE / "param_0..txt"
 
-    target = convert_level(
-        data,
-        "diann",
-        "ion",
-        param_version(params, "diann"),
-        params_path=params,
+    resolution = resolve_parameters(params, "diann")
+    target = to_anndata(
+        convert_level_from_parameters(
+            data,
+            "diann",
+            "ion",
+            resolution,
+        )
     )
+    write_parameter_resolution(target, resolution)
 
     metadata = target.uns["anndata_proteomics"]
     rule = ParseRule.model_validate_json(metadata["rule_json"])
@@ -193,7 +231,10 @@ def test_diann_dda_astral_uses_ms1_normalised() -> None:
         np.asarray(cast(Any, target.layers["Ms1_Normalised"])),
         equal_nan=True,
     )
-    assert describe(target)["column_mapping"]["X"] == {
+    description = describe(target)
+    column_mapping = description["column_mapping"]
+    assert isinstance(column_mapping, dict)
+    assert column_mapping["X"] == {
         "layer": "Ms1_Normalised",
         "source": "Ms1.Normalised",
         "source_kind": "column",
@@ -214,22 +255,32 @@ def test_conversion_protein_completion_matches_proteobench_golden(
 
     params = case.fixture / case.params_name
     data = read_table(case.fixture / case.input_name)
-    target = convert_level(
-        data,
-        case.software,
-        "ion",
-        param_version(params, case.software),
-        params_path=params,
+    resolution = resolve_parameters(params, case.software)
+    target = to_anndata(
+        convert_level_from_parameters(
+            data,
+            case.software,
+            "ion",
+            resolution,
+        )
     )
+    write_parameter_resolution(target, resolution)
     _assert_representative_completed_protein(target, data, case)
     module_path = ROOT / "test_data_download/annotations" / case.module_name
-    annotate_obs(target, load_annotation(module_path))
+    _annotate_from_file(target, module_path)
     module = load_module_settings(module_path)
     rule, roles = resolve_roles(target)
     assert roles.proteins == case.protein_role
 
-    design = align_runs(target, module)
-    result = compute_intermediate(target, module, roles, design, level=rule.quantification_level)
+    design = align_runs(proteobench_adapter.extract_observations(target), module)
+    result = compute_intermediate(
+        proteobench_adapter.extract_quant_matrix(target),
+        target.var_names.copy(),
+        target.var[roles.proteins].copy(),
+        module,
+        design,
+        rule.quantification_level,
+    )
     expected_intermediate = pd.read_csv(case.fixture / "result_performance.csv")
     if case.wide_intensity_suffix:
         expected_intermediate = expected_intermediate.rename(
@@ -245,12 +296,16 @@ def test_conversion_protein_completion_matches_proteobench_golden(
     scores = build_scores(
         result.legacy,
         result.intermediate_hash,
-        default_cutoff=module.general.default_cutoff_min_feature,
-        max_nr_observed=module.general.max_nr_observed,
+        ScoreConfig(
+            default_cutoff=module.general.default_cutoff_min_feature,
+            max_nr_observed=module.general.max_nr_observed,
+        ),
     )
+    stored_scores = json.loads(scores.model_dump_json())
     if case.name == "fragpipe-qexactive":
         assert {
-            threshold: values["nr_feature"] for threshold, values in scores["results"].items()
+            threshold: values["nr_feature"]
+            for threshold, values in stored_scores["results"].items()
         } == {
             "1": 53_074,
             "2": 42_828,
@@ -260,14 +315,16 @@ def test_conversion_protein_completion_matches_proteobench_golden(
             "6": 15_846,
         }
     else:
-        _assert_scores_close(scores, golden)
+        _assert_scores_close(stored_scores, golden)
 
 
 def _load_plain_converted_fixture() -> ad.AnnData:
     data = read_table(FIXTURE / "input_file.parquet")
     params = FIXTURE / "param_0..txt"
-    version = param_version(params, "diann")
-    return convert_level(data, "diann", "ion", version, params_path=params)
+    resolution = resolve_parameters(params, "diann")
+    target = to_anndata(convert_level_from_parameters(data, "diann", "ion", resolution))
+    write_parameter_resolution(target, resolution)
+    return target
 
 
 def _assert_score_mapping_close(actual: dict[str, Any], expected: dict[str, Any]) -> None:

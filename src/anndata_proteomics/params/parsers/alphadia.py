@@ -33,6 +33,7 @@ _ANNOTATION_RE = re.compile(r"\s*[\[(]\s*user defined.*$", re.IGNORECASE)
 # bare `version:` key (the schema version, "1" or "None"), so the software
 # version must be anchored on the PROGRESS prefix rather than the key alone.
 _VERSION_RE = re.compile(r"PROGRESS:\s*version:\s*(?P<version>\S+)")
+_FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 _MODIFICATION_DELIMITER = ";"
 
@@ -88,21 +89,19 @@ def _nested_range(lines: list[str], start: int) -> tuple[int, int] | None:
     return None
 
 
-def _ppm(value: str | None) -> MassTolerance | None:
+def _ppm(value: str) -> MassTolerance:
     """AlphaDIA reports both search tolerances in ppm.
 
     A tolerance of ``0`` means AlphaDIA calibrated it from the data rather than
     searching at zero width, so it routes through :meth:`MassTolerance.parse` to
     reach the same automatic-calibration record other vendors produce.
     """
-    if value is None:
-        return None
-    try:
-        numeric = abs(float(value))
-    except ValueError:
-        return None
+    text = value.strip()
+    if not _FLOAT_RE.fullmatch(text):
+        raise ValueError(f"AlphaDIA ppm tolerance must be numeric, got {value!r}")
+    numeric = abs(float(text))
     if numeric == 0:
-        return MassTolerance.parse(0)
+        return MassTolerance(mode="automatic", label="Automatic calibration")
     return MassTolerance(mode="absolute", value=numeric, unit="ppm")
 
 
@@ -148,6 +147,10 @@ def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
     length = ranges.get("precursor_len")
     charge = ranges.get("precursor_charge")
     mbr = scalars.get("mbr_step_enabled")
+    precursor_tolerance = scalars.get("target_ms1_tolerance")
+    fragment_tolerance = scalars.get("target_ms2_tolerance")
+    fixed_modifications = scalars.get("fixed_modifications")
+    variable_modifications = scalars.get("variable_modifications")
 
     return Parameters.model_validate(
         {
@@ -159,14 +162,22 @@ def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
             "ident_fdr_psm": fdr,
             "ident_fdr_protein": fdr,
             "enable_match_between_runs": mbr.strip() == "True" if mbr is not None else None,
-            "precursor_mass_tolerance": _ppm(scalars.get("target_ms1_tolerance")),
-            "fragment_mass_tolerance": _ppm(scalars.get("target_ms2_tolerance")),
+            "precursor_mass_tolerance": (
+                None if precursor_tolerance is None else _ppm(precursor_tolerance)
+            ),
+            "fragment_mass_tolerance": (
+                None if fragment_tolerance is None else _ppm(fragment_tolerance)
+            ),
             "enzyme": scalars.get("enzyme"),
             "allowed_miscleavages": scalars.get("missed_cleavages"),
             "min_peptide_length": length[0] if length else None,
             "max_peptide_length": length[1] if length else None,
-            "fixed_mods": _homogenize_mods(scalars.get("fixed_modifications", "")),
-            "variable_mods": _homogenize_mods(scalars.get("variable_modifications", "")),
+            "fixed_mods": (
+                [] if fixed_modifications is None else _homogenize_mods(fixed_modifications)
+            ),
+            "variable_mods": (
+                [] if variable_modifications is None else _homogenize_mods(variable_modifications)
+            ),
             "max_mods": scalars.get("max_var_mod_num"),
             "min_precursor_charge": charge[0] if charge else None,
             "max_precursor_charge": charge[1] if charge else None,

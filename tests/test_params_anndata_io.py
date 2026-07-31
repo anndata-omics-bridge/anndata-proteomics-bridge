@@ -10,9 +10,9 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from anndata_proteomics.params.anndata_io import (
-    get_search_parameters_path,
-    read_search_parameters,
+from anndata_proteomics.adapters.anndata.params import (
+    has_search_parameters,
+    require_search_parameters,
     write_search_parameters,
 )
 from anndata_proteomics.params.model import MassTolerance, Parameters, Probability
@@ -26,10 +26,11 @@ def _empty_adata() -> ad.AnnData:
     )
 
 
-def test_read_none_when_no_uns_entry():
+def test_require_rejects_missing_search_parameters() -> None:
     adata = _empty_adata()
-    assert read_search_parameters(adata) is None
-    assert get_search_parameters_path(adata) is None
+    assert not has_search_parameters(adata)
+    with pytest.raises(ValueError, match="no stored search parameters"):
+        require_search_parameters(adata)
 
 
 def test_write_then_read_roundtrip():
@@ -43,15 +44,15 @@ def test_write_then_read_roundtrip():
             "fixed_mods": "{'C': 57.02146}",
         }
     )
-    write_search_parameters(adata, params, source_path="/tmp/fake.json")
+    write_search_parameters(adata, params)
 
-    recovered = read_search_parameters(adata)
+    assert has_search_parameters(adata)
+    recovered = require_search_parameters(adata)
     assert isinstance(recovered, Parameters)
     assert recovered.software_name == "Sage"
     assert recovered.software_version == "0.14.6"
     assert recovered.fixed_mods[0].source == "{'C': 57.02146}"
     assert recovered.to_series()["fixed_mods"] == "{'C': 57.02146}"
-    assert get_search_parameters_path(adata) == "/tmp/fake.json"
 
 
 def test_write_then_read_typed_value_roundtrip():
@@ -63,9 +64,9 @@ def test_write_then_read_typed_value_roundtrip():
         precursor_mass_tolerance=MassTolerance(mode="absolute", value=15.0, unit="ppm"),
         fragment_mass_tolerance=MassTolerance(mode="absolute", value=20.0, unit="ppm"),
     )
-    write_search_parameters(adata, params, source_path="/tmp/diann.log.txt")
+    write_search_parameters(adata, params)
 
-    recovered = read_search_parameters(adata)
+    recovered = require_search_parameters(adata)
 
     assert isinstance(recovered, Parameters)
     assert recovered.ident_fdr_psm == Probability(value=0.01)
@@ -75,7 +76,6 @@ def test_write_then_read_typed_value_roundtrip():
     assert recovered.fragment_mass_tolerance == MassTolerance(
         mode="absolute", value=20.0, unit="ppm"
     )
-    assert get_search_parameters_path(adata) == "/tmp/diann.log.txt"
 
 
 def test_write_serializes_every_parameter_field_and_preserves_null() -> None:
@@ -95,7 +95,7 @@ def test_read_rejects_extra_fields():
         "search_parameters": '{"software_name": "Sage", "vendor_specific": 42}',
     }
     with pytest.raises(ValidationError):
-        read_search_parameters(adata)
+        require_search_parameters(adata)
 
 
 def test_read_validates_against_current_schema():
@@ -103,7 +103,7 @@ def test_read_validates_against_current_schema():
     adata.uns["anndata_proteomics"] = {
         "search_parameters": '{"software_name": "Sage"}',
     }
-    recovered = read_search_parameters(adata)
+    recovered = require_search_parameters(adata)
     assert isinstance(recovered, Parameters)
     assert recovered.software_name == "Sage"
     assert recovered.acquisition_method == "unknown"
@@ -115,4 +115,4 @@ def test_read_raises_on_corrupt_payload():
         "search_parameters": "not-valid-json",
     }
     with pytest.raises(json.JSONDecodeError):
-        read_search_parameters(adata)
+        require_search_parameters(adata)

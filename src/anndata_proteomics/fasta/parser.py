@@ -41,18 +41,20 @@ def iter_fasta(source: FastaSource) -> Iterator[FastaRecord]:
 
 
 def _iter_lines(lines: Iterable[str]) -> Iterator[FastaRecord]:
-    header: str | None = None
+    header = ""
+    has_header = False
     seq_parts: list[str] = []
     for raw in lines:
         line = raw.rstrip("\r\n")
         if not line:
             continue
         if line.startswith(">"):
-            if header is not None:
+            if has_header:
                 yield FastaRecord(header=header, sequence="".join(seq_parts))
             header = line[1:]
+            has_header = True
             seq_parts = []
         else:
             seq_parts.append(line.strip())
-    if header is not None:
+    if has_header:
         yield FastaRecord(header=header, sequence="".join(seq_parts))

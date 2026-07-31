@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from anndata_proteomics.rules.registry import find_rule
+from anndata_proteomics.rules.registry import find_rule_for_version
 from anndata_proteomics.rules.validate import (
     validate_all_packaged,
     validate_file,
@@ -12,7 +12,7 @@ from anndata_proteomics.rules.validate import (
 
 
 def test_validate_file_happy() -> None:
-    r = validate_file(find_rule("diann", "ion", "2.0.0").path)
+    r = validate_file(find_rule_for_version("diann", "ion", "2.0.0").path)
     assert r.ok is True
     assert r.error is None
     assert r.document is not None

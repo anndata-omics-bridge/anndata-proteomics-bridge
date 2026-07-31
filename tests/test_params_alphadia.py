@@ -94,6 +94,18 @@ def test_a_zero_tolerance_records_automatic_calibration(tmp_path: Path) -> None:
     assert params.precursor_mass_tolerance.value is None
 
 
+def test_a_malformed_tolerance_is_not_reclassified_as_missing(tmp_path: Path) -> None:
+    log = tmp_path / "log.txt"
+    log.write_text(
+        "0:00:00.0 PROGRESS: version: 1.12.1\n"
+        "0:00:00.1 INFO: │   ├──target_ms1_tolerance: not-a-number\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="must be numeric"):
+        extract_params(log)
+
+
 def test_a_non_alphadia_file_raises_params_error(tmp_path: Path) -> None:
     other = tmp_path / "not-alphadia.txt"
     other.write_text("some other vendor's parameter file\nkey: value\n", encoding="utf-8")

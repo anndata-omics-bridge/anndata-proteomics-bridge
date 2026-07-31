@@ -16,10 +16,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conversion_support import convert_parameterized_level_to_anndata
 
-from anndata_proteomics.converters.pipeline import convert_level, resolve_parameters
+from anndata_proteomics.converters.pipeline import PresentRuleVersion, resolve_parameters
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.rules.loader import resolve_rule_locator
+from anndata_proteomics.rules.loader import resolve_rule_locator_for_version
+from anndata_proteomics.rules.registry import RuleLocator
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT = REPO_ROOT / "test_data_download" / "json_dir"
@@ -133,19 +135,17 @@ def test_cached_alphadia_inputs_convert_with_the_annotated_run_axis(case: AlphaD
         pytest.skip(f"cached ProteoBench input is absent: {case.input_path}")
 
     resolution = resolve_parameters(case.params_path, "alphadia")
-    assert resolution.version == case.expected_version
+    assert resolution.version == PresentRuleVersion(case.expected_version)
 
-    locator = resolve_rule_locator("alphadia", "ion", resolution.version)
-    assert locator is not None
+    locator = resolve_rule_locator_for_version("alphadia", "ion", case.expected_version)
+    assert isinstance(locator, RuleLocator)
     assert locator.path.parent.name == case.expected_document
 
-    result = convert_level(
+    result = convert_parameterized_level_to_anndata(
         read_table(case.input_path),
         "alphadia",
         "ion",
-        resolution.version,
-        params_path=case.params_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
     assert set(result.obs_names) == _expected_runs(case.module)
@@ -181,13 +181,11 @@ def test_wide_shape_collapses_verbatim_repeated_features(case: AlphaDiaCase) -> 
     repeated_rows_are_exact_copies = frame[keys.duplicated(keep=False)].duplicated(keep=False).all()
 
     resolution = resolve_parameters(case.params_path, "alphadia")
-    result = convert_level(
+    result = convert_parameterized_level_to_anndata(
         frame,
         "alphadia",
         "ion",
-        resolution.version,
-        params_path=case.params_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
     assert result.n_vars == expected_features
@@ -204,13 +202,11 @@ def test_peptidoforms_of_one_sequence_stay_distinct_features() -> None:
         pytest.skip(f"cached ProteoBench input is absent: {case.input_path}")
 
     resolution = resolve_parameters(case.params_path, "alphadia")
-    result = convert_level(
+    result = convert_parameterized_level_to_anndata(
         read_table(case.input_path),
         "alphadia",
         "ion",
-        resolution.version,
-        params_path=case.params_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
     var = result.var

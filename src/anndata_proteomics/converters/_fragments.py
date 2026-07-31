@@ -35,10 +35,8 @@ def _split_packed(value: object, delimiter: str) -> list[str]:
     return [token.strip() for token in text.split(delimiter)]
 
 
-def _fragment_positions(tokens: object) -> list[int]:
+def _fragment_positions(tokens: list[str]) -> list[int]:
     """Return positions for the token list produced by ``_split_packed``."""
-    if not isinstance(tokens, list):
-        raise TypeError(f"expected packed fragment tokens, got {type(tokens).__name__}")
     return list(range(len(tokens)))
 
 

@@ -12,10 +12,10 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from conversion_support import convert_to_anndata
 from pydantic import ValidationError
 from test_rule_models import LONG_EXAMPLE, WIDE_EXAMPLE
 
-from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.rules.schema import ParseRule
 
@@ -43,7 +43,7 @@ def test_optional_select_column_is_captured_when_present() -> None:
     rule = ParseRule.model_validate(_optional_rule(Lib_Q_Value="Lib.Q.Value"))
     frame = _INPUT.assign(**{"Lib.Q.Value": [0.001, 0.002, 0.001, 0.002]})
 
-    adata = convert(frame, rule)
+    adata = convert_to_anndata(frame, rule)
 
     assert "Lib_Q_Value" in adata.var.columns
 
@@ -52,7 +52,7 @@ def test_optional_select_column_is_skipped_when_absent() -> None:
     """The same rule converts an export that omits the optional column."""
     rule = ParseRule.model_validate(_optional_rule(Lib_Q_Value="Lib.Q.Value"))
 
-    adata = convert(_INPUT, rule)
+    adata = convert_to_anndata(_INPUT, rule)
 
     assert "Lib_Q_Value" not in adata.var.columns
     assert adata.shape == (2, 2)
@@ -68,7 +68,7 @@ def test_required_select_source_still_raises_when_absent() -> None:
     rule = ParseRule.model_validate(_optional_rule(Lib_Q_Value="Lib.Q.Value"))
 
     with pytest.raises(ValueError, match="cannot select column 'Genes'"):
-        convert(_INPUT.drop(columns=["Genes"]), rule)
+        convert_to_anndata(_INPUT.drop(columns=["Genes"]), rule)
 
 
 def test_coalesce_falls_through_a_skipped_optional_source() -> None:
@@ -83,7 +83,7 @@ def test_coalesce_falls_through_a_skipped_optional_source() -> None:
     )
     rule = ParseRule.model_validate(document)
 
-    adata = convert(_INPUT, rule)
+    adata = convert_to_anndata(_INPUT, rule)
 
     assert list(adata.var["Proteins"]) == ["P1", "P2"]
 
@@ -104,7 +104,7 @@ def test_coalesce_with_every_source_skipped_raises() -> None:
     rule = ParseRule.model_validate(document)
 
     with pytest.raises(ValueError, match="every source column is an optional_select"):
-        convert(_INPUT, rule)
+        convert_to_anndata(_INPUT, rule)
 
 
 def test_name_in_both_select_and_optional_select_is_rejected() -> None:

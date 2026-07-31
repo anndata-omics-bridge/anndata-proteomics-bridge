@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import overload
 
 import numpy as np
 import pandas as pd
-from anndata import AnnData
+from numpy.typing import NDArray
+from pydantic import BaseModel, ConfigDict
 
-from anndata_proteomics._matrix_types import QuantMatrix, is_sparse_matrix
 from anndata_proteomics.proteobench.config import ExpectedRatio, ModuleSettings
+from anndata_proteomics.proteobench.contracts import (
+    FloatArray,
+    FloatDType,
+    QuantMatrix,
+)
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
     render_proteobench_features,
 )
-from anndata_proteomics.proteobench.resolve import ResolvedRoles
+from anndata_proteomics.rules.schema import QuantificationLevel
 
 _CHUNK_SIZE = 50_000
 _CONDITION_METRICS = (
@@ -35,9 +40,30 @@ _LEGACY_FEATURE_COLUMN = {"ion": "precursor ion", "peptidoform": "peptidoform"}
 class RunDesign:
     """Module sample design aligned to the target observation axis."""
 
-    conditions: np.ndarray
+    conditions: NDArray[np.str_]
     raw_files: tuple[str, ...]
     sample_names: tuple[str, ...]
+
+
+class _ResultModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class AccessionMappingProvenance(_ResultModel):
+    """Use of the bundled ProteoBench accession mapper."""
+
+    asset: str
+    sha256: str
+    entries: int
+    matched_token_occurrences: int
+    unmatched_token_occurrences: int
+
+
+class ProteinMappingProvenance(_ResultModel):
+    """Protein normalization and species-mapping provenance."""
+
+    species_mapper: dict[str, str]
+    accession_mapper: AccessionMappingProvenance
 
 
 @dataclass(frozen=True)
@@ -47,71 +73,76 @@ class IntermediateResult:
     varm: pd.DataFrame
     legacy: pd.DataFrame
     intermediate_hash: str
-    protein_mapping: dict[str, Any]
+    protein_mapping: ProteinMappingProvenance
 
 
 @dataclass(frozen=True)
 class _SpeciesStatistics:
     """Species-dependent statistics shared by both output identities."""
 
-    species: np.ndarray
-    expected: np.ndarray
-    epsilon: np.ndarray
-    empirical_median: np.ndarray
-    empirical_mean: np.ndarray
+    species: NDArray[np.object_]
+    expected: NDArray[np.float64]
+    epsilon: NDArray[np.float64]
+    empirical_median: NDArray[np.float64]
+    empirical_mean: NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class _ConditionStatistics:
+    """Per-feature values and valid-observation counts for one condition."""
+
+    values: dict[str, NDArray[np.float64]]
+    count: NDArray[np.int64]
 
 
 @dataclass(frozen=True)
 class _LegacyComputation:
-    target: AnnData
-    feature_ids: np.ndarray
-    species_flags: dict[str, np.ndarray]
-    contaminants: np.ndarray
-    decoys: np.ndarray
+    matrix: QuantMatrix
+    feature_ids: NDArray[np.str_]
+    species_flags: dict[str, NDArray[np.bool_]]
+    contaminants: NDArray[np.bool_]
+    decoys: NDArray[np.bool_]
     module_settings: ModuleSettings
     design: RunDesign
-    source_dtype: type[np.floating[Any]]
-    conditions: list[str]
-    level: str
+    source_dtype: FloatDType
+    conditions: tuple[str, ...]
+    level: QuantificationLevel
 
 
 @dataclass(frozen=True)
 class _LegacyAssembly:
     derived: pd.DataFrame
     matrix: QuantMatrix
-    feature_ids: np.ndarray
-    pre_unique: np.ndarray
-    included: np.ndarray
+    feature_ids: NDArray[np.str_]
+    pre_unique: NDArray[np.bool_]
+    included: NDArray[np.bool_]
     design: RunDesign
-    level: str
-    source_dtype: type[np.floating[Any]]
-    species: list[str]
-    conditions: list[str]
+    level: QuantificationLevel
+    source_dtype: FloatDType
+    species: tuple[str, ...]
+    conditions: tuple[str, ...]
 
 
 def align_runs(
-    target: AnnData,
+    observations: pd.DataFrame,
     module_settings: ModuleSettings,
 ) -> RunDesign:
     """Validate and align the sample design added by ``apb annotate``."""
-    obs = target.obs
-    if not isinstance(obs, pd.DataFrame):
-        raise TypeError("ProteoBench scoring requires an in-memory obs DataFrame")
     required = ("sample_name", "condition")
-    missing = [column for column in required if column not in obs.columns]
+    missing = [column for column in required if column not in observations.columns]
     if missing:
         raise ValueError(
             "ProteoBench scoring requires prior sample annotation; "
             f"missing obs columns: {missing}. Run 'apb annotate' first."
         )
-    if obs.loc[:, list(required)].isna().any(axis=None):
+    if observations.loc[:, list(required)].isna().any(axis=None):
         raise ValueError(
             "ProteoBench scoring requires complete sample annotation; "
             "obs['sample_name'] and obs['condition'] must not contain missing values"
         )
 
-    observed_names = obs["sample_name"].astype(str).tolist()
-    observed_conditions = obs["condition"].astype(str).tolist()
+    observed_names = observations["sample_name"].astype(str).tolist()
+    observed_conditions = observations["condition"].astype(str).tolist()
     by_sample_name = {sample.sample_name: sample for sample in module_settings.samples}
 
     matched = []
@@ -141,30 +172,35 @@ def align_runs(
             f"missing sample_name values={missing}, extra={extra}"
         )
 
-    conditions = np.asarray(observed_conditions, dtype=object)
+    conditions = np.asarray(observed_conditions, dtype=np.str_)
     sample_names = tuple(observed_names)
     raw_files = tuple(sample.raw_file for sample in matched)
     return RunDesign(conditions=conditions, raw_files=raw_files, sample_names=sample_names)
 
 
 def compute_intermediate(
-    target: AnnData,
+    matrix: QuantMatrix,
+    feature_ids: pd.Index,
+    reported_proteins: pd.Series,
     module_settings: ModuleSettings,
-    roles: ResolvedRoles,
     design: RunDesign,
-    *,
-    level: str,
+    level: QuantificationLevel,
 ) -> IntermediateResult:
     """Compute feature statistics and assemble the legacy ProteoBench table."""
-    if not target.var_names.is_unique:
+    if not feature_ids.is_unique:
         raise ValueError("ProteoBench scoring requires unique var_names")
+    if matrix.ndim != 2:
+        raise ValueError("ProteoBench scoring requires a two-dimensional quantification matrix")
+    if matrix.shape[0] != len(design.conditions):
+        raise ValueError("quantification rows and aligned sample design have different lengths")
+    if matrix.shape[1] != len(feature_ids):
+        raise ValueError("quantification columns and feature identifiers have different lengths")
+    if len(reported_proteins) != len(feature_ids):
+        raise ValueError("reported proteins and feature identifiers have different lengths")
 
-    # The feature axis is `var_names` at every level (the rule's joined `axis.var_keys`), and the
-    # uniqueness check above is therefore also the feature-identifier uniqueness check.
-    features = target.var_names.to_series()
-
-    reported_proteins = target.var[roles.proteins].astype("string").fillna("")
-    mapping_result = map_reported_proteins(reported_proteins)
+    features = feature_ids.to_series()
+    normalized_proteins = reported_proteins.astype("string")
+    mapping_result = map_reported_proteins(normalized_proteins)
     proteins = mapping_result.proteins
     compatibility_features = render_proteobench_features(features)
     compatibility_feature_ids = compatibility_features.to_numpy(dtype=str)
@@ -174,11 +210,10 @@ def compute_intermediate(
     }
     unique = np.sum(np.vstack(list(species_flags.values())), axis=0, dtype=np.int64)
     contaminants = _contaminants(proteins)
-    decoys = np.zeros(target.n_vars, dtype=bool)
+    decoys = np.zeros(len(feature_ids), dtype=np.bool_)
 
-    matrix = _require_quant_matrix(target)
     source_dtype = np.float32 if _is_float32_backed(matrix) else np.float64
-    conditions = sorted(set(design.conditions.tolist()))
+    conditions = tuple(sorted(set(design.conditions.tolist())))
     stats, nr_observed = _derive_condition_statistics(
         matrix,
         design,
@@ -197,7 +232,7 @@ def compute_intermediate(
         module_settings.species_expected_ratio,
     )
     varm = _assemble_feature_statistics(
-        target.var_names.copy(),
+        feature_ids.copy(),
         stats,
         nr_observed,
         species_flags,
@@ -209,7 +244,7 @@ def compute_intermediate(
 
     legacy = _compute_legacy_intermediate(
         _LegacyComputation(
-            target=target,
+            matrix=matrix,
             feature_ids=compatibility_feature_ids,
             species_flags=species_flags,
             contaminants=contaminants,
@@ -226,16 +261,16 @@ def compute_intermediate(
         varm=varm,
         legacy=legacy,
         intermediate_hash=digest,
-        protein_mapping={
-            "species_mapper": dict(module_settings.species_mapper),
-            "accession_mapper": {
-                "asset": "ProteoBench mapper.csv",
-                "sha256": mapping_result.mapper_sha256,
-                "entries": mapping_result.mapper_entries,
-                "matched_token_occurrences": mapping_result.matched_token_occurrences,
-                "unmatched_token_occurrences": mapping_result.unmatched_token_occurrences,
-            },
-        },
+        protein_mapping=ProteinMappingProvenance(
+            species_mapper=dict(module_settings.species_mapper),
+            accession_mapper=AccessionMappingProvenance(
+                asset="ProteoBench mapper.csv",
+                sha256=mapping_result.mapper_sha256,
+                entries=mapping_result.mapper_entries,
+                matched_token_occurrences=mapping_result.matched_token_occurrences,
+                unmatched_token_occurrences=mapping_result.unmatched_token_occurrences,
+            ),
+        ),
     )
 
 
@@ -253,14 +288,14 @@ def _compute_legacy_intermediate(inputs: _LegacyComputation) -> pd.DataFrame:
         & (canonical_unique <= inputs.module_settings.general.min_count_multispec)
     )
     matrix = _collapse_positive_matrix(
-        _require_quant_matrix(inputs.target),
+        inputs.matrix,
         group_codes,
         len(unique_features),
         eligible,
         inputs.source_dtype,
     )
 
-    grouped_flags: dict[str, np.ndarray] = {}
+    grouped_flags: dict[str, NDArray[np.bool_]] = {}
     for species_name, flags in inputs.species_flags.items():
         grouped = np.zeros(len(unique_features), dtype=bool)
         np.logical_or.at(grouped, group_codes[eligible], flags[eligible])
@@ -302,7 +337,7 @@ def _compute_legacy_intermediate(inputs: _LegacyComputation) -> pd.DataFrame:
             design=inputs.design,
             level=inputs.level,
             source_dtype=inputs.source_dtype,
-            species=list(inputs.module_settings.species_expected_ratio),
+            species=tuple(inputs.module_settings.species_expected_ratio),
             conditions=inputs.conditions,
         )
     )
@@ -359,17 +394,17 @@ def _assemble_legacy_intermediate(inputs: _LegacyAssembly) -> pd.DataFrame:
 def _derive_condition_statistics(
     matrix: QuantMatrix,
     design: RunDesign,
-    conditions: list[str],
-    source_dtype: type[np.floating[Any]],
-) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    conditions: tuple[str, ...],
+    source_dtype: FloatDType,
+) -> tuple[dict[str, NDArray[np.float64]], NDArray[np.int64]]:
     """Derive per-condition statistics without imposing a feature identity."""
-    statistics: dict[str, np.ndarray] = {}
-    condition_counts: dict[str, np.ndarray] = {}
+    statistics: dict[str, NDArray[np.float64]] = {}
+    condition_counts: dict[str, NDArray[np.int64]] = {}
     for condition in conditions:
         rows = np.flatnonzero(design.conditions == condition)
-        values = _condition_statistics(matrix, rows, source_dtype)
-        condition_counts[condition] = values.pop("count")
-        for metric, metric_values in values.items():
+        condition_statistics = _condition_statistics(matrix, rows, source_dtype)
+        condition_counts[condition] = condition_statistics.count
+        for metric, metric_values in condition_statistics.values.items():
             statistics[f"{metric}_{condition}"] = metric_values
 
     nr_observed = np.zeros(matrix.shape[1], dtype=np.int64)
@@ -382,13 +417,16 @@ def _derive_condition_statistics(
 
 
 def _derive_species_statistics(
-    fold_change: np.ndarray,
-    species_flags: dict[str, np.ndarray],
-    included: np.ndarray,
+    fold_change: NDArray[np.float64],
+    species_flags: dict[str, NDArray[np.bool_]],
+    included: NDArray[np.bool_],
     expected_ratios: dict[str, ExpectedRatio],
 ) -> _SpeciesStatistics:
     """Derive species statistics after the caller applies its identity-specific mask."""
-    species_values = np.full(len(fold_change), "", dtype=object)
+    # Species inclusion is controlled exclusively by the explicit boolean ``included``
+    # mask. ``pd.NA`` is the table's missing-value encoding for excluded features; it is
+    # serialized as an empty CSV cell only at the legacy compatibility boundary.
+    species_values = np.full(len(fold_change), pd.NA, dtype=object)
     expected = np.full(len(fold_change), np.nan, dtype=np.float64)
     for species_name, ratio in expected_ratios.items():
         selected = included & species_flags[species_name]
@@ -407,12 +445,12 @@ def _derive_species_statistics(
 
 def _assemble_feature_statistics(
     index: pd.Index,
-    condition_statistics: dict[str, np.ndarray],
-    nr_observed: np.ndarray,
-    species_flags: dict[str, np.ndarray],
-    unique: np.ndarray,
+    condition_statistics: dict[str, NDArray[np.float64]],
+    nr_observed: NDArray[np.int64],
+    species_flags: dict[str, NDArray[np.bool_]],
+    unique: NDArray[np.int64],
     species_statistics: _SpeciesStatistics,
-    conditions: list[str],
+    conditions: tuple[str, ...],
 ) -> pd.DataFrame:
     """Assemble statistics common to canonical and compatibility feature identities."""
     frame = pd.DataFrame(index=index)
@@ -436,25 +474,18 @@ def _assemble_feature_statistics(
     return frame
 
 
-def _require_quant_matrix(target: AnnData) -> QuantMatrix:
-    """Return ``X`` as in-memory values, rejecting an absent or backed matrix."""
-    matrix = target.X
-    if matrix is None:
-        raise ValueError("ProteoBench scoring requires quantitative values in X")
-    if not isinstance(matrix, np.ndarray) and not is_sparse_matrix(matrix):
-        raise TypeError("ProteoBench scoring requires an in-memory X; load the object first")
-    return matrix
-
-
 def _collapse_positive_matrix(
     matrix: QuantMatrix,
-    group_codes: np.ndarray,
+    group_codes: NDArray[np.intp],
     n_groups: int,
-    eligible: np.ndarray,
-    dtype: type[np.floating[Any]],
-) -> np.ndarray:
+    eligible: NDArray[np.bool_],
+    dtype: FloatDType,
+) -> FloatArray:
     """Sum positive canonical-feature values into ProteoBench feature groups."""
-    collapsed = np.full((matrix.shape[0], n_groups), np.nan, dtype=dtype)
+    if dtype is np.float32:
+        collapsed = np.full((matrix.shape[0], n_groups), np.nan, dtype=np.float32)
+    else:
+        collapsed = np.full((matrix.shape[0], n_groups), np.nan, dtype=np.float64)
     for row in range(matrix.shape[0]):
         values = _matrix_row(matrix, row, dtype)
         valid = eligible & np.isfinite(values) & (values > 0)
@@ -470,18 +501,18 @@ def _collapse_positive_matrix(
 
 def _condition_statistics(
     matrix: QuantMatrix,
-    rows: np.ndarray,
-    source_dtype: type[np.floating[Any]],
-) -> dict[str, np.ndarray]:
+    rows: NDArray[np.intp],
+    source_dtype: FloatDType,
+) -> _ConditionStatistics:
     n_vars = matrix.shape[1]
-    result = {
+    result: dict[str, NDArray[np.float64]] = {
         "log_Intensity_mean": np.full(n_vars, np.nan, dtype=np.float64),
         "log_Intensity_std": np.full(n_vars, np.nan, dtype=np.float64),
         "Intensity_mean": np.full(n_vars, np.nan, dtype=np.float64),
         "Intensity_std": np.full(n_vars, np.nan, dtype=np.float64),
         "CV": np.full(n_vars, np.nan, dtype=np.float64),
-        "count": np.zeros(n_vars, dtype=np.int64),
     }
+    counts = np.zeros(n_vars, dtype=np.int64)
     for start in range(0, n_vars, _CHUNK_SIZE):
         stop = min(start + _CHUNK_SIZE, n_vars)
         block = _matrix_block(matrix, rows, start, stop, source_dtype)
@@ -503,15 +534,15 @@ def _condition_statistics(
         result["log_Intensity_mean"][section] = log_mean_native.astype(np.float64)
         result["log_Intensity_std"][section] = log_std
         result["CV"][section] = cv
-        result["count"][section] = count
-    return result
+        counts[section] = count
+    return _ConditionStatistics(values=result, count=counts)
 
 
 def _mean_and_sample_std(
-    values: np.ndarray,
-    valid: np.ndarray,
-    count: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    values: FloatArray,
+    valid: NDArray[np.bool_],
+    count: NDArray[np.int64],
+) -> tuple[FloatArray, NDArray[np.float64]]:
     native_sum = np.sum(np.where(valid, values, 0), axis=0, dtype=values.dtype)
     mean = np.divide(
         native_sum,
@@ -533,10 +564,10 @@ def _mean_and_sample_std(
 
 
 def _empirical_centers(
-    fold_change: np.ndarray,
-    species: np.ndarray,
-    included: np.ndarray,
-) -> dict[str, np.ndarray]:
+    fold_change: NDArray[np.float64],
+    species: NDArray[np.object_],
+    included: NDArray[np.bool_],
+) -> dict[str, NDArray[np.float64]]:
     median = np.full(len(fold_change), np.nan, dtype=np.float64)
     mean = np.full(len(fold_change), np.nan, dtype=np.float64)
     frame = pd.DataFrame(
@@ -549,12 +580,12 @@ def _empirical_centers(
     return {"median": median, "mean": mean}
 
 
-def _contaminants(proteins: pd.Series) -> np.ndarray:
+def _contaminants(proteins: pd.Series) -> NDArray[np.bool_]:
     return proteins.str.contains("Cont_", regex=False, na=False).to_numpy(dtype=bool)
 
 
 def _is_float32_backed(matrix: QuantMatrix) -> bool:
-    values = matrix.data if is_sparse_matrix(matrix) else np.asarray(matrix).ravel()
+    values = np.asarray(matrix).ravel() if isinstance(matrix, np.ndarray) else matrix.data
     finite = np.asarray(values)[np.isfinite(values)]
     if not finite.size:
         return False
@@ -562,24 +593,41 @@ def _is_float32_backed(matrix: QuantMatrix) -> bool:
 
 
 def _matrix_block(
-    matrix: Any,  # SciPy slicing cannot be described structurally; see QuantMatrix.
-    rows: np.ndarray,
+    matrix: QuantMatrix,
+    rows: NDArray[np.intp],
     start: int,
     stop: int,
-    dtype: type[np.floating[Any]],
-) -> np.ndarray:
-    block = matrix[rows, start:stop]
-    if is_sparse_matrix(block):
-        block = block.toarray()
-    return np.asarray(block, dtype=dtype)
+    dtype: FloatDType,
+) -> FloatArray:
+    if isinstance(matrix, np.ndarray):
+        block = matrix[rows, start:stop]
+    else:
+        block = matrix[rows, start:stop].toarray()
+    return _as_float_array(block, dtype)
 
 
 def _matrix_row(
-    matrix: Any,  # SciPy slicing cannot be described structurally; see QuantMatrix.
+    matrix: QuantMatrix,
     row: int,
-    dtype: type[np.floating[Any]],
-) -> np.ndarray:
-    values = matrix[row, :]
-    if is_sparse_matrix(values):
-        values = values.toarray()
-    return np.asarray(values, dtype=dtype).reshape(-1).copy()
+    dtype: FloatDType,
+) -> FloatArray:
+    if isinstance(matrix, np.ndarray):
+        values = matrix[row, :]
+    else:
+        values = matrix[row, :].toarray()
+    return _as_float_array(values, dtype).reshape(-1).copy()
+
+
+@overload
+def _as_float_array(values: FloatArray, dtype: type[np.float32]) -> NDArray[np.float32]: ...
+
+
+@overload
+def _as_float_array(values: FloatArray, dtype: type[np.float64]) -> NDArray[np.float64]: ...
+
+
+def _as_float_array(values: FloatArray, dtype: FloatDType) -> FloatArray:
+    """Materialize values in one of the two supported computation precisions."""
+    if dtype is np.float32:
+        return np.asarray(values, dtype=np.float32)
+    return np.asarray(values, dtype=np.float64)

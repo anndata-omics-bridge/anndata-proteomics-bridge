@@ -2,50 +2,100 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from scipy.stats import rankdata
 
 PROTEOBENCH_COMPATIBILITY_VERSION = "0.17.0"
 PROTEOBENCH_SOURCE_REVISION = "fc95e712ca0466485814d3895087a048cfc0d2b0"
 
-_TOP_LEVEL_METRICS = (
-    "median_abs_epsilon_global",
-    "mean_abs_epsilon_global",
-    "median_abs_epsilon_eq_species",
-    "mean_abs_epsilon_eq_species",
-    "median_abs_epsilon_precision_global",
-    "mean_abs_epsilon_precision_global",
-    "median_abs_epsilon_precision_eq_species",
-    "mean_abs_epsilon_precision_eq_species",
-    "nr_feature",
-)
+type ScoreMetric = int | float
+type MetricAggregate = Callable[[pd.Series], float]
+
+
+class _ScoreModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, ser_json_inf_nan="null")
+
+
+class ScoreConfig(_ScoreModel):
+    """Cutoff range used to build one ProteoBench score document."""
+
+    default_cutoff: int = Field(default=3, ge=1)
+    max_nr_observed: int = Field(default=6, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_cutoff(self) -> ScoreConfig:
+        if self.default_cutoff > self.max_nr_observed:
+            raise ValueError("default_cutoff must not exceed max_nr_observed")
+        return self
+
+
+class CutoffScores(RootModel[dict[str, ScoreMetric]]):
+    """All compatible score metrics calculated at one observation cutoff."""
+
+    model_config = ConfigDict(frozen=True, ser_json_inf_nan="null")
+
+
+class ProteoBenchScores(_ScoreModel):
+    """Typed storage contract for one ProteoBench score document."""
+
+    intermediate_hash: str
+    results: dict[str, CutoffScores]
+    proteobench_version: str
+    median_abs_epsilon_global: float
+    mean_abs_epsilon_global: float
+    median_abs_epsilon_eq_species: float
+    mean_abs_epsilon_eq_species: float
+    median_abs_epsilon_precision_global: float
+    mean_abs_epsilon_precision_global: float
+    median_abs_epsilon_precision_eq_species: float
+    mean_abs_epsilon_precision_eq_species: float
+    nr_feature: int
 
 
 def build_scores(
     intermediate: pd.DataFrame,
     intermediate_hash: str,
-    *,
-    default_cutoff: int = 3,
-    max_nr_observed: int = 6,
-) -> dict[str, Any]:
-    """Compute the compatible score-only ProteoBench JSON document."""
-    if default_cutoff < 1 or default_cutoff > max_nr_observed:
-        raise ValueError(f"default cutoff {default_cutoff} must be within 1..{max_nr_observed}")
+    config: ScoreConfig,
+) -> ProteoBenchScores:
+    """Compute the compatible score-only ProteoBench storage model."""
     results = {
         str(cutoff): _metrics_at_cutoff(intermediate, cutoff)
-        for cutoff in range(1, max_nr_observed + 1)
+        for cutoff in range(1, config.max_nr_observed + 1)
     }
-    selected = results[str(default_cutoff)]
-    payload: dict[str, Any] = {
-        "intermediate_hash": intermediate_hash,
-        "results": results,
-        "proteobench_version": PROTEOBENCH_COMPATIBILITY_VERSION,
-    }
-    payload.update({key: selected[key] for key in _TOP_LEVEL_METRICS})
-    return _json_compatible(payload)
+    selected = results[str(config.default_cutoff)]
+    selected_metrics = selected.root
+    return ProteoBenchScores(
+        intermediate_hash=intermediate_hash,
+        results=results,
+        proteobench_version=PROTEOBENCH_COMPATIBILITY_VERSION,
+        median_abs_epsilon_global=_required_float_metric(
+            selected_metrics, "median_abs_epsilon_global"
+        ),
+        mean_abs_epsilon_global=_required_float_metric(selected_metrics, "mean_abs_epsilon_global"),
+        median_abs_epsilon_eq_species=_required_float_metric(
+            selected_metrics, "median_abs_epsilon_eq_species"
+        ),
+        mean_abs_epsilon_eq_species=_required_float_metric(
+            selected_metrics, "mean_abs_epsilon_eq_species"
+        ),
+        median_abs_epsilon_precision_global=_required_float_metric(
+            selected_metrics, "median_abs_epsilon_precision_global"
+        ),
+        mean_abs_epsilon_precision_global=_required_float_metric(
+            selected_metrics, "mean_abs_epsilon_precision_global"
+        ),
+        median_abs_epsilon_precision_eq_species=_required_float_metric(
+            selected_metrics, "median_abs_epsilon_precision_eq_species"
+        ),
+        mean_abs_epsilon_precision_eq_species=_required_float_metric(
+            selected_metrics, "mean_abs_epsilon_precision_eq_species"
+        ),
+        nr_feature=_required_int_metric(selected_metrics, "nr_feature"),
+    )
 
 
 def compute_roc_auc(frame: pd.DataFrame) -> float:
@@ -73,19 +123,19 @@ def compute_roc_auc(frame: pd.DataFrame) -> float:
     return (rank_sum - n_positive * (n_positive + 1) / 2) / (n_positive * n_negative)
 
 
-def _metrics_at_cutoff(frame: pd.DataFrame, cutoff: int) -> dict[str, Any]:
+def _metrics_at_cutoff(frame: pd.DataFrame, cutoff: int) -> CutoffScores:
     selected = frame[frame["nr_observed"] >= cutoff]
-    metrics = {
+    metrics: dict[str, ScoreMetric] = {
         **_epsilon_metrics(frame, cutoff, aggregation="median"),
         **_epsilon_metrics(frame, cutoff, aggregation="mean"),
         **_precision_metrics(frame, cutoff, aggregation="median"),
         **_precision_metrics(frame, cutoff, aggregation="mean"),
         **_cv_metrics(selected),
-        "variance_epsilon_global": selected["epsilon"].var() if len(selected) else 0.0,
+        "variance_epsilon_global": float(selected["epsilon"].var()) if len(selected) else 0.0,
         "nr_feature": len(selected),
         "roc_auc": compute_roc_auc(selected),
     }
-    return metrics
+    return CutoffScores(metrics)
 
 
 def _epsilon_metrics(
@@ -99,8 +149,11 @@ def _epsilon_metrics(
     per_species = selected.groupby("species")["epsilon"].apply(aggregate)
     return {
         f"{aggregation}_abs_epsilon_global": aggregate(selected["epsilon"]),
-        f"{aggregation}_abs_epsilon_eq_species": per_species.mean(),
-        **{f"{aggregation}_abs_epsilon_{species}": value for species, value in per_species.items()},
+        f"{aggregation}_abs_epsilon_eq_species": float(per_species.mean()),
+        **{
+            f"{aggregation}_abs_epsilon_{species}": float(value)
+            for species, value in per_species.items()
+        },
     }
 
 
@@ -123,13 +176,13 @@ def _precision_metrics(
     empirical_centers = grouped.agg(center_name)
     return {
         **{
-            f"{aggregation}_log2_empirical_{species}": value
+            f"{aggregation}_log2_empirical_{species}": float(value)
             for species, value in empirical_centers.items()
         },
         f"{aggregation}_abs_epsilon_precision_global": aggregate(precision),
-        f"{aggregation}_abs_epsilon_precision_eq_species": per_species.mean(),
+        f"{aggregation}_abs_epsilon_precision_eq_species": float(per_species.mean()),
         **{
-            f"{aggregation}_abs_epsilon_precision_{species}": value
+            f"{aggregation}_abs_epsilon_precision_{species}": float(value)
             for species, value in per_species.items()
         },
     }
@@ -139,31 +192,38 @@ def _cv_metrics(selected: pd.DataFrame) -> dict[str, float]:
     quantiles = selected[["CV_A", "CV_B"]].quantile([0.5, 0.75, 0.9, 0.95])
     averages = quantiles.mean(axis=1)
     return {
-        "CV_median": averages.loc[0.50],
-        "CV_q75": averages.loc[0.75],
-        "CV_q90": averages.loc[0.90],
-        "CV_q95": averages.loc[0.95],
+        "CV_median": float(averages.loc[0.50]),
+        "CV_q75": float(averages.loc[0.75]),
+        "CV_q90": float(averages.loc[0.90]),
+        "CV_q95": float(averages.loc[0.95]),
     }
 
 
-def _absolute_aggregate(name: str):
+def _absolute_aggregate(name: str) -> MetricAggregate:
     if name == "median":
-        return lambda values: values.abs().median()
+        return _median_absolute
     if name == "mean":
-        return lambda values: values.abs().mean()
+        return _mean_absolute
     raise ValueError(f"unsupported aggregation {name!r}")
 
 
-def _json_compatible(value: object) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _json_compatible(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_compatible(item) for item in value]
-    if isinstance(value, (np.integer,)):
-        return int(value)
-    if isinstance(value, (np.floating, float)):
-        number = float(value)
-        return number if np.isfinite(number) else None
-    if isinstance(value, np.bool_):
-        return bool(value)
+def _median_absolute(values: pd.Series) -> float:
+    return float(values.abs().median())
+
+
+def _mean_absolute(values: pd.Series) -> float:
+    return float(values.abs().mean())
+
+
+def _required_float_metric(metrics: dict[str, ScoreMetric], name: str) -> float:
+    value = metrics[name]
+    if isinstance(value, bool):
+        raise TypeError(f"score metric {name!r} is not numeric")
+    return float(value)
+
+
+def _required_int_metric(metrics: dict[str, ScoreMetric], name: str) -> int:
+    value = metrics[name]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"score metric {name!r} is not an integer")
     return value

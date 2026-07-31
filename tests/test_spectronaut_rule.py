@@ -6,12 +6,17 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
+from conversion_support import convert_to_anndata
 
-from anndata_proteomics._matrix_types import named_layers
-from anndata_proteomics.converters.assemble import convert
+from anndata_proteomics.adapters.anndata.matrix import layer_names
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.readers.dispatch import read_table
-from anndata_proteomics.rules.loader import load_packaged_rule, resolve_rule_locator
+from anndata_proteomics.rules.loader import (
+    RuleLocatorUnavailable,
+    load_packaged_rule,
+    resolve_rule_locator_without_version,
+)
+from anndata_proteomics.rules.registry import RuleLocator
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 
 if TYPE_CHECKING:
@@ -69,11 +74,17 @@ def _feature_invariance(df: pd.DataFrame, rule: ParseRule) -> tuple[pd.Series, p
 
 
 def test_spectronaut_has_report_backed_ion_protein_and_fragment_rules() -> None:
-    assert resolve_rule_locator("spectronaut", "ion", None) is not None
-    assert resolve_rule_locator("spectronaut", "protein", None) is not None
-    assert resolve_rule_locator("spectronaut", "fragment", None) is not None
-    assert resolve_rule_locator("spectronaut", "peptidoform", None) is None
-    assert resolve_rule_locator("spectronaut", "peptide", None) is None
+    assert isinstance(resolve_rule_locator_without_version("spectronaut", "ion"), RuleLocator)
+    assert isinstance(resolve_rule_locator_without_version("spectronaut", "protein"), RuleLocator)
+    assert isinstance(resolve_rule_locator_without_version("spectronaut", "fragment"), RuleLocator)
+    assert isinstance(
+        resolve_rule_locator_without_version("spectronaut", "peptidoform"),
+        RuleLocatorUnavailable,
+    )
+    assert isinstance(
+        resolve_rule_locator_without_version("spectronaut", "peptide"),
+        RuleLocatorUnavailable,
+    )
 
 
 def test_spectronaut_rule_matches_cached_common_headers(
@@ -118,11 +129,11 @@ def test_spectronaut_conversion_matches_declared_columns(
     run = df["R.FileName"].iloc[0]
     subset = df[df["R.FileName"] == run].head(2000).copy()
 
-    adata = convert(subset, rule)
+    adata = convert_to_anndata(subset, rule)
 
     assert set(rule.columns.var.names) <= set(adata.var.columns)
     assert set(rule.columns.obs.names) <= set(adata.obs.columns)
-    assert {layer.name for layer in rule.layers} == set(named_layers(adata))
+    assert {layer.name for layer in rule.layers} == set(layer_names(adata))
 
     # when the feature key is a directly selected vendor column, conversion must collapse to one
     # var per distinct key value (computed keys such as ProForma_ion are exercised at ion level).

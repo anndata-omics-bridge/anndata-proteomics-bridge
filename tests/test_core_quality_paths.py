@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics import _logging, test_data
+from anndata_proteomics.adapters.anndata.result import load_converted_result
 from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.converters._axis import join_keys
 from anndata_proteomics.converters._fragments import (
@@ -17,7 +18,6 @@ from anndata_proteomics.converters._fragments import (
     _split_packed,
     explode_fragments,
 )
-from anndata_proteomics.readers.result import load_converted_result
 from anndata_proteomics.rules import _discovery
 from anndata_proteomics.rules.schema import ColumnLabeledFragments
 
@@ -64,8 +64,7 @@ def test_axis_and_fragment_helper_guards() -> None:
     assert _split_packed(float("nan"), ";") == []
     assert _split_packed("  ", ";") == []
     assert _split_packed(";;", ";") == []
-    with pytest.raises(TypeError, match="expected packed"):
-        _fragment_positions("not-a-list")
+    assert _fragment_positions(["b1", "y2"]) == [0, 1]
 
     fragments = ColumnLabeledFragments(
         delimiter=";",
@@ -97,11 +96,16 @@ def test_data_lookup_empty_and_present_paths(
 ) -> None:
     monkeypatch.setattr(test_data, "DOWNLOADED_DB", tmp_path / "missing.csv")
     monkeypatch.setattr(test_data, "TEST_DATA_DIR", tmp_path)
-    assert test_data.find_test_data("missing") is None
-    assert test_data._module_for_dataset(tmp_path / "dataset", test_data_dir=tmp_path) is None
-    assert test_data.find_fasta(test_data_dir=tmp_path) is None
-    assert test_data.find_fasta(module="unknown", test_data_dir=tmp_path) is None
-    assert test_data.find_fasta(module="dda_qexactive", test_data_dir=tmp_path) is None
+    assert test_data.find_test_data("missing") == test_data.VendorDataUnavailable("missing")
+    assert test_data._module_for_dataset(
+        tmp_path / "dataset", test_data_dir=tmp_path
+    ) == test_data.DatasetModuleUnavailable(tmp_path / "dataset")
+    assert test_data.find_fasta_for_module(
+        "unknown", test_data_dir=tmp_path
+    ) == test_data.FastaUnavailable("unknown")
+    assert test_data.find_fasta_for_module(
+        "dda_qexactive", test_data_dir=tmp_path
+    ) == test_data.FastaUnavailable("dda_qexactive")
 
     index = tmp_path / "raw_file_db_downloaded.csv"
     index.write_text(
@@ -111,9 +115,11 @@ def test_data_lookup_empty_and_present_paths(
         encoding="utf-8",
     )
     monkeypatch.setattr(test_data, "DOWNLOADED_DB", index)
-    assert test_data.find_test_data("Tool") is None
-    assert test_data._module_for_dataset(tmp_path / "unmatched", test_data_dir=tmp_path) is None
+    assert test_data.find_test_data("Tool") == test_data.VendorDataUnavailable("Tool")
+    assert test_data._module_for_dataset(
+        tmp_path / "unmatched", test_data_dir=tmp_path
+    ) == test_data.DatasetModuleUnavailable(tmp_path / "unmatched")
 
     monkeypatch.setattr(test_data, "PARAM_FIXTURE_DIR", tmp_path)
-    assert test_data.find_param_file("unknown") is None
-    assert test_data.find_param_file("DIA-NN") is None
+    assert test_data.find_param_file("unknown") == test_data.ParameterFileUnavailable("unknown")
+    assert test_data.find_param_file("DIA-NN") == test_data.ParameterFileUnavailable("DIA-NN")

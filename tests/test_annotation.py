@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import anndata as ad
@@ -9,11 +10,33 @@ import mudata
 import numpy as np
 import pandas as pd
 import pytest
+from description_support import describe_anndata as describe
 from mudata import MuData
 
-from anndata_proteomics.annotation.apply import annotate_obs
-from anndata_proteomics.annotation.loader import AnnotationTable, load_annotation
-from anndata_proteomics.readers.summary import describe
+from anndata_proteomics.adapters.anndata.annotation import (
+    read_observation_frames,
+    write_sample_annotation,
+)
+from anndata_proteomics.annotation.loader import (
+    AnnotationTable,
+    InMemoryAnnotationOrigin,
+    LoadedAnnotation,
+    load_annotation,
+)
+from anndata_proteomics.annotation.sample import (
+    AnnotatedObservations,
+    AnnotationDiagnostics,
+    SampleAnnotationProvenance,
+    annotate_observations,
+    annotation_diagnostics,
+    match_sample_annotation,
+    observation_keys,
+    sample_annotation_provenance,
+)
+from anndata_proteomics.workflows.sample_annotation import (
+    SampleAnnotationResult,
+    run_sample_annotation,
+)
 
 RUNS = ["runA1", "runA2", "runB1", "runB2"]
 
@@ -65,15 +88,152 @@ def _mudata() -> MuData:
         return MuData(mods, axis=0)
 
 
-def _annotation_from(tmp_path: Path, text: str = _BASIC_TOML) -> AnnotationTable:
+def _annotation_from(tmp_path: Path, text: str = _BASIC_TOML) -> LoadedAnnotation:
     path = tmp_path / "annotation.toml"
     path.write_text(text)
     return load_annotation(path)
 
 
+def _annotate(target: ad.AnnData | MuData, annotation: LoadedAnnotation) -> None:
+    result = run_sample_annotation(
+        read_observation_frames(target),
+        annotation.table,
+        annotation.origin,
+    )
+    write_sample_annotation(target, result)
+
+
+def test_sample_annotation_computation_uses_only_typed_frames() -> None:
+    observations = pd.DataFrame(index=pd.Index(["runA", "runB"], name="run"))
+    annotation = AnnotationTable(
+        samples=pd.DataFrame(
+            {
+                "raw_file": ["runA", "runB"],
+                "condition": ["A", "B"],
+            }
+        )
+    )
+
+    match = match_sample_annotation(
+        observation_keys(observations, annotation.match_on),
+        annotation,
+    )
+    annotated = annotate_observations(observations, match)
+    diagnostics = annotation_diagnostics(match)
+    provenance = sample_annotation_provenance(
+        InMemoryAnnotationOrigin(),
+        match,
+        annotated,
+    )
+
+    assert "condition" not in observations
+    assert list(annotated.frame["condition"]) == ["A", "B"]
+    assert annotated.columns_added == ("condition",)
+    assert diagnostics.unmatched_observation_count == 0
+    assert diagnostics.unmatched_record_keys == ()
+    assert provenance.columns_added == ("condition",)
+    result = run_sample_annotation((observations,), annotation, InMemoryAnnotationOrigin())
+    target = _adata(runs=["runA", "runB"])
+    write_sample_annotation(target, result)
+    assert json.loads(target.uns["anndata_proteomics"]["obs_annotations_json"]) == [
+        {
+            "source": None,
+            "source_format": None,
+            "match_on": "index",
+            "key_field": "raw_file",
+            "obs_columns_added": ["condition"],
+            "n_obs_matched": 2,
+        }
+    ]
+
+
+def test_in_memory_boundaries_drive_sample_annotation_workflow() -> None:
+    source = {"observations": pd.DataFrame(index=pd.Index(["runA", "runB"], name="run"))}
+    annotation = AnnotationTable(
+        samples=pd.DataFrame(
+            {
+                "raw_file": ["runA", "runB"],
+                "condition": ["A", "B"],
+            }
+        )
+    )
+    persisted: dict[str, SampleAnnotationResult] = {}
+
+    def read_frames() -> tuple[pd.DataFrame, ...]:
+        return (source["observations"].copy(),)
+
+    def write_result(result: SampleAnnotationResult) -> None:
+        persisted["annotation"] = result
+
+    calculated = run_sample_annotation(
+        read_frames(),
+        annotation,
+        InMemoryAnnotationOrigin(),
+    )
+    write_result(calculated)
+
+    stored = persisted["annotation"]
+    assert stored.observations[0].frame["condition"].tolist() == ["A", "B"]
+    assert stored.provenance.columns_added == ("condition",)
+    assert "condition" not in source["observations"]
+
+
+def test_sample_annotation_adapter_extracts_frames_separately() -> None:
+    target = _mudata()
+
+    extracted = read_observation_frames(target)
+
+    assert len(extracted) == 3
+    assert extracted[0] is target.obs
+    assert extracted[1] is target.mod["ion"].obs
+    assert extracted[2] is target.mod["protein"].obs
+
+
+def test_sample_annotation_adapter_persists_typed_result_separately() -> None:
+    target = _adata(runs=["runA"])
+    annotated = pd.DataFrame(
+        {"condition": ["A"]},
+        index=target.obs_names.copy(),
+    )
+    result = SampleAnnotationResult(
+        observations=(
+            AnnotatedObservations(
+                frame=annotated,
+                columns_added=("condition",),
+            ),
+        ),
+        diagnostics=AnnotationDiagnostics(
+            observation_count=1,
+            unmatched_observation_count=0,
+            unmatched_record_keys=(),
+        ),
+        provenance=SampleAnnotationProvenance(
+            origin=InMemoryAnnotationOrigin(),
+            match_on="index",
+            key_field="raw_file",
+            columns_added=("condition",),
+            matched_observation_count=1,
+        ),
+    )
+
+    write_sample_annotation(target, result)
+
+    assert target.obs["condition"].tolist() == ["A"]
+    assert json.loads(target.uns["anndata_proteomics"]["obs_annotations_json"]) == [
+        {
+            "source": None,
+            "source_format": None,
+            "match_on": "index",
+            "key_field": "raw_file",
+            "obs_columns_added": ["condition"],
+            "n_obs_matched": 1,
+        }
+    ]
+
+
 def test_obs_join_by_index(tmp_path: Path) -> None:
     adata = _adata()
-    annotate_obs(adata, _annotation_from(tmp_path))
+    _annotate(adata, _annotation_from(tmp_path))
     assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
     assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
 
@@ -97,7 +257,7 @@ def test_obs_join_falls_back_to_exact_raw_file_alias(tmp_path: Path) -> None:
     )
     adata = _adata(runs=["aliasA1", "aliasA2", "aliasB1", "aliasB2"])
 
-    annotate_obs(adata, _annotation_from(tmp_path, text))
+    _annotate(adata, _annotation_from(tmp_path, text))
 
     assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
     assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
@@ -124,7 +284,7 @@ def test_obs_join_supports_multiple_exact_raw_file_aliases(tmp_path: Path) -> No
     )
     adata = _adata(runs=["secondA1", "secondA2", "secondB1", "secondB2"])
 
-    annotate_obs(adata, _annotation_from(tmp_path, text))
+    _annotate(adata, _annotation_from(tmp_path, text))
 
     assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
     assert list(adata.obs["sample_name"]) == ["A_rep1", "A_rep2", "B_rep1", "B_rep2"]
@@ -143,14 +303,14 @@ def test_duplicate_raw_file_aliases_raise(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate 'raw_file_aliases'"):
-        annotate_obs(_adata(runs=["shared"]), _annotation_from(tmp_path, text))
+        _annotate(_adata(runs=["shared"]), _annotation_from(tmp_path, text))
 
 
 def test_obs_join_does_not_fall_back_to_sample_name(tmp_path: Path) -> None:
     adata = _adata(runs=["A_rep1", "A_rep2", "B_rep1", "B_rep2"])
 
     with pytest.raises(ValueError, match="no obs rows matched"):
-        annotate_obs(adata, _annotation_from(tmp_path))
+        _annotate(adata, _annotation_from(tmp_path))
 
 
 def test_annotation_preserves_quantification_view_and_adds_provenance(tmp_path: Path) -> None:
@@ -164,25 +324,27 @@ def test_annotation_preserves_quantification_view_and_adds_provenance(tmp_path: 
     }
     before = describe(adata)["quantification"]
 
-    annotate_obs(adata, _annotation_from(tmp_path))
+    _annotate(adata, _annotation_from(tmp_path))
 
     result = describe(adata)
     assert result["quantification"] == before
-    assert result["annotations"]["obs"] == [
-        {
-            "source": str(tmp_path / "annotation.toml"),
-            "source_format": "toml",
-            "match_on": "index",
-            "key_field": "raw_file",
-            "obs_columns_added": ["sample_name", "condition"],
-            "n_obs_matched": 4,
-        }
-    ]
+    assert result["annotations"] == {
+        "obs": [
+            {
+                "source": str(tmp_path / "annotation.toml"),
+                "source_format": "toml",
+                "match_on": "index",
+                "key_field": "raw_file",
+                "obs_columns_added": ["sample_name", "condition"],
+                "n_obs_matched": 4,
+            }
+        ]
+    }
 
 
 def test_join_respects_obs_order(tmp_path: Path) -> None:
     adata = _adata(runs=["runB2", "runA1", "runB1", "runA2"])
-    annotate_obs(adata, _annotation_from(tmp_path))
+    _annotate(adata, _annotation_from(tmp_path))
     assert list(adata.obs["condition"]) == ["B", "A", "B", "A"]
 
 
@@ -194,7 +356,7 @@ def test_match_on_named_column(tmp_path: Path) -> None:
         tmp_path,
         _BASIC_TOML.replace('match_on = "index"', 'match_on = "Run"'),
     )
-    annotate_obs(adata, annotation)
+    _annotate(adata, annotation)
     assert list(adata.obs["condition"]) == ["A", "A", "B", "B"]
 
 
@@ -204,21 +366,21 @@ def test_freeform_extra_columns(tmp_path: Path) -> None:
     text = text.replace('sample_name = "B_rep1"', 'batch = 1\ngenotype = "wt"')
     text = text.replace('sample_name = "B_rep2"', 'batch = 2\ngenotype = "ko"')
     adata = _adata()
-    annotate_obs(adata, _annotation_from(tmp_path, text))
+    _annotate(adata, _annotation_from(tmp_path, text))
     assert list(adata.obs["batch"]) == [1, 2, 1, 2]
     assert list(adata.obs["genotype"]) == ["wt", "ko", "wt", "ko"]
 
 
 def test_mudata_annotates_global_and_modalities(tmp_path: Path) -> None:
     md = _mudata()
-    annotate_obs(md, _annotation_from(tmp_path))
+    _annotate(md, _annotation_from(tmp_path))
     for frame in (md.obs, md.mod["ion"].obs, md.mod["protein"].obs):
         assert list(frame["condition"]) == ["A", "A", "B", "B"]
 
 
 def test_mudata_roundtrip(tmp_path: Path) -> None:
     md = _mudata()
-    annotate_obs(md, _annotation_from(tmp_path))
+    _annotate(md, _annotation_from(tmp_path))
     output = tmp_path / "md.annotated.h5mu"
     md.write_h5mu(output)
     with mudata.set_options(pull_on_update=False):
@@ -229,21 +391,30 @@ def test_mudata_roundtrip(tmp_path: Path) -> None:
 
 def test_anndata_roundtrip_records_provenance(tmp_path: Path) -> None:
     adata = _adata()
-    annotate_obs(adata, _annotation_from(tmp_path))
+    _annotate(adata, _annotation_from(tmp_path))
     output = tmp_path / "a.annotated.h5ad"
     adata.write_h5ad(output)
     roundtrip = ad.read_h5ad(output)
     assert list(roundtrip.obs["condition"]) == ["A", "A", "B", "B"]
     assert "obs_annotations_json" in roundtrip.uns["anndata_proteomics"]
-    provenance = describe(roundtrip)["annotations"]["obs"]
-    assert provenance[0]["obs_columns_added"] == ["sample_name", "condition"]
-    assert provenance[0]["n_obs_matched"] == 4
+    assert describe(roundtrip)["annotations"] == {
+        "obs": [
+            {
+                "source": str(tmp_path / "annotation.toml"),
+                "source_format": "toml",
+                "match_on": "index",
+                "key_field": "raw_file",
+                "obs_columns_added": ["sample_name", "condition"],
+                "n_obs_matched": 4,
+            }
+        ]
+    }
 
 
 def test_obs_column_names_sanitised(tmp_path: Path) -> None:
     text = _BASIC_TOML.replace("sample_name", '"Sample Name"')
     adata = _adata()
-    annotate_obs(adata, _annotation_from(tmp_path, text))
+    _annotate(adata, _annotation_from(tmp_path, text))
     assert "Sample_Name" in adata.obs.columns
     assert "Sample Name" not in adata.obs.columns
 
@@ -255,13 +426,13 @@ def test_sanitisation_collision_raises(tmp_path: Path) -> None:
     )
     adata = _adata()
     with pytest.raises(ValueError, match="collision after sanitisation"):
-        annotate_obs(adata, _annotation_from(tmp_path, text))
+        _annotate(adata, _annotation_from(tmp_path, text))
 
 
 def test_no_match_raises(tmp_path: Path) -> None:
     adata = _adata(runs=["nope1", "nope2", "nope3", "nope4"])
     with pytest.raises(ValueError, match="no obs rows matched"):
-        annotate_obs(adata, _annotation_from(tmp_path))
+        _annotate(adata, _annotation_from(tmp_path))
 
 
 def test_partial_match_warns(
@@ -269,7 +440,7 @@ def test_partial_match_warns(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     adata = _adata(runs=["runA1", "runA2", "runB1", "extra_run"])
-    annotate_obs(adata, _annotation_from(tmp_path))
+    _annotate(adata, _annotation_from(tmp_path))
     error = capsys.readouterr().err
     assert "1/4 obs rows had no matching" in error
     assert "annotation record(s) matched no obs row" in error
@@ -281,7 +452,7 @@ def test_collision_with_existing_obs_column_raises(tmp_path: Path) -> None:
     adata = _adata()
     adata.obs["condition"] = ["pre", "pre", "pre", "pre"]
     with pytest.raises(ValueError, match="already present in obs"):
-        annotate_obs(adata, _annotation_from(tmp_path))
+        _annotate(adata, _annotation_from(tmp_path))
 
 
 def test_duplicate_key_field_raises(tmp_path: Path) -> None:
@@ -292,13 +463,13 @@ sample_name = "duplicate"
 condition = "A"
 """
     with pytest.raises(ValueError, match="duplicate 'raw_file'"):
-        annotate_obs(_adata(), _annotation_from(tmp_path, _BASIC_TOML + duplicate))
+        _annotate(_adata(), _annotation_from(tmp_path, _BASIC_TOML + duplicate))
 
 
 def test_unknown_match_on_column_raises(tmp_path: Path) -> None:
     text = _BASIC_TOML.replace('match_on = "index"', 'match_on = "NoSuchColumn"')
     with pytest.raises(ValueError, match="match_on column 'NoSuchColumn' not found"):
-        annotate_obs(_adata(), _annotation_from(tmp_path, text))
+        _annotate(_adata(), _annotation_from(tmp_path, text))
 
 
 def test_loads_proteobench_module_settings_without_modelling_extra_sections(
@@ -322,9 +493,9 @@ condition = "A"
 
     annotation = load_annotation(path)
 
-    assert annotation.match_on == "index"
-    assert annotation.key_field == "raw_file"
-    assert annotation.samples.to_dict(orient="records") == [
+    assert annotation.table.match_on == "index"
+    assert annotation.table.key_field == "raw_file"
+    assert annotation.table.samples.to_dict(orient="records") == [
         {"raw_file": "runA1", "sample_name": "A_rep1", "condition": "A"}
     ]
 
@@ -340,7 +511,9 @@ def test_loads_delimited_annotation_tables(
 
     annotation = load_annotation(path)
 
-    assert annotation.samples.to_dict(orient="records") == [{"raw_file": "runA1", "condition": "A"}]
+    assert annotation.table.samples.to_dict(orient="records") == [
+        {"raw_file": "runA1", "condition": "A"}
+    ]
 
 
 def test_loader_rejects_missing_key_field(tmp_path: Path) -> None:
@@ -374,5 +547,5 @@ def test_committed_aif_fixture_applies() -> None:
         "LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_03",
     ]
     adata = _adata(runs=runs)
-    annotate_obs(adata, annotation)
+    _annotate(adata, annotation)
     assert list(adata.obs["condition"]) == ["A", "A", "A", "B", "B", "B"]

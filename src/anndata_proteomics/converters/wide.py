@@ -13,10 +13,14 @@ from anndata_proteomics.converters._axis import (
     build_index,
     non_sample_columns,
 )
-from anndata_proteomics.converters._pieces import ConversionPieces
+from anndata_proteomics.converters._pieces import ConversionPieces, DenseLayerMatrix
 from anndata_proteomics.converters.factors import encode_factor
-from anndata_proteomics.converters.numeric import coerce_numeric, warn_if_all_missing
-from anndata_proteomics.rules.schema import Layer, ParseRule
+from anndata_proteomics.converters.numeric import (
+    coerce_numeric,
+    coerce_regex_numeric,
+    warn_if_all_missing,
+)
+from anndata_proteomics.rules.schema import Layer, ParseRule, RegexValuePattern
 
 logger = logging.getLogger(__name__)
 _SAMPLE_PLACEHOLDER = "<sample>"
@@ -30,11 +34,7 @@ def _matching_columns(headers: list[str], pattern: str) -> list[tuple[str, str]]
         m = compiled.match(h)
         if m is None:
             continue
-        try:
-            sample = m.group("sample")
-        except (IndexError, KeyError):
-            sample = m.group(0)
-        out.append((h, sample))
+        out.append((h, m.group("sample")))
     return out
 
 
@@ -46,7 +46,7 @@ def _gather_layer_matrix(
     var_index: pd.Index,
     var_keys: list[str],
     duplicate_mode: str,
-) -> np.ndarray:
+) -> DenseLayerMatrix:
     """Build (n_obs × n_var) matrix for a single wide layer."""
     matches = _matching_columns(headers, layer.source)
     sample_to_columns: dict[str, list[str]] = {}
@@ -87,7 +87,13 @@ def _gather_layer_matrix(
 def _coerce_layer_series(series: pd.Series, layer: Layer) -> pd.Series:
     if layer.encoding_mode == "factor":
         return encode_factor(series, layer.categories)
-    return coerce_numeric(series, layer.missing_values, layer.value_pattern)
+    if isinstance(layer.value_pattern, RegexValuePattern):
+        return coerce_regex_numeric(
+            series,
+            layer.missing_values,
+            layer.value_pattern.pattern,
+        )
+    return coerce_numeric(series, layer.missing_values)
 
 
 def _raise_on_duplicate_features(df: pd.DataFrame, rule: ParseRule) -> None:
@@ -110,7 +116,7 @@ def _raise_on_duplicate_features(df: pd.DataFrame, rule: ParseRule) -> None:
 
 def _apply_sample_cleanup(samples: list[str], rule: ParseRule) -> list[str]:
     """Apply optional sample_name_cleanup pattern to sample tokens."""
-    if rule.sample_name_cleanup is None or not rule.sample_name_cleanup.pattern:
+    if rule.sample_name_cleanup is None:
         return samples
     pattern = re.compile(rule.sample_name_cleanup.pattern)
     out: list[str] = []
@@ -148,7 +154,7 @@ def convert_wide(df: pd.DataFrame, rule: ParseRule) -> ConversionPieces:
 
     var_df = build_axis_frame(df, list(rule.axis.var_keys), rule.columns.var.names)
 
-    layers: dict[str, np.ndarray] = {}
+    layers: dict[str, DenseLayerMatrix] = {}
     for layer in rule.layers:
         layer_matches = _matching_columns(headers, layer.source)
         extra_samples = list(

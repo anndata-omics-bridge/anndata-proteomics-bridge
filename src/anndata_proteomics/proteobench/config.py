@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -27,7 +27,6 @@ class ExpectedRatio(_SettingsModel):
     """Expected abundance ratio for one species."""
 
     a_vs_b: float = Field(alias="A_vs_B", gt=0)
-    color: str | None = None
 
 
 class ModuleGeneral(_SettingsModel):
@@ -82,10 +81,6 @@ class ModuleSettings(_SettingsModel):
 
 def load_module_settings(path: str | Path) -> ModuleSettings:
     """Load the scoring subset of a ProteoBench module TOML."""
-    return ModuleSettings.model_validate(_load_toml(path))
-
-
-def _load_toml(path: str | Path) -> dict[str, Any]:
     settings_path = Path(path)
     with settings_path.open("rb") as handle:
-        return tomllib.load(handle)
+        return ModuleSettings.model_validate(tomllib.load(handle))

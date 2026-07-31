@@ -9,7 +9,11 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.params.parsers.fragpipe import _read_workflow, extract_params
+from anndata_proteomics.params.parsers.fragpipe import (
+    WorkflowVersion,
+    _read_workflow,
+    extract_params,
+)
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
 
@@ -97,4 +101,5 @@ def test_fragpipe_reads_diann_version_from_legacy_executable_path() -> None:
         "fragpipe-config.bin-diann=C\\:\\\\tools\\\\diann\\\\1.8.2_beta_8\\\\win\\\\DiaNN.exe\n"
     )
 
-    assert _read_workflow(workflow)[3] == "1.8.2 beta 8"
+    parsed = _read_workflow(workflow)
+    assert parsed.diann_version == WorkflowVersion("1.8.2 beta 8")

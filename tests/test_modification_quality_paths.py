@@ -25,53 +25,30 @@ from anndata_proteomics.modifications.schema import (
 from anndata_proteomics.modifications.sdrf import from_sdrf_value, to_sdrf_value
 
 
-def test_target_matching_and_numeric_entry_without_mass() -> None:
-    assert apply_rules._target_matches(None, None, "Anywhere")
-    assert not apply_rules._target_matches(["C-term"], None, "N-term")
-    assert (
-        apply_rules._match_entry(
-            [MapEntry(token="name", name="Named")],
-            "1.25",
-            "M",
-            "Anywhere",
-            False,
-        )
-        is None
+def test_target_and_entry_matching_use_concrete_locations() -> None:
+    residue = apply_rules.ResidueLocation(sequence_index=0, residue="M")
+    nterm = apply_rules.TerminalOnlyLocation(position="N-term")
+    assert apply_rules._target_matches((), residue)
+    assert not apply_rules._target_matches(("C-term",), nterm)
+
+    entry = MapEntry(
+        token="named",
+        name="Named",
+        accession="UNIMOD:35",
+        target=("M",),
+        position="N-term",
+        mass_delta=15.994915,
     )
-    assert (
-        apply_rules._match_entry(
-            [
-                MapEntry(
-                    token="1.25",
-                    name="Mass",
-                    mass_delta=1.25,
-                    position="N-term",
-                )
-            ],
-            "1.25",
-            "M",
-            "Anywhere",
-            False,
-        )
-        is None
-    )
-    assert (
-        apply_rules._match_entry(
-            [MapEntry(token="named", name="Named", position="N-term")],
-            "named",
-            "M",
-            "Anywhere",
-            False,
-        )
-        is None
-    )
+    result = apply_rules._match_entry([entry], "named", residue, False)
+    assert isinstance(result, apply_rules.UnmatchedMapEntry)
+    assert isinstance(apply_rules._parse_mass("1.25"), apply_rules.ParsedMass)
+    assert isinstance(apply_rules._parse_mass("named"), apply_rules.NonNumericToken)
 
 
 def test_before_residue_without_a_following_residue_and_unknown_positions() -> None:
     terminal = apply_rule(
         "PEP(x)",
         ModificationRule(
-            source_column="Modified",
             token_pattern=r"\(([^)]+)\)",
             token_position="before_residue",
             unknown_policy="preserve",
@@ -83,7 +60,6 @@ def test_before_residue_without_a_following_residue_and_unknown_positions() -> N
     nterm = apply_rule(
         "(n)PEP",
         ModificationRule(
-            source_column="Modified",
             token_pattern=r"\(([^)]+)\)",
             token_position="after_residue",
             unknown_policy="preserve",
@@ -94,7 +70,6 @@ def test_before_residue_without_a_following_residue_and_unknown_positions() -> N
     unlocalized = apply_rule(
         "1(x)2",
         ModificationRule(
-            source_column="Modified",
             token_pattern=r"\(([^)]+)\)",
             token_position="before_residue",
             unknown_policy="preserve",
@@ -106,18 +81,25 @@ def test_before_residue_without_a_following_residue_and_unknown_positions() -> N
     cterm = apply_rule(
         "PEP(x)",
         ModificationRule(
-            source_column="Modified",
             token_pattern=r"\(([^)]+)\)",
             token_position="after_residue",
-            entries=(MapEntry(token="x", name="C terminal", position="C-term"),),
+            entries=(
+                MapEntry(
+                    token="x",
+                    name="C terminal",
+                    accession="UNIMOD:1",
+                    target=("C-term",),
+                    position="C-term",
+                    mass_delta=42.010565,
+                ),
+            ),
         ),
     )
-    assert cterm.proforma_sequence == "PEP-[C terminal]"
+    assert cterm.proforma_sequence == "PEP-[UNIMOD:1]"
 
     unknown_cterm = apply_rule(
         "PEP(y)",
         ModificationRule(
-            source_column="Modified",
             token_pattern=r"\(([^)]+)\)",
             token_position="after_residue",
             unknown_policy="preserve",

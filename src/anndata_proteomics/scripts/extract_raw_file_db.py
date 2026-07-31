@@ -7,21 +7,20 @@ fetches the selected vendor files. All generated files default to APB's
 """
 
 import io
-import json
 import os
 import shutil
 import tempfile
 import zipfile
-from collections.abc import Mapping
 from contextlib import chdir
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from cyclopts import App
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics.annotation.loader import load_annotation
@@ -72,6 +71,39 @@ SelectionStrategy = Literal[
     "all",
 ]
 
+
+class _SubmissionMetadata(BaseModel):
+    """Validated subset of one ProteoBench submission metadata document."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    intermediate_hash: str | None = None
+    software_name: str | None = None
+    software_version: str | None = None
+    nr_feature: int | float | None = None
+    nr_prec: int | float | None = None
+    is_temporary: bool | None = None
+    old_new: str | None = None
+
+
+class _CatalogRow(TypedDict):
+    """One concrete row written to the submission catalog."""
+
+    module: str
+    repo_name: str
+    intermediate_hash: str
+    software_name: str | None
+    software_version: str | None
+    nr_feature: int | float | None
+    is_temporary: bool | None
+    old_new: str | None
+
+
+def _feature_count(metadata: _SubmissionMetadata) -> int | float | None:
+    """Return the current feature count, falling back to the named legacy field."""
+    return metadata.nr_feature if metadata.nr_feature is not None else metadata.nr_prec
+
+
 app = App(name="apb-testdata", help=__doc__, help_on_error=True)
 
 GENERATED_CSV_NAMES = (
@@ -79,17 +111,6 @@ GENERATED_CSV_NAMES = (
     "raw_file_db_selected.csv",
     "raw_file_db_downloaded.csv",
 )
-
-
-def _feature_count(data: Mapping[str, int | float | None]) -> int | float | None:
-    """Return ProteoBench's canonical feature count from one submission.
-
-    ProteoBench renamed the serialized ``nr_prec`` field to ``nr_feature`` so
-    the metric also applies to non-precursor quantification modules. Older
-    result repositories can still contain the legacy field.
-    """
-    value = data.get("nr_feature")
-    return value if value is not None else data.get("nr_prec")
 
 
 # --- ProteoBench download primitives -----------------------------------------
@@ -286,7 +307,7 @@ def catalog(
     """
     cache_dir = cache_dir.resolve()
 
-    rows: list[dict[str, object]] = []
+    rows: list[_CatalogRow] = []
     for module_key in CONFIGS:
         repo_url = CONFIGS[module_key]["repo_url"]
         repo_name = repo_url.split("/")[-5]
@@ -302,23 +323,23 @@ def catalog(
         )
 
         for jf in json_files:
-            try:
-                with open(jf, encoding="utf-8") as f:
-                    data = json.load(f)
-            except json.JSONDecodeError as e:
-                logger.warning("skipping invalid metadata {}: {}", jf.name, e)
-                continue
+            metadata = _SubmissionMetadata.model_validate_json(jf.read_text(encoding="utf-8"))
+            feature_count = _feature_count(metadata)
 
             rows.append(
                 {
                     "module": module_key,
                     "repo_name": repo_name,
-                    "intermediate_hash": data.get("intermediate_hash", jf.stem),
-                    "software_name": data.get("software_name", ""),
-                    "software_version": data.get("software_version", ""),
-                    "nr_feature": _feature_count(data),
-                    "is_temporary": data.get("is_temporary"),
-                    "old_new": data.get("old_new", ""),
+                    "intermediate_hash": (
+                        metadata.intermediate_hash
+                        if metadata.intermediate_hash is not None
+                        else jf.stem
+                    ),
+                    "software_name": metadata.software_name,
+                    "software_version": metadata.software_version,
+                    "nr_feature": feature_count,
+                    "is_temporary": metadata.is_temporary,
+                    "old_new": metadata.old_new,
                 }
             )
 

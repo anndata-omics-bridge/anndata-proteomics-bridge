@@ -6,8 +6,9 @@ from pathlib import Path
 
 import anndata as ad
 import pandas as pd
+from conversion_support import convert_to_anndata
 
-from anndata_proteomics.converters.assemble import _compute_column, convert
+from anndata_proteomics.converters.assemble import _compute_column
 from anndata_proteomics.rules.schema import ColumnCompute, ParseRule
 
 
@@ -110,7 +111,7 @@ def test_generic_string_computes_survive_h5ad_round_trip(tmp_path: Path) -> None
     )
 
     output = tmp_path / "computed.h5ad"
-    convert(frame, rule).write_h5ad(output)
+    convert_to_anndata(frame, rule).write_h5ad(output)
     restored = ad.read_h5ad(output)
 
     assert restored.var["Complete"].tolist() == ["P1", "M2", ""]

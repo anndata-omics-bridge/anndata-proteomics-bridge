@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from anndata_proteomics.converters.recognize import matches, recognize
+from anndata_proteomics.converters.recognize import (
+    RecognizedRule,
+    UnrecognizedRule,
+    matches,
+    recognize,
+)
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import RuleLocator, iter_packaged_rules
@@ -45,15 +50,15 @@ def test_recognize_picks_correct_rule_for_each_vendor(locator: RuleLocator) -> N
 
     # recognize() returns a rule only when exactly one packaged rule matches. Multi-level
     # vendors (DIA-NN ships ion/peptidoform/peptide/protein/fragment, all reading the same
-    # report.tsv) are ambiguous by design, so recognition returns None and the level must
+    # report.tsv) are ambiguous by design, so recognition is tagged as unresolved and the level must
     # be selected explicitly via load_packaged_rule(software, level).
     n_matching = sum(1 for p in iter_packaged_rules() if matches(headers, load_rule(p)))
     recognised = recognize(headers)
     if n_matching == 1:
-        assert recognised is not None
-        assert recognised.software_name == rule.software_name
+        assert isinstance(recognised, RecognizedRule)
+        assert recognised.rule.software_name == rule.software_name
     else:
-        assert recognised is None
+        assert isinstance(recognised, UnrecognizedRule)
 
 
 def test_matches_long_rule_with_extra_headers_still_matches() -> None:
@@ -89,9 +94,9 @@ def test_matches_long_rule_returns_false_when_required_column_missing() -> None:
     assert matches(headers, diann_rule) is False
 
 
-def test_recognize_returns_none_for_empty_headers() -> None:
-    assert recognize([]) is None
+def test_recognize_returns_unresolved_for_empty_headers() -> None:
+    assert recognize([]) == UnrecognizedRule()
 
 
-def test_recognize_returns_none_for_random_headers() -> None:
-    assert recognize(["foo", "bar", "baz", "quux"]) is None
+def test_recognize_returns_unresolved_for_random_headers() -> None:
+    assert recognize(["foo", "bar", "baz", "quux"]) == UnrecognizedRule()

@@ -3,29 +3,104 @@
 from __future__ import annotations
 
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, TypedDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from anndata_proteomics.params.model import MassTolerance, Parameters
 from anndata_proteomics.params.parsers._common import read_text
 
 _Source = str | Path | IO[bytes] | IO[str]
-# A parsed TOML mapping, or the first line of the version-text file.
-_Loaded = dict[str, object] | str
 
 
-def _mapping(value: object, field: str) -> dict[str, object]:
-    """Validate a required TOML table."""
-    if not isinstance(value, dict):
-        raise TypeError(f"MetaMorpheus {field} must be a table")
-    return value
+class _VendorModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
 
-def _text(value: object, field: str) -> str:
-    """Validate a required TOML text value."""
-    if not isinstance(value, str):
-        raise TypeError(f"MetaMorpheus {field} must be text")
-    return value
+class DigestionSettings(_VendorModel):
+    """MetaMorpheus digestion fields consumed by APB."""
+
+    protease: str = Field(alias="Protease")
+    max_missed_cleavages: int = Field(alias="MaxMissedCleavages")
+    min_peptide_length: int = Field(alias="MinPeptideLength")
+    max_peptide_length: int = Field(alias="MaxPeptideLength")
+    max_mods_for_peptide: int = Field(alias="MaxModsForPeptide")
+
+
+class PrecursorDeconvolutionSettings(_VendorModel):
+    """MetaMorpheus precursor charge bounds consumed by APB."""
+
+    min_assumed_charge_state: int = Field(alias="MinAssumedChargeState")
+    max_assumed_charge_state: int = Field(alias="MaxAssumedChargeState")
+
+
+class CommonSettings(_VendorModel):
+    """MetaMorpheus common settings consumed by APB."""
+
+    fixed_modifications: str = Field(alias="ListOfModsFixed")
+    variable_modifications: str = Field(alias="ListOfModsVariable")
+    precursor_mass_tolerance: str = Field(alias="PrecursorMassTolerance")
+    product_mass_tolerance: str = Field(alias="ProductMassTolerance")
+    q_value_threshold: float = Field(alias="QValueThreshold")
+    digestion: DigestionSettings = Field(alias="DigestionParams")
+    precursor_deconvolution: PrecursorDeconvolutionSettings = Field(
+        alias="PrecursorDeconvolutionParameters"
+    )
+
+
+class SearchSettings(_VendorModel):
+    """MetaMorpheus search settings consumed by APB."""
+
+    match_between_runs: bool = Field(alias="MatchBetweenRuns")
+    do_parsimony: bool = Field(alias="DoParsimony")
+    normalize: bool = Field(alias="Normalize")
+
+
+class MetaMorpheusSettings(_VendorModel):
+    """Typed subset of a MetaMorpheus search-task TOML document."""
+
+    common: CommonSettings = Field(alias="CommonParameters")
+    search: SearchSettings = Field(alias="SearchParameters")
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsFile:
+    """An input recognized as the MetaMorpheus TOML settings file."""
+
+    settings: MetaMorpheusSettings
+
+
+@dataclass(frozen=True, slots=True)
+class VersionFile:
+    """An input recognized as the MetaMorpheus version report."""
+
+    first_line: str
+
+
+class MetaMorpheusParameterData(TypedDict):
+    """Precisely typed values accepted by :class:`Parameters`."""
+
+    software_name: str
+    software_version: str
+    search_engine: str
+    enzyme: str
+    allowed_miscleavages: int
+    fixed_mods: str
+    variable_mods: str
+    precursor_mass_tolerance: MassTolerance
+    fragment_mass_tolerance: MassTolerance
+    min_peptide_length: int
+    max_peptide_length: int
+    max_mods: int
+    min_precursor_charge: int
+    max_precursor_charge: int
+    enable_match_between_runs: bool
+    quantification_method: str
+    protein_inference: str | None
+    abundance_normalization_ions: bool
+    ident_fdr_psm: str
 
 
 def _format_tolerance(tolerance: str) -> MassTolerance:
@@ -75,30 +150,27 @@ def _parse_modifications(mods: str) -> str:
     return ", ".join(parsed)
 
 
-def _load_pair(file_a: _Source, file_b: _Source) -> tuple[str, dict[str, object]]:
+def _load_pair(file_a: _Source, file_b: _Source) -> tuple[VersionFile, SettingsFile]:
     """Identify which input is the version-text file and which is the TOML."""
-    version_line: str | None = None
-    settings: dict[str, object] | None = None
-
-    for source in (file_a, file_b):
-        loaded = _try_load(source)
-        if isinstance(loaded, dict):
-            settings = loaded
-        else:
-            version_line = loaded
-
-    if version_line is None or settings is None:
-        raise ValueError("expected one TOML file and one version-text file")
-    return version_line, settings
+    first = _try_load(file_a)
+    second = _try_load(file_b)
+    if isinstance(first, VersionFile) and isinstance(second, SettingsFile):
+        return first, second
+    if isinstance(first, SettingsFile) and isinstance(second, VersionFile):
+        return second, first
+    raise ValueError("expected one TOML file and one version-text file")
 
 
-def _try_load(source: _Source) -> _Loaded:
-    """Return a parsed TOML mapping, or the first line of a version-text file."""
+def _try_load(source: _Source) -> SettingsFile | VersionFile:
+    """Classify and parse one MetaMorpheus input file."""
     text = read_text(source, errors="replace")
-    try:
-        return tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        return text.splitlines()[0].strip()
+    if "[CommonParameters]" in text and "[SearchParameters]" in text:
+        raw_document: object = tomllib.loads(text)
+        return SettingsFile(MetaMorpheusSettings.model_validate(raw_document))
+    lines = text.splitlines()
+    if not lines:
+        raise ValueError("MetaMorpheus version report is empty")
+    return VersionFile(lines[0].strip())
 
 
 def extract_params(file_a: _Source, file_b: _Source) -> Parameters:
@@ -106,41 +178,34 @@ def extract_params(file_a: _Source, file_b: _Source) -> Parameters:
 
     Mirrors ``proteobench.io.params.metamorpheus.extract_params``.
     """
-    version_line, settings = _load_pair(file_a, file_b)
-    common = _mapping(settings["CommonParameters"], "CommonParameters")
-    search = _mapping(settings["SearchParameters"], "SearchParameters")
-    digestion = _mapping(common["DigestionParams"], "DigestionParams")
-    precursor = _mapping(
-        common["PrecursorDeconvolutionParameters"],
-        "PrecursorDeconvolutionParameters",
-    )
+    version_file, settings_file = _load_pair(file_a, file_b)
+    common = settings_file.settings.common
+    search = settings_file.settings.search
+    digestion = common.digestion
+    precursor = common.precursor_deconvolution
+    version_parts = version_file.first_line.split()
+    if len(version_parts) < 3:
+        raise ValueError("MetaMorpheus version report has no version value")
 
-    return Parameters.model_validate(
-        {
-            "software_name": "MetaMorpheus",
-            "software_version": version_line.split()[2],
-            "search_engine": "MetaMorpheus",
-            "enzyme": digestion["Protease"],
-            "allowed_miscleavages": digestion["MaxMissedCleavages"],
-            "fixed_mods": _parse_modifications(_text(common["ListOfModsFixed"], "ListOfModsFixed")),
-            "variable_mods": _parse_modifications(
-                _text(common["ListOfModsVariable"], "ListOfModsVariable")
-            ),
-            "precursor_mass_tolerance": _format_tolerance(
-                _text(common["PrecursorMassTolerance"], "PrecursorMassTolerance")
-            ),
-            "fragment_mass_tolerance": _format_tolerance(
-                _text(common["ProductMassTolerance"], "ProductMassTolerance")
-            ),
-            "min_peptide_length": digestion["MinPeptideLength"],
-            "max_peptide_length": digestion["MaxPeptideLength"],
-            "max_mods": digestion["MaxModsForPeptide"],
-            "min_precursor_charge": precursor["MinAssumedChargeState"],
-            "max_precursor_charge": precursor["MaxAssumedChargeState"],
-            "enable_match_between_runs": bool(search["MatchBetweenRuns"]),
-            "quantification_method": "FlashLFQ",
-            "protein_inference": "Parsimony" if search.get("DoParsimony") else None,
-            "abundance_normalization_ions": bool(search.get("Normalize")),
-            "ident_fdr_psm": str(common["QValueThreshold"]),
-        }
-    )
+    parameter_data: MetaMorpheusParameterData = {
+        "software_name": "MetaMorpheus",
+        "software_version": version_parts[2],
+        "search_engine": "MetaMorpheus",
+        "enzyme": digestion.protease,
+        "allowed_miscleavages": digestion.max_missed_cleavages,
+        "fixed_mods": _parse_modifications(common.fixed_modifications),
+        "variable_mods": _parse_modifications(common.variable_modifications),
+        "precursor_mass_tolerance": _format_tolerance(common.precursor_mass_tolerance),
+        "fragment_mass_tolerance": _format_tolerance(common.product_mass_tolerance),
+        "min_peptide_length": digestion.min_peptide_length,
+        "max_peptide_length": digestion.max_peptide_length,
+        "max_mods": digestion.max_mods_for_peptide,
+        "min_precursor_charge": precursor.min_assumed_charge_state,
+        "max_precursor_charge": precursor.max_assumed_charge_state,
+        "enable_match_between_runs": search.match_between_runs,
+        "quantification_method": "FlashLFQ",
+        "protein_inference": "Parsimony" if search.do_parsimony else None,
+        "abundance_normalization_ions": search.normalize,
+        "ident_fdr_psm": str(common.q_value_threshold),
+    }
+    return Parameters.model_validate(parameter_data)

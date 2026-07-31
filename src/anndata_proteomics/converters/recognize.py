@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from anndata_proteomics.rules.loader import load_rule
 from anndata_proteomics.rules.registry import iter_packaged_rules
@@ -13,6 +14,21 @@ _SAMPLE_PLACEHOLDER = "<sample>"
 # Columns added to the DataFrame by `apply_modifications`; never present in the
 # raw vendor input, so the recognizer must ignore them.
 _SYNTHESIZED = {"stripped_sequence"}
+
+
+@dataclass(frozen=True, slots=True)
+class RecognizedRule:
+    """Exactly one packaged parsing rule matches the vendor headers."""
+
+    rule: ParseRule
+
+
+@dataclass(frozen=True, slots=True)
+class UnrecognizedRule:
+    """No unique packaged parsing rule matches the vendor headers."""
+
+
+type RuleRecognition = RecognizedRule | UnrecognizedRule
 
 
 def _synthesized_columns(rule: ParseRule) -> set[str]:
@@ -68,13 +84,14 @@ def matches(headers: Iterable[str], rule: ParseRule) -> bool:
     return _required_var_columns(rule).issubset(headers_set)
 
 
-def recognize(headers: Iterable[str]) -> ParseRule | None:
+def recognize(headers: Iterable[str]) -> RuleRecognition:
     """Find the unique packaged ParseRule that matches the headers.
 
-    Returns None if zero rules match or multiple match (caller must specify
-    the rule explicitly in that case).
+    A non-unique result is explicit because callers must then select a rule.
     """
     headers_set = set(headers)
     candidates = [load_rule(p) for p in iter_packaged_rules()]
     hits = [r for r in candidates if matches(headers_set, r)]
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) == 1:
+        return RecognizedRule(hits[0])
+    return UnrecognizedRule()

@@ -19,19 +19,47 @@ import pytest
 from prozor.ahocorasick import get_available_backends
 from scipy.sparse import csr_matrix
 
-from anndata_proteomics.annotation.validate_fasta import (
-    FastaValidationConfig,
-    FastaValidationResult,
-    _replace_owned_feature_mapping,
-    _resolve_leading_protein_field,
-    validate_peptide_modalities_against_fasta,
-    validate_peptide_modality_against_fasta,
-    validate_peptides_against_fasta,
+from anndata_proteomics.adapters.anndata.fasta import (
+    DEFAULT_ANNDATA_PEPTIDE_FASTA_CONFIG,
+    DEFAULT_MUDATA_PEPTIDE_FASTA_CONFIG,
+    AnnDataPeptideFastaConfig,
+    FastaAccessionsColumn,
+    MuDataPeptideFastaConfig,
+    ReportedProteinsColumn,
+    has_fasta_config,
+    has_protein_mudata_target,
+    read_feature_mapping_input,
+    read_feature_mapping_state,
+    read_peptide_anndata_input,
+    read_peptide_mudata_inputs,
+    read_peptide_mudata_modality_input,
+    require_fasta_config,
+    require_peptide_mudata_target,
+    write_anndata_fasta_config,
+    write_feature_mapping,
+    write_mudata_fasta_config,
+    write_peptide_validation,
+    write_peptide_validation_with_feature_mapping,
 )
-from anndata_proteomics.fasta.anndata_io import read_fasta_config
-from anndata_proteomics.fasta.config import FastaConfig
+from anndata_proteomics.annotation.validate_fasta import (
+    FastaValidationResult,
+    FeatureMappingResult,
+    PeptideFastaMatchingConfig,
+)
+from anndata_proteomics.fasta.config import FastaConfig, InferredPatterns
+from anndata_proteomics.fasta.parser import FastaSources
 from anndata_proteomics.rules.loader import load_rule
-from anndata_proteomics.rules.registry import find_rule
+from anndata_proteomics.rules.registry import find_rule_for_version
+from anndata_proteomics.workflows.fasta import (
+    FeatureMappingState,
+    MuLinkFeatureMappingResult,
+    PeptideLevelInput,
+    PeptideLevelWithReportedProteinsInput,
+    PeptideValidationWorkflowResult,
+    build_mulink_feature_mapping,
+    calculate_feature_mapping_update,
+    validate_peptide_levels,
+)
 
 FASTA = (
     ">sp|P12345|PROT1 first protein\n"
@@ -41,9 +69,81 @@ FASTA = (
     ">REV_sp|P00000|DECOY decoy\n"
     "GVFRRDECOYONLY\n"  # decoy carrying GVFRR + a decoy-only peptide
 )
-MULINK_VALIDATION_CONFIG = FastaValidationConfig(
-    protein_match_on="Protein_Group",
+MULINK_VALIDATION_CONFIG = MuDataPeptideFastaConfig(
+    protein_match_on=FastaAccessionsColumn("Protein_Group"),
 )
+
+
+def validate_peptides_against_fasta(
+    target: ad.AnnData,
+    fasta_sources: FastaSources,
+    config: AnnDataPeptideFastaConfig = DEFAULT_ANNDATA_PEPTIDE_FASTA_CONFIG,
+) -> FastaValidationResult:
+    """Compose pure FASTA validation and AnnData persistence for tests."""
+    inputs = read_peptide_anndata_input(target, config)
+    calculated = validate_peptide_levels((inputs,), fasta_sources, config.matching)
+    result = calculated.levels[inputs.name]
+    write_peptide_validation(target, result, config.sequence_field)
+    write_anndata_fasta_config(target, calculated.fasta_config)
+    return result.matching
+
+
+def validate_peptide_modalities_against_fasta(
+    target: mudata.MuData,
+    fasta_sources: FastaSources,
+    config: MuDataPeptideFastaConfig = DEFAULT_MUDATA_PEPTIDE_FASTA_CONFIG,
+) -> dict[str, FastaValidationResult]:
+    """Compose shared FASTA validation and MuData persistence for tests."""
+    inputs = read_peptide_mudata_inputs(target, config)
+    calculated = validate_peptide_levels(inputs, fasta_sources, config.validation.matching)
+    _write_mudata_validation(target, calculated, config)
+    return {name: result.matching for name, result in calculated.levels.items()}
+
+
+def validate_peptide_modality_against_fasta(
+    target: mudata.MuData,
+    modality: str,
+    fasta_sources: FastaSources,
+    config: MuDataPeptideFastaConfig = DEFAULT_MUDATA_PEPTIDE_FASTA_CONFIG,
+) -> FastaValidationResult:
+    """Compose FASTA validation for one selected MuData modality in tests."""
+    inputs = read_peptide_mudata_modality_input(target, modality, config)
+    calculated = validate_peptide_levels((inputs,), fasta_sources, config.validation.matching)
+    _write_mudata_validation(target, calculated, config)
+    return calculated.levels[modality].matching
+
+
+def _write_mudata_validation(
+    target: mudata.MuData,
+    calculated: PeptideValidationWorkflowResult,
+    config: MuDataPeptideFastaConfig,
+) -> None:
+    """Persist a backend-neutral workflow result through the MuData adapter."""
+    if has_protein_mudata_target(target):
+        extracted = read_feature_mapping_input(
+            target,
+            tuple(calculated.levels),
+            config.protein_match_on,
+        )
+        mapping = build_mulink_feature_mapping(extracted.axes, calculated)
+        state = read_feature_mapping_state(target, mapping.feature_mapping.mapping.shape)
+        update = calculate_feature_mapping_update(state, mapping, extracted.protein_match_on)
+        write_feature_mapping(target, update)
+        for name, result in calculated.levels.items():
+            write_peptide_validation_with_feature_mapping(
+                require_peptide_mudata_target(target, name),
+                result,
+                config.validation.sequence_field,
+                update.stats,
+            )
+    else:
+        for name, result in calculated.levels.items():
+            write_peptide_validation(
+                require_peptide_mudata_target(target, name),
+                result,
+                config.validation.sequence_field,
+            )
+    write_mudata_fasta_config(target, calculated.fasta_config)
 
 
 def _peptide_adata(
@@ -71,6 +171,50 @@ def _validation_frame(adata: ad.AnnData | mudata.MuData) -> pd.DataFrame:
     return value
 
 
+def test_fasta_adapter_extracts_typed_peptide_input_separately() -> None:
+    target = _peptide_adata(
+        ["DTHK"],
+        index=["feature"],
+        extra={"Protein_Group": ["P12345"]},
+    )
+
+    extracted = read_peptide_anndata_input(
+        target,
+        AnnDataPeptideFastaConfig(
+            reported_proteins=ReportedProteinsColumn("Protein_Group"),
+        ),
+    )
+
+    assert isinstance(extracted, PeptideLevelWithReportedProteinsInput)
+    assert extracted.name == "ion"
+    assert extracted.sequences.to_dict() == {"feature": "DTHK"}
+    assert extracted.reported_proteins.to_dict() == {"feature": "P12345"}
+
+
+def test_fasta_adapter_persists_typed_peptide_result_separately() -> None:
+    calculated = validate_peptide_levels(
+        (
+            PeptideLevelInput(
+                name="ion",
+                sequences=pd.Series(["DTHK"], index=["feature"]),
+            ),
+        ),
+        FASTA,
+        PeptideFastaMatchingConfig(),
+    )
+    target = _peptide_adata(["DTHK"], index=["feature"])
+
+    write_peptide_validation(
+        target,
+        calculated.levels["ion"],
+        "ProForma_peptide",
+    )
+
+    assert _validation_frame(target).loc["feature", "peptide_in_fasta"]
+    assert target.var["ProForma_peptide"].tolist() == ["DTHK"]
+    assert _last_provenance(target)["source"] == "fasta_validation"
+
+
 # --- basic presence -------------------------------------------------------
 
 
@@ -79,7 +223,7 @@ def test_returns_result_and_mutates():
     result = validate_peptides_against_fasta(a, FASTA)
     assert isinstance(result, FastaValidationResult)
     assert "fasta_validation" in a.varm
-    assert read_fasta_config(a) is not None
+    assert has_fasta_config(a)
     assert "fasta_matches" not in a.uns["anndata_proteomics"]
 
 
@@ -107,12 +251,12 @@ def test_declared_protein_role_wins_for_leading_accession() -> None:
             "Protein_Ids": ["P12345"],
         },
     )
-    rule = load_rule(find_rule("diann", "ion", "1.9.2"))
+    rule = load_rule(find_rule_for_version("diann", "ion", "1.9.2"))
     a.uns["anndata_proteomics"]["rule_json"] = rule.model_dump_json(by_alias=True)
 
-    result = validate_peptides_against_fasta(a, FASTA)
+    validate_peptides_against_fasta(a, FASTA)
 
-    assert result.leading_protein_field == "Protein_Ids"
+    assert _last_provenance(a)["leading_protein_field"] == "Protein_Ids"
     assert _validation_frame(a).loc["feat0", "leading_protein_in_fasta"]
     assert _validation_frame(a).loc["feat0", "peptide_in_leading_protein"]
 
@@ -120,22 +264,30 @@ def test_declared_protein_role_wins_for_leading_accession() -> None:
 def test_leading_protein_field_is_omitted_without_conversion_rule() -> None:
     a = _peptide_adata(["DTHK"], extra={"Protein_Group": ["P12345"]})
 
-    assert _resolve_leading_protein_field(a, None) is None
+    validate_peptides_against_fasta(a, FASTA)
+    assert _last_provenance(a)["leading_protein_field"] is None
 
 
 def test_leading_protein_field_does_not_cascade_from_assignment_role() -> None:
     a = _peptide_adata(["DTHK"], extra={"Genes": ["PLSL_HUMAN"]})
-    rule = load_rule(find_rule("alphadia", "ion", "1.10.3"))
+    rule = load_rule(find_rule_for_version("alphadia", "ion", "1.10.3"))
     a.uns["anndata_proteomics"]["rule_json"] = rule.model_dump_json(by_alias=True)
 
-    assert _resolve_leading_protein_field(a, None) is None
+    validate_peptides_against_fasta(a, FASTA)
+    assert _last_provenance(a)["leading_protein_field"] is None
 
 
 def test_leading_protein_field_rejects_index_sentinel() -> None:
     a = _peptide_adata(["DTHK"])
 
-    with pytest.raises(ValueError, match="leading_protein_field 'index'"):
-        _resolve_leading_protein_field(a, "index")
+    with pytest.raises(ValueError, match="leading_protein_field.*'index'"):
+        validate_peptides_against_fasta(
+            a,
+            FASTA,
+            AnnDataPeptideFastaConfig(
+                reported_proteins=ReportedProteinsColumn("index"),
+            ),
+        )
 
 
 # --- shared / repeated ----------------------------------------------------
@@ -222,7 +374,9 @@ def test_non_uniprot_proteinname_is_full_id():
     result = validate_peptides_against_fasta(
         a,
         FASTA,
-        FastaValidationConfig(is_uniprot=False),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(is_uniprot=False),
+        ),
     )
     row = result.matches[result.matches["sequence"] == "DTHK"].iloc[0]
     assert row["protein_id"] == "sp|P12345|PROT1"
@@ -254,8 +408,12 @@ def test_custom_candidate_configuration_is_inferred_during_validation() -> None:
     result = validate_peptides_against_fasta(
         a,
         ">CUSTOM_P1 custom decoy\nXXCUSTOMPEPXX\n",
-        FastaValidationConfig(
-            identifiers=FastaConfig(decoy_candidates=(r"^CUSTOM_",)),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(
+                identifiers=FastaConfig(
+                    decoy=InferredPatterns(candidates=(r"^CUSTOM_",)),
+                ),
+            ),
         ),
     )
     assert result.fasta_config.decoy.patterns == (r"^CUSTOM_",)
@@ -268,7 +426,9 @@ def test_invalid_backend_raises():
         validate_peptides_against_fasta(
             a,
             FASTA,
-            FastaValidationConfig(backend="typo"),
+            AnnDataPeptideFastaConfig(
+                matching=PeptideFastaMatchingConfig(backend="typo"),
+            ),
         )
 
 
@@ -325,7 +485,9 @@ def test_il_equivalent_opt_in():
     validate_peptides_against_fasta(
         a,
         ">P\nXPEPTLDEX\n",
-        FastaValidationConfig(il_equivalent=True),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(il_equivalent=True),
+        ),
     )
     assert _validation_frame(a).loc["feat0", "peptide_in_fasta"]
 
@@ -356,7 +518,7 @@ def test_missing_sequence_field_raises():
         validate_peptides_against_fasta(
             a,
             FASTA,
-            FastaValidationConfig(sequence_field="NotThere"),
+            AnnDataPeptideFastaConfig(sequence_field="NotThere"),
         )
 
 
@@ -404,7 +566,9 @@ def test_leading_protein_validations_are_independent() -> None:
     validate_peptides_against_fasta(
         a,
         FASTA,
-        FastaValidationConfig(leading_protein_field="Protein_Group"),
+        AnnDataPeptideFastaConfig(
+            reported_proteins=ReportedProteinsColumn("Protein_Group"),
+        ),
     )
     validation = _validation_frame(a)
     assert validation["leading_protein_in_fasta"].tolist() == [True, True, False]
@@ -709,16 +873,22 @@ def test_owned_edge_replacement_uses_overflow_safe_sparse_coordinates() -> None:
         ),
         shape=(size, size),
     )
-    merged, owned = _replace_owned_feature_mapping(
-        existing,
-        old_owned,
-        empty_mapping,
-        target_rows,
+    update = calculate_feature_mapping_update(
+        FeatureMappingState(existing=existing, owned=old_owned),
+        MuLinkFeatureMappingResult(
+            feature_mapping=FeatureMappingResult(
+                mapping=empty_mapping,
+                represented_accessions=frozenset(),
+                unrepresented_accessions=frozenset(),
+            ),
+            target_rows=target_rows,
+        ),
+        "Protein_Group",
     )
 
-    assert merged[owned_row, owned_col] == 0
-    assert merged[unrelated_row, unrelated_col] == 7
-    assert owned.nnz == 0
+    assert update.merged[owned_row, owned_col] == 0
+    assert update.merged[unrelated_row, unrelated_col] == 7
+    assert update.owned.nnz == 0
 
 
 # --- backend equivalence --------------------------------------------------
@@ -741,12 +911,16 @@ def test_backends_produce_identical_match_tables(backend: str) -> None:
     result = validate_peptides_against_fasta(
         _peptide_adata(OVERLAP_PEPTIDES),
         OVERLAP_FASTA,
-        FastaValidationConfig(backend=backend),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(backend=backend),
+        ),
     )
     ref = validate_peptides_against_fasta(
         _peptide_adata(OVERLAP_PEPTIDES),
         OVERLAP_FASTA,
-        FastaValidationConfig(backend="ahocorapy"),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(backend="ahocorapy"),
+        ),
     )
     pd.testing.assert_frame_equal(_sorted_matches(result), _sorted_matches(ref))
     # guard: the fixture must actually exercise the overlapping path
@@ -760,7 +934,9 @@ def test_nested_peptide_matches_on_every_backend(backend: str) -> None:
     validate_peptides_against_fasta(
         a,
         OVERLAP_FASTA,
-        FastaValidationConfig(backend=backend),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(backend=backend),
+        ),
     )
     assert _validation_frame(a)["peptide_in_fasta"].all()
 
@@ -789,7 +965,7 @@ def test_h5ad_round_trip(tmp_path: Path):
     a.write_h5ad(p)
     b = ad.read_h5ad(p)
     pd.testing.assert_frame_equal(_validation_frame(a), _validation_frame(b))
-    assert read_fasta_config(b) == read_fasta_config(a)
+    assert require_fasta_config(b) == require_fasta_config(a)
 
 
 def test_h5mu_round_trip(tmp_path: Path):
@@ -829,7 +1005,9 @@ def test_provenance_entry_content():
     validate_peptides_against_fasta(
         a,
         FASTA,
-        FastaValidationConfig(backend="ahocorapy"),
+        AnnDataPeptideFastaConfig(
+            matching=PeptideFastaMatchingConfig(backend="ahocorapy"),
+        ),
     )
     entry = _last_provenance(a)
     assert entry["source"] == "fasta_validation"
@@ -890,7 +1068,10 @@ def test_cli_fasta_validates_peptide_only_input_by_default(tmp_path: Path):
     from anndata_proteomics.scripts.cli import fasta as cli_fasta
 
     data = tmp_path / "in.h5ad"
-    _peptide_adata(["DTHK", "ZZZZZ"]).write_h5ad(data)
+    target = _peptide_adata(["DTHK", "ZZZZZ"])
+    rule = load_rule(find_rule_for_version("alphadia", "ion", "1.10.3"))
+    target.uns["anndata_proteomics"]["rule_json"] = rule.model_dump_json(by_alias=True)
+    target.write_h5ad(data)
     fasta = tmp_path / "db.fasta"
     fasta.write_text(">sp|A|ONE\nMKDTHKXX\n")
 
@@ -903,9 +1084,7 @@ def test_cli_fasta_validates_peptide_only_input_by_default(tmp_path: Path):
     result = ad.read_h5ad(out)
     assert result.n_vars == 2
     assert _validation_frame(result)["peptide_in_fasta"].tolist() == [True, False]
-    from anndata_proteomics.readers.summary import describe
-
-    annotation = describe(result)["annotations"]["var"][-1]
+    annotation = _last_provenance(result)
     assert annotation["source"] == "fasta_validation"
     assert annotation["n_matched_features"] == 1
     assert annotation["n_unmatched_features"] == 1

@@ -7,12 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from conversion_support import convert_parameterized_level_to_anndata
 
-from anndata_proteomics._matrix_types import named_layers
-from anndata_proteomics.converters.pipeline import (
-    convert_level,
-    resolve_parameters,
-)
+from anndata_proteomics.adapters.anndata.matrix import layer_names
+from anndata_proteomics.converters.pipeline import resolve_parameters
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.readers.dispatch import read_table
 
@@ -113,13 +111,11 @@ def test_cached_fragpipe_and_peaks_inputs_convert_with_exact_run_axis(
     resolution = resolve_parameters(param_path, case.slug)
     frame = read_table(case.input_path)
 
-    result = convert_level(
+    result = convert_parameterized_level_to_anndata(
         frame,
         case.slug,
         "ion",
-        resolution.version,
-        params_path=param_path,
-        parameter_resolution=resolution,
+        resolution,
     )
 
     assert result.n_obs == 6
@@ -137,14 +133,14 @@ def test_cached_fragpipe_and_peaks_inputs_convert_with_exact_run_axis(
     if case.expected_version_status == "missing":
         assert stored["software_version"] is None
     if case.slug == "fragpipe":
-        assert set(named_layers(result)) == {
+        assert set(layer_names(result)) == {
             "Intensity",
             "Spectral_Count",
             "Apex_Retention_Time",
             "Match_Type",
         }
     else:
-        assert {"Normalized_Area", "Sample_Mz", "Sample_RT_Mean"} <= set(named_layers(result))
+        assert {"Normalized_Area", "Sample_Mz", "Sample_RT_Mean"} <= set(layer_names(result))
 
 
 def test_peaks_aif_txt_is_detected_as_comma_delimited() -> None:

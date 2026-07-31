@@ -29,9 +29,9 @@ MODIFICATION_MAPPING = {
 }
 
 
-def _homogenize_mods(raw_mods: str | None, sep: str = ",") -> str | None:
+def _homogenize_mods(raw_mods: str, sep: str = ",") -> str:
     """Map a separator-delimited ``{name} ({residues})`` string to ProForma-like notation."""
-    if not raw_mods or not raw_mods.strip():
+    if not raw_mods.strip():
         return raw_mods
     return ", ".join(
         homogenize_paren_mods(mod, MODIFICATION_MAPPING)
@@ -72,6 +72,8 @@ def _extract_tolerances(
 ) -> tuple[str | None, str | None]:
     system_lines = _tolerance_system_lines(lines, system)
     calibration, main_search_lines = _main_search_block(system_lines)
+    if calibration is None:
+        return None, None
     if calibration == "Dynamic":
         return "Dynamic", "Dynamic"
     patterns = _tolerance_patterns(calibration)
@@ -120,7 +122,7 @@ def _main_search_block(lines: list[str]) -> tuple[str | None, list[str]]:
 
 
 def _tolerance_patterns(
-    calibration: str | None,
+    calibration: str,
 ) -> tuple[str, re.Pattern[str], re.Pattern[str]] | None:
     if calibration == "Static":
         return "Th", _MS1_STATIC, _MS2_STATIC
@@ -151,14 +153,17 @@ def extract_params(source: _Source) -> Parameters:
 
     psm_raw = _value(lines, "Precursor Qvalue Cutoff:")
     protein_raw = _value(lines, "Protein Qvalue Cutoff (Experiment):")
-    ident_psm = float(psm_raw.replace(",", ".")) if psm_raw else None
-    ident_protein = float(protein_raw.replace(",", ".")) if protein_raw else None
+    ident_psm = float(psm_raw.replace(",", ".")) if psm_raw is not None else None
+    ident_protein = float(protein_raw.replace(",", ".")) if protein_raw is not None else None
 
     charge_raw = _value(lines, "Peptide Charge:")
     if charge_raw is None or charge_raw == "False":
         min_z = max_z = None
     else:
         min_z = max_z = int(charge_raw)
+
+    fixed_modifications = _value(lines, "Fixed Modifications:")
+    variable_modifications = _value_regex(lines, r"^Variable Modifications:")
 
     return Parameters.model_validate(
         {
@@ -176,8 +181,12 @@ def extract_params(source: _Source) -> Parameters:
             "allowed_miscleavages": int(_required_value(lines, "Missed Cleavages:")),
             "max_peptide_length": int(_required_value(lines, "Max Peptide Length:")),
             "min_peptide_length": int(_required_value(lines, "Min Peptide Length:")),
-            "fixed_mods": _homogenize_mods(_value(lines, "Fixed Modifications:")),
-            "variable_mods": _homogenize_mods(_value_regex(lines, r"^Variable Modifications:")),
+            "fixed_mods": (
+                None if fixed_modifications is None else _homogenize_mods(fixed_modifications)
+            ),
+            "variable_mods": (
+                None if variable_modifications is None else _homogenize_mods(variable_modifications)
+            ),
             "max_mods": int(_required_value(lines, "Max Variable Modifications:")),
             "min_precursor_charge": min_z,
             "max_precursor_charge": max_z,

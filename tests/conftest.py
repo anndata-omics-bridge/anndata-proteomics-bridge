@@ -39,7 +39,7 @@ class ConversionFixture(TypedDict):
     """Small report-backed table used by conversion-level tests."""
 
     df: pd.DataFrame
-    version: str | None
+    version: str
     slug: str
 
 
@@ -91,6 +91,7 @@ def cached_datasets() -> DatasetLookup:
     """
     from anndata_proteomics.converters import pipeline
     from anndata_proteomics.test_data import DOWNLOADED_DB, TEST_DATA_DIR
+    from anndata_proteomics.workflows import conversion as conversion_workflow
 
     def lookup(slug: str) -> list[CachedDataset]:
         if not DOWNLOADED_DB.exists():
@@ -114,7 +115,25 @@ def cached_datasets() -> DatasetLookup:
                     headers = _read_headers(input_path)
                 except OSError:
                     continue
-                version = pipeline.param_version(param_path, slug) if param_path else None
+                if param_path is not None:
+                    resolution = pipeline.resolve_parameters(param_path, slug)
+                    rule_version = pipeline.resolve_rule_version(resolution, slug)
+                    version = (
+                        rule_version.value
+                        if isinstance(rule_version, pipeline.PresentRuleVersion)
+                        else None
+                    )
+                    selections = conversion_workflow.select_rules_from_parameters(
+                        headers,
+                        slug,
+                        resolution,
+                    )
+                else:
+                    version = None
+                    selections = pipeline.available_rules_by_columns(slug, headers)
+                targets = [str(level) for level in selections]
+                if selections:
+                    targets.append(pipeline.MUDATA)
                 rows.append(
                     {
                         "input_file_path": rel,
@@ -122,7 +141,7 @@ def cached_datasets() -> DatasetLookup:
                         "param_path": param_path,
                         "version": version,
                         "headers": headers,
-                        "targets": pipeline.available_targets(slug, version, headers),
+                        "targets": targets,
                     }
                 )
         return rows
@@ -146,6 +165,8 @@ def diann_full_subset(cached_datasets: DatasetLookup) -> ConversionFixture:
     if not matches:
         pytest.skip("no cached DIA-NN dataset with ion, protein, and fragment levels")
     dataset = matches[0]
+    if dataset["version"] is None:
+        pytest.skip("cached DIA-NN dataset has no software version")
     df = read_table(dataset["input_path"])
     run0 = df["Run"].iloc[0]
     return {

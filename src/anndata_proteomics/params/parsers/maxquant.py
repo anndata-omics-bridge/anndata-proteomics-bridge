@@ -163,10 +163,14 @@ def _tolerance_pair(series: pd.Series) -> tuple[MassTolerance, MassTolerance]:
 
 def _min_peptide_length(series: pd.Series) -> int:
     """Read the minimum peptide length, tolerating the pre/post-rename key."""
-    try:
-        return int(_text(series.loc["minPepLen"].squeeze(), "minPepLen"))
-    except KeyError:
-        return int(_text(series.loc["minPeptideLength"].squeeze(), "minPeptideLength"))
+    keys = set(series.index.get_level_values(0))
+    if "minPepLen" in keys:
+        field = "minPepLen"
+    elif "minPeptideLength" in keys:
+        field = "minPeptideLength"
+    else:
+        raise KeyError("MaxQuant parameters contain no minimum peptide length field")
+    return int(_text(series.loc[field].squeeze(), field))
 
 
 def _mods_for_version(series: pd.Series, version: str) -> tuple[str, str]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
 import h5py
@@ -12,13 +12,27 @@ import mudata
 import numpy as np
 import pandas as pd
 import pytest
+from description_support import describe_anndata
 from mudata import MuData
 from pydantic import ValidationError
 
-from anndata_proteomics.params.anndata_io import write_search_parameters
+from anndata_proteomics.adapters.anndata.description import (
+    describe_modality_path,
+    describe_path,
+)
+from anndata_proteomics.adapters.anndata.params import write_search_parameters
+from anndata_proteomics.description import (
+    AnnDataDescriptionSource,
+    DescriptionConversionMetadata,
+    DescriptionMetadata,
+    MissingProteoBenchMetadata,
+    MissingQcMetadata,
+    MissingRuleMetadata,
+    MissingSearchParameters,
+    calculate_anndata_description,
+)
 from anndata_proteomics.params.model import Parameters
-from anndata_proteomics.readers import summary as summary_module
-from anndata_proteomics.readers.summary import describe, describe_path
+from anndata_proteomics.serialization import JsonObject, JsonValue
 
 
 def _adata(prefix: str = "") -> ad.AnnData:
@@ -105,16 +119,50 @@ def _reject_quantitative_dataset_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(h5py.Dataset, "__getitem__", guarded_getitem)
 
 
-def test_describe_is_a_non_persisted_shape_and_metadata_view(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _at(document: JsonObject, *path: str | int) -> JsonValue:
+    value: JsonValue = document
+    for key in path:
+        if isinstance(key, int):
+            assert isinstance(value, list)
+            value = cast(list[JsonValue], value)[key]
+        else:
+            assert isinstance(value, dict)
+            value = cast(JsonObject, value)[key]
+    return value
+
+
+def test_description_calculation_has_no_container_dependency() -> None:
+    source = AnnDataDescriptionSource(
+        n_runs=2,
+        n_features=3,
+        layers=("intensity",),
+        metadata=DescriptionMetadata(
+            quantification_level="peptide",
+            software_name="Synthetic",
+            conversion=DescriptionConversionMetadata(),
+            search_parameters=MissingSearchParameters(),
+            rule=MissingRuleMetadata(),
+            annotations={},
+            qc=MissingQcMetadata(),
+            proteobench=MissingProteoBenchMetadata(),
+        ),
+    )
+
+    result = calculate_anndata_description(source)
+
+    assert result["quantification"] == {
+        "n_runs": 2,
+        "n_features": 3,
+        "level": "peptide",
+        "software_name": "Synthetic",
+        "software_version": None,
+        "layers": ["intensity"],
+    }
+
+
+def test_describe_is_a_non_persisted_shape_and_metadata_view() -> None:
     obj = _adata()
-
-    def layer_names_only(_obj: object) -> dict[str, object]:
-        return {"intensity": object()}
-
-    monkeypatch.setattr(summary_module, "named_layers", layer_names_only)
-    result = describe(obj)
+    result = describe_anndata(obj)
 
     assert result["quantification"] == {
         "n_runs": 3,
@@ -124,7 +172,7 @@ def test_describe_is_a_non_persisted_shape_and_metadata_view(
         "software_version": None,
         "layers": ["intensity"],
     }
-    assert result["conversion"]["quantification_level"] == "peptide"
+    assert _at(result, "conversion", "quantification_level") == "peptide"
     assert "descriptive_summary" not in obj.uns["anndata_proteomics"]
 
 
@@ -133,7 +181,7 @@ def test_column_mapping_uses_the_stored_rule_without_matrix_statistics() -> None
     obj.layers["quality"] = np.ones(obj.shape)
     _attach_rule(obj)
 
-    assert describe(obj)["column_mapping"] == {
+    assert describe_anndata(obj)["column_mapping"] == {
         "X": {
             "layer": "intensity",
             "source": "Intensity",
@@ -156,11 +204,11 @@ def test_column_mapping_marks_wide_sources_as_patterns() -> None:
     obj = _adata()
     _attach_rule(obj, input_shape="wide")
 
-    mapping = describe(obj)["column_mapping"]
+    result = describe_anndata(obj)
 
-    assert mapping["X"]["source"] == r"^Intensity_(?P<sample>.+)$"
-    assert mapping["X"]["source_kind"] == "pattern"
-    assert mapping["obs"] == {"Run": "<sample>"}
+    assert _at(result, "column_mapping", "X", "source") == r"^Intensity_(?P<sample>.+)$"
+    assert _at(result, "column_mapping", "X", "source_kind") == "pattern"
+    assert _at(result, "column_mapping", "obs") == {"Run": "<sample>"}
 
 
 def test_malformed_stored_rule_is_not_silently_reclassified_as_legacy() -> None:
@@ -168,7 +216,26 @@ def test_malformed_stored_rule_is_not_silently_reclassified_as_legacy() -> None:
     obj.uns["anndata_proteomics"]["rule_json"] = "{not-json"
 
     with pytest.raises(ValidationError):
-        describe(obj)
+        describe_anndata(obj)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantification_level", "not-a-level"),
+        ("software_name", ["not", "a", "name"]),
+        ("rule_selection_method", "guess"),
+    ],
+)
+def test_description_rejects_untyped_conversion_metadata(
+    field: str,
+    value: JsonValue,
+) -> None:
+    obj = _adata()
+    obj.uns["anndata_proteomics"][field] = value
+
+    with pytest.raises(ValidationError):
+        describe_anndata(obj)
 
 
 def test_describe_decodes_canonical_enrichments() -> None:
@@ -188,15 +255,15 @@ def test_describe_decodes_canonical_enrichments() -> None:
     }
     write_search_parameters(obj, Parameters(software_version="1.2.3", enzyme="Trypsin"))
 
-    result = describe(obj)
+    result = describe_anndata(obj)
 
-    assert result["quantification"]["software_version"] == "1.2.3"
-    assert result["search_parameters"]["enzyme"] == "Trypsin"
-    assert result["annotations"]["obs"][0]["n_obs_matched"] == 3
-    assert result["annotations"]["var"][0]["n_matched_features"] == 2
-    assert result["annotations"]["fasta_config"]["decoy"]["patterns"] == ["^REV_"]
-    assert result["qc"]["scope"] == "anndata"
-    assert result["proteobench"]["scores"]["nr_feature"] == 4
+    assert _at(result, "quantification", "software_version") == "1.2.3"
+    assert _at(result, "search_parameters", "enzyme") == "Trypsin"
+    assert _at(result, "annotations", "obs", 0, "n_obs_matched") == 3
+    assert _at(result, "annotations", "var", 0, "n_matched_features") == 2
+    assert _at(result, "annotations", "fasta_config", "decoy", "patterns") == ["^REV_"]
+    assert _at(result, "qc", "scope") == "anndata"
+    assert _at(result, "proteobench", "scores", "nr_feature") == 4
 
 
 def test_describe_path_round_trips_h5ad_without_quantitative_reads(
@@ -210,8 +277,18 @@ def test_describe_path_round_trips_h5ad_without_quantitative_reads(
 
     result = describe_path(path)
 
-    assert result["quantification"]["n_runs"] == 3
-    assert result["quantification"]["layers"] == ["intensity"]
+    assert _at(result, "quantification", "n_runs") == 3
+    assert _at(result, "quantification", "layers") == ["intensity"]
+
+
+def test_live_and_hdf5_adapters_feed_the_same_description(tmp_path: Path) -> None:
+    obj = _adata()
+    _attach_rule(obj)
+    write_search_parameters(obj, Parameters(software_version="1.2.3", enzyme="Trypsin"))
+    path = tmp_path / "result.h5ad"
+    obj.write_h5ad(path)
+
+    assert describe_path(path) == describe_anndata(obj)
 
 
 def test_describe_path_targets_mudata_without_quantitative_reads(
@@ -230,20 +307,22 @@ def test_describe_path_targets_mudata_without_quantitative_reads(
     _reject_quantitative_dataset_reads(monkeypatch)
 
     whole = describe_path(path)
-    peptide_view = describe_path(path, modality="peptide")
-    protein_view = describe_path(path, modality="protein")
+    peptide_view = describe_modality_path(path, "peptide")
+    protein_view = describe_modality_path(path, "protein")
 
-    assert set(whole["modalities"]) == {"peptide", "protein"}
+    modality_names = _at(whole, "modalities")
+    assert isinstance(modality_names, dict)
+    assert set(modality_names) == {"peptide", "protein"}
     assert peptide_view["container_type"] == "anndata"
-    assert peptide_view["quantification"]["level"] == "peptide"
-    assert peptide_view["column_mapping"]["X"]["source"] == "Intensity"
-    assert protein_view["quantification"]["level"] == "protein"
+    assert _at(peptide_view, "quantification", "level") == "peptide"
+    assert _at(peptide_view, "column_mapping", "X", "source") == "Intensity"
+    assert _at(protein_view, "quantification", "level") == "protein"
     with pytest.raises(ValueError, match="not in MuData"):
-        describe_path(path, modality="missing")
+        describe_modality_path(path, "missing")
 
 
 def test_describe_path_rejects_invalid_targets(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="only to MuData"):
-        describe_path(tmp_path / "input.h5ad", modality="ion")
+        describe_modality_path(tmp_path / "input.h5ad", "ion")
     with pytest.raises(ValueError, match="unsupported"):
         describe_path(tmp_path / "input.txt")

@@ -5,13 +5,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from anndata_proteomics.adapters.anndata.conversion import to_anndata
 from anndata_proteomics.converters._pieces import ConversionPieces
-from anndata_proteomics.converters.assemble import to_anndata
-from anndata_proteomics.rules.loader import load_packaged_rule
+from anndata_proteomics.converters.pipeline import RuleSelection
+from anndata_proteomics.rules.loader import load_packaged_rule_for_version
+from anndata_proteomics.workflows.conversion import LevelConversion
 
 
 def test_to_anndata_shape_and_uns() -> None:
-    rule = load_packaged_rule("diann", "ion", "2.0.0")
+    rule = load_packaged_rule_for_version("diann", "ion", "2.0.0")
     obs = pd.DataFrame({"Run": ["S1", "S2"]}, index=["S1", "S2"])
     var = pd.DataFrame({"Modified_Sequence": ["P1", "P2", "P3"]}, index=["P1_2", "P2_2", "P3_3"])
     X = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
@@ -20,7 +22,13 @@ def test_to_anndata_shape_and_uns() -> None:
         "Q_Value": np.array([[0.01, 0.02, 0.03], [0.04, 0.05, 0.06]]),
     }
     pieces = ConversionPieces(X=X, obs=obs, var=var, layers=layers)
-    adata = to_anndata(pieces, rule)
+    adata = to_anndata(
+        LevelConversion(
+            level="ion",
+            selection=RuleSelection(rule, "software_version"),
+            pieces=pieces,
+        )
+    )
 
     assert adata.shape == (2, 3)
     assert "anndata_proteomics" in adata.uns

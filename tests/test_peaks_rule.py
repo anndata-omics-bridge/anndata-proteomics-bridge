@@ -6,9 +6,9 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
+from conversion_support import convert_to_anndata
 
-from anndata_proteomics._matrix_types import named_layers
-from anndata_proteomics.converters.assemble import convert
+from anndata_proteomics.adapters.anndata.matrix import layer_names
 from anndata_proteomics.rules.loader import load_packaged_rule
 
 
@@ -35,10 +35,10 @@ def _frame(rows: int = 1, **overrides: Sequence[object]) -> pd.DataFrame:
 
 
 def test_peaks_rule_excludes_summary_columns_and_normalizes_raw_suffixes() -> None:
-    result = convert(_frame(), load_packaged_rule("peaks", "ion"))
+    result = convert_to_anndata(_frame(), load_packaged_rule("peaks", "ion"))
 
     assert result.obs_names.tolist() == ["LFQ_Run_1"]
-    assert set(named_layers(result)) == {
+    assert set(layer_names(result)) == {
         "Normalized_Area",
         "Sample_Mz",
         "Sample_RT_Mean",
@@ -65,7 +65,7 @@ def test_peaks_ascore_extracts_the_score_from_the_vendor_site_string() -> None:
         },
     )
 
-    result = convert(frame, load_packaged_rule("peaks", "ion"))
+    result = convert_to_anndata(frame, load_packaged_rule("peaks", "ion"))
 
     ascore = np.asarray(result.layers["AScore"], dtype="float64")
     assert ascore[0, 0] == 76.54
@@ -83,7 +83,7 @@ def test_peaks_zero_normalized_area_is_the_not_detected_sentinel() -> None:
         },
     )
 
-    result = convert(frame, load_packaged_rule("peaks", "ion"))
+    result = convert_to_anndata(frame, load_packaged_rule("peaks", "ion"))
 
     area = np.asarray(result.layers["Normalized_Area"], dtype="float64")
     mz = np.asarray(result.layers["Sample_Mz"], dtype="float64")

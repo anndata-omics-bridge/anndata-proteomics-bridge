@@ -10,6 +10,7 @@ from anndata_proteomics.scripts.extract_raw_file_db import (
     PROTEOBENCH_SETTINGS_REVISION,
     _download_module_jsons,
     _feature_count,
+    _SubmissionMetadata,
     annotations,
     clean,
     clean_generated_data,
@@ -18,11 +19,11 @@ from anndata_proteomics.scripts.extract_raw_file_db import (
 
 
 def test_feature_count_uses_current_proteobench_field() -> None:
-    assert _feature_count({"nr_feature": 42}) == 42
+    assert _feature_count(_SubmissionMetadata(nr_feature=42)) == 42
 
 
 def test_feature_count_supports_legacy_proteobench_field() -> None:
-    assert _feature_count({"nr_prec": 17}) == 17
+    assert _feature_count(_SubmissionMetadata(nr_prec=17)) == 17
 
 
 def test_clean_generated_data_removes_only_known_artifacts(tmp_path: Path) -> None:

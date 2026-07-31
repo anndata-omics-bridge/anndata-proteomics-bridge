@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
@@ -24,6 +25,21 @@ type ParameterSource = str | Path | IO[bytes] | IO[str]
 type ParameterInput = ParameterSource | tuple[ParameterSource, ...]
 type ParseFn = Callable[[ParameterInput], Parameters]
 type _SingleSourceParseFn = Callable[[ParameterSource], Parameters]
+
+
+@dataclass(frozen=True, slots=True)
+class RecognizedParameterParser:
+    """A catalog label that names one registered parameter parser."""
+
+    slug: str
+
+
+@dataclass(frozen=True, slots=True)
+class UnrecognizedParameterParser:
+    """A catalog label that names no registered parameter parser."""
+
+
+type ParameterParserRecognition = RecognizedParameterParser | UnrecognizedParameterParser
 
 
 def _sources(value: ParameterInput) -> tuple[ParameterSource, ...]:
@@ -110,7 +126,7 @@ def parse_params(path: ParameterInput, software: str) -> Parameters:
     return get_parser(software)(path)
 
 
-def parser_slug(software_name: str) -> str | None:
+def recognize_parser(software_name: str) -> ParameterParserRecognition:
     """Resolve the primary parameter parser named by a catalog software label.
 
     Compound labels place the workflow owner first, for example
@@ -130,7 +146,9 @@ def parser_slug(software_name: str) -> str | None:
         for token, candidate in canonical.items()
         if token and token in normalized_name
     ]
-    return min(matches)[2] if matches else None
+    if not matches:
+        return UnrecognizedParameterParser()
+    return RecognizedParameterParser(min(matches)[2])
 
 
 def available_software() -> list[str]:

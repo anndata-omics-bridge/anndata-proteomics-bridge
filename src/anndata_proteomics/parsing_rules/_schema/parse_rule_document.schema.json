@@ -142,7 +142,7 @@
     },
     "Layer": {
       "additionalProperties": false,
-      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\n``value_pattern`` handles vendor columns whose cells are structured strings rather\nthan bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex\nwith exactly one capture group, applied per cell before numeric coercion; the first\nmatch wins and non-matching cells become NaN. Without it such a column silently\ncoerces to an all-NaN layer.",
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\nA regex ``value_pattern`` handles vendor columns whose cells are structured strings\nrather than bare numbers (PEAKS ``AScore`` is ``site:modification:score``). Its\n``pattern`` has exactly one capture group, applied per cell before numeric coercion;\nthe first match wins and non-matching cells become NaN. ``mode = \"none\"`` explicitly\ndeclares directly parseable scalar values.",
       "properties": {
         "name": {
           "title": "Name",
@@ -176,9 +176,10 @@
           "type": "array"
         },
         "value_pattern": {
-          "default": "",
-          "title": "Value Pattern",
-          "type": "string"
+          "$ref": "#/$defs/ValuePattern",
+          "default": {
+            "mode": "none"
+          }
         },
         "required": {
           "default": false,
@@ -332,13 +333,81 @@
           "type": "array"
         },
         "requires_search_parameters": {
-          "additionalProperties": true,
-          "title": "Requires Search Parameters",
-          "type": "object"
+          "$ref": "#/$defs/SearchParameterCondition"
         }
       },
       "title": "LevelRuleFragment",
       "type": "object"
+    },
+    "MassTolerance": {
+      "additionalProperties": false,
+      "description": "Mass tolerance centered at the theoretical mass.\n\nMass tolerances are physically symmetric: a vendor saying\n``[-20 ppm, 20 ppm]`` and a vendor saying ``20 ppm`` mean the same\nthing \u2014 a \u00b1 half-width around the theoretical peak. APB stores\nonly that half-width as ``value`` plus a ``unit``. Asymmetric\nranges are rejected at parse time; we have not seen a tool that\nactually means ``[-10 ppm, +30 ppm]`` in earnest.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "enum": [
+                "ppm",
+                "Da"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "mode": {
+          "enum": [
+            "absolute",
+            "automatic"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "MassTolerance",
+      "type": "object"
+    },
+    "ModType": {
+      "description": "Whether a modification was searched as fixed, variable, or unknown.",
+      "enum": [
+        "fixed",
+        "variable",
+        "unknown"
+      ],
+      "title": "ModType",
+      "type": "string"
     },
     "ModificationMapEntry": {
       "additionalProperties": false,
@@ -358,6 +427,20 @@
         "accession"
       ],
       "title": "ModificationMapEntry",
+      "type": "object"
+    },
+    "NoValuePattern": {
+      "additionalProperties": false,
+      "description": "A numeric layer contains directly parseable scalar values.",
+      "properties": {
+        "mode": {
+          "const": "none",
+          "default": "none",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "NoValuePattern",
       "type": "object"
     },
     "PartialAxis": {
@@ -541,6 +624,45 @@
       "title": "PositionalFragments",
       "type": "object"
     },
+    "Probability": {
+      "additionalProperties": false,
+      "description": "A probability value constrained to the closed interval [0, 1].",
+      "properties": {
+        "value": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "Probability",
+      "type": "object"
+    },
+    "RegexValuePattern": {
+      "additionalProperties": false,
+      "description": "Extract one numeric capture group from each structured layer value.",
+      "properties": {
+        "mode": {
+          "const": "regex",
+          "default": "regex",
+          "title": "Mode",
+          "type": "string"
+        },
+        "pattern": {
+          "minLength": 1,
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "title": "RegexValuePattern",
+      "type": "object"
+    },
     "RuleFragment": {
       "additionalProperties": false,
       "description": "Strict partial ParseRule body used by a document base.",
@@ -680,12 +802,426 @@
       "additionalProperties": false,
       "properties": {
         "pattern": {
-          "default": "",
+          "minLength": 1,
           "title": "Pattern",
           "type": "string"
         }
       },
+      "required": [
+        "pattern"
+      ],
       "title": "SampleNameCleanup",
+      "type": "object"
+    },
+    "SearchParameterCondition": {
+      "additionalProperties": false,
+      "description": "Typed equality conditions over explicitly declared search-parameter fields.",
+      "properties": {
+        "software_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Software Name"
+        },
+        "software_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Software Version"
+        },
+        "quantification_software": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantification Software"
+        },
+        "quantification_software_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantification Software Version"
+        },
+        "acquisition_method": {
+          "default": "unknown",
+          "enum": [
+            "DDA",
+            "DIA",
+            "unknown"
+          ],
+          "title": "Acquisition Method",
+          "type": "string"
+        },
+        "search_engine": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Search Engine"
+        },
+        "search_engine_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Search Engine Version"
+        },
+        "ident_fdr_psm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ident_fdr_peptide": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ident_fdr_protein": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probability"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enable_match_between_runs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enable Match Between Runs"
+        },
+        "precursor_mass_tolerance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MassTolerance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fragment_mass_tolerance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MassTolerance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enzyme": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enzyme"
+        },
+        "semi_enzymatic": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Semi Enzymatic"
+        },
+        "allowed_miscleavages": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Miscleavages"
+        },
+        "min_peptide_length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Peptide Length"
+        },
+        "max_peptide_length": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Peptide Length"
+        },
+        "fixed_mods": {
+          "items": {
+            "$ref": "#/$defs/SearchedModification"
+          },
+          "title": "Fixed Mods",
+          "type": "array"
+        },
+        "variable_mods": {
+          "items": {
+            "$ref": "#/$defs/SearchedModification"
+          },
+          "title": "Variable Mods",
+          "type": "array"
+        },
+        "max_mods": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Mods"
+        },
+        "min_precursor_charge": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Precursor Charge"
+        },
+        "max_precursor_charge": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Precursor Charge"
+        },
+        "min_precursor_mz": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Precursor Mz"
+        },
+        "max_precursor_mz": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Precursor Mz"
+        },
+        "min_fragment_mz": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Fragment Mz"
+        },
+        "max_fragment_mz": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Fragment Mz"
+        },
+        "quantification_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantification Method"
+        },
+        "combine_charge_states": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Combine Charge States"
+        },
+        "protein_inference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protein Inference"
+        },
+        "abundance_normalization_ions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abundance Normalization Ions"
+        },
+        "predictors_library": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predictors Library"
+        },
+        "scan_window": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scan Window"
+        },
+        "unparsed_parameters": {
+          "items": {
+            "$ref": "#/$defs/UnparsedParameter"
+          },
+          "title": "Unparsed Parameters",
+          "type": "array"
+        }
+      },
+      "title": "SearchParameterCondition",
       "type": "object"
     },
     "SearchParameterOverride": {
@@ -693,10 +1229,8 @@
       "description": "One search-parameter condition and its level-local axis override.",
       "properties": {
         "when_search_parameters": {
-          "additionalProperties": true,
-          "minProperties": 1,
-          "title": "When Search Parameters",
-          "type": "object"
+          "$ref": "#/$defs/SearchParameterCondition",
+          "minProperties": 1
         },
         "axis": {
           "$ref": "#/$defs/PartialAxis"
@@ -707,6 +1241,85 @@
         "axis"
       ],
       "title": "SearchParameterOverride",
+      "type": "object"
+    },
+    "SearchedModification": {
+      "additionalProperties": false,
+      "description": "A modification declared in a search-engine parameter file.\n\nUsed for SDRF metadata export (``comment[modification parameters]``).\nCarries no sequence localization \u2014 that lives on\n:class:`ModificationOccurrence`.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "accession": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accession"
+        },
+        "mod_type": {
+          "$ref": "#/$defs/ModType",
+          "default": "unknown"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "Anywhere",
+          "title": "Position"
+        },
+        "mass_delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mass Delta"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "SearchedModification",
       "type": "object"
     },
     "SiteListModifications": {
@@ -848,6 +1461,71 @@
       ],
       "title": "TokenRegexModifications",
       "type": "object"
+    },
+    "UnparsedParameter": {
+      "additionalProperties": false,
+      "description": "Explicitly retained vendor value that is outside the core schema.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "UnparsedParameter",
+      "type": "object"
+    },
+    "ValuePattern": {
+      "discriminator": {
+        "mapping": {
+          "none": "#/$defs/NoValuePattern",
+          "regex": "#/$defs/RegexValuePattern"
+        },
+        "propertyName": "mode"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NoValuePattern"
+        },
+        {
+          "$ref": "#/$defs/RegexValuePattern"
+        }
+      ]
     }
   },
   "additionalProperties": false,

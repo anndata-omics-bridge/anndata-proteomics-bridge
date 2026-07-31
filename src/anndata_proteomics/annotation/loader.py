@@ -11,17 +11,39 @@ import pandas as pd
 ANNOTATION_SUFFIXES = frozenset({".csv", ".toml", ".tsv"})
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class AnnotationTable:
-    """A sample table plus the two fields needed to join it onto ``obs``."""
+    """Sample records and the fields required to join them to observations."""
 
     samples: pd.DataFrame
     match_on: str = "index"
     key_field: str = "raw_file"
-    source: Path | None = None
 
 
-def load_annotation(path: Path | str) -> AnnotationTable:
+@dataclass(frozen=True, slots=True)
+class AnnotationFileOrigin:
+    """File provenance for a loaded annotation table."""
+
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class InMemoryAnnotationOrigin:
+    """Provenance marker for a programmatically constructed annotation table."""
+
+
+AnnotationOrigin = AnnotationFileOrigin | InMemoryAnnotationOrigin
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedAnnotation:
+    """A validated annotation table and its file provenance."""
+
+    table: AnnotationTable
+    origin: AnnotationFileOrigin
+
+
+def load_annotation(path: Path | str) -> LoadedAnnotation:
     """Load a ProteoBench TOML or a delimited sample-annotation table.
 
     ProteoBench ``module_settings.toml`` files expose their table as top-level
@@ -42,10 +64,7 @@ def load_annotation(path: Path | str) -> AnnotationTable:
         annotation = _load_toml(source)
     elif suffix in {".csv", ".tsv"}:
         separator = "," if suffix == ".csv" else "\t"
-        annotation = AnnotationTable(
-            samples=pd.read_csv(source, sep=separator),
-            source=source.resolve(),
-        )
+        annotation = AnnotationTable(samples=pd.read_csv(source, sep=separator))
     else:
         supported = ", ".join(sorted(ANNOTATION_SUFFIXES))
         raise ValueError(
@@ -53,7 +72,10 @@ def load_annotation(path: Path | str) -> AnnotationTable:
         )
 
     _validate_annotation_table(annotation)
-    return annotation
+    return LoadedAnnotation(
+        table=annotation,
+        origin=AnnotationFileOrigin(source.resolve()),
+    )
 
 
 def _load_toml(source: Path) -> AnnotationTable:
@@ -75,7 +97,6 @@ def _load_toml(source: Path) -> AnnotationTable:
         samples=pd.DataFrame(samples),
         match_on=match_on,
         key_field=key_field,
-        source=source.resolve(),
     )
 
 

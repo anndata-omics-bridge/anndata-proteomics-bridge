@@ -1,59 +1,43 @@
-"""Focused edge-path coverage for FASTA parsing, annotation, and validation."""
+"""Focused edge-path coverage for pure FASTA calculations and their adapter."""
 
 from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import anndata as ad
 import mudata
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.sparse import csr_matrix
 
+from anndata_proteomics.adapters.anndata import fasta as fasta_adapter
 from anndata_proteomics.annotation import validate_fasta, var_fasta
-from anndata_proteomics.annotation.validate_fasta import (
-    FastaValidationResult,
-    _TargetInput,
-)
 from anndata_proteomics.fasta import annotation
-from anndata_proteomics.fasta.anndata_io import read_fasta_config
 from anndata_proteomics.fasta.config import (
+    ExplicitPatterns,
     FastaConfig,
+    InferredPatterns,
     resolve_fasta_config,
 )
 from anndata_proteomics.fasta.parser import iter_fasta
 
 
-def _adata(
-    *,
-    level: str,
-    names: list[str],
-    var: pd.DataFrame | None = None,
-) -> ad.AnnData:
-    result = ad.AnnData(
-        np.zeros((1, len(names))),
-        var=var if var is not None else pd.DataFrame(index=names),
-    )
-    result.var_names = names
+def _adata(*, level: str, names: list[str]) -> ad.AnnData:
+    result = ad.AnnData(np.zeros((1, len(names))), var=pd.DataFrame(index=names))
     result.uns["anndata_proteomics"] = {"quantification_level": level}
     return result
 
 
 def test_fasta_config_reader_handles_missing_and_byte_payloads() -> None:
     empty = ad.AnnData()
-    assert read_fasta_config(empty) is None
-    namespace: dict[str, Any] = {"other": "metadata"}
-    empty.uns["anndata_proteomics"] = namespace
-    assert read_fasta_config(empty) is None
+    assert not fasta_adapter.has_fasta_config(empty)
+    with pytest.raises(ValueError, match="no stored FASTA"):
+        fasta_adapter.require_fasta_config(empty)
 
     resolved = resolve_fasta_config(["REV_P1"], FastaConfig())
-    # h5py hands back bytes, not str, for a round-tripped JSON payload.
-    namespace["fasta_config"] = resolved.model_dump_json().encode()
-    assert read_fasta_config(empty) == resolved
+    empty.uns["anndata_proteomics"] = {"fasta_config": resolved.model_dump_json().encode()}
+    assert fasta_adapter.require_fasta_config(empty) == resolved
 
 
 def test_fasta_parser_path_blank_lines_and_headerless_input(tmp_path: Path) -> None:
@@ -78,174 +62,96 @@ def test_fasta_annotation_empty_stream_and_before_cleavage() -> None:
     assert annotation.materialize_sources(stream) == [stream]
     assert annotation.describe_sources(stream) == ["<stream>"]
 
-    asp_n, _name = annotation.resolve_cleavage("Asp-N")
-    assert annotation._find_cleavage_sites("DAD", asp_n) == [2]
+    asp_n = annotation.resolve_cleavage_name("Asp-N")
+    assert annotation._find_cleavage_sites("DAD", asp_n.rule) == [2]
 
 
-def test_var_fasta_duplicate_accession_precedence_and_no_mismatch() -> None:
-    frame = pd.DataFrame(
-        {
-            "fasta.id": ["tr|P1|ONE", "sp|P1|ONE", "custom"],
-            "proteinname": ["P1", "P1", "custom"],
-            "is_decoy": [False, False, False],
-        }
+def test_protein_annotation_prefers_curated_duplicate_accession() -> None:
+    result = var_fasta.annotate_proteins_from_fasta(
+        pd.Series(["P1"], index=["protein"]),
+        ">tr|P1|ONE unreviewed\nPEPTIDE\n>sp|P1|ONE curated\nPEPTIDE\n",
     )
-    indexed = var_fasta._index_by_join_key(frame)
-    assert indexed.loc["P1", "fasta.id"] == "sp|P1|ONE"
-    assert var_fasta._database_priority("tr|P1|ONE") == 1
-    assert var_fasta._database_priority("custom") == 2
-    var_fasta._warn_on_mismatch(
-        pd.Index(["P1", "custom"]),
-        np.asarray([True, True], dtype=np.bool_),
-        indexed,
-    )
+    assert result.frame.loc["protein", "fasta.id"] == "sp|P1|ONE"
 
 
-def test_validation_empty_fraction_contract_and_target_guards() -> None:
-    result = FastaValidationResult(
-        summary=pd.DataFrame(),
-        matches=pd.DataFrame(),
-        n_features=0,
-        n_unique_sequences=0,
-        n_invalid_sequences=0,
-        n_matched_features=0,
-        n_unmatched_features=0,
-        requested_backend="auto",
-        backend="ahocorapy",
-        sequence_field="ProForma_peptide",
-        leading_protein_field=None,
-        il_equivalent=False,
-        fasta_config=resolve_fasta_config([], FastaConfig()),
-        unmatched_sequences=[],
+def test_empty_peptide_matching_has_a_concrete_result() -> None:
+    result = validate_fasta.match_peptides_to_fasta(
+        pd.Series([], index=pd.Index([], dtype="object"), dtype="object"),
+        ">P1\nPEP\n",
     )
     assert result.fraction_unmatched == 0
+    assert result.matches.empty
+    assert list(result.matches.columns) == [
+        "sequence",
+        "protein_id",
+        "proteinname",
+        "start",
+        "end",
+        "length",
+        "is_decoy",
+        "is_contaminant",
+    ]
 
-    with pytest.raises(ValueError, match="no peptide-derived"):
-        validate_fasta._validate_targets(
-            _adata(level="ion", names=[]),
-            {},
-            ">P1\nPEP\n",
-            validate_fasta.DEFAULT_FASTA_VALIDATION_CONFIG,
-        )
+
+def test_reported_protein_validation_needs_no_container() -> None:
+    matches = validate_fasta.match_peptides_to_fasta(
+        pd.Series(["PEP", "PEP"], index=["feature-a", "feature-b"]),
+        ">sp|P1|ONE\nMPEPK\n>sp|P2|TWO\nMOTHERK\n",
+    )
+    validation = validate_fasta.validate_reported_proteins(
+        pd.Series(["P1", "P2"], index=["feature-a", "feature-b"]),
+        matches,
+    )
+    assert validation.summary["leading_protein_in_fasta"].tolist() == [True, True]
+    assert validation.summary["peptide_in_leading_protein"].tolist() == [True, False]
 
 
-def test_feature_target_and_leading_protein_guards() -> None:
-    ion = _adata(level="ion", names=["ion"])
+def test_mudata_target_guards_are_adapter_responsibilities() -> None:
     protein = _adata(level="protein", names=["protein"])
     with mudata.set_options(pull_on_update=False):
-        container = mudata.MuData({"ion": ion})
+        container = mudata.MuData({"protein": protein})
+    with pytest.raises(ValueError, match="no peptide-derived"):
+        fasta_adapter.read_peptide_mudata_inputs(container)
     with pytest.raises(ValueError, match="not in MuData"):
-        validate_fasta._resolve_mudata_target(container, "missing")
-
-    with mudata.set_options(pull_on_update=False):
-        protein_container = mudata.MuData({"protein": protein})
+        fasta_adapter.read_peptide_mudata_modality_input(
+            container,
+            "missing",
+        )
     with pytest.raises(ValueError, match="not peptide-derived"):
-        validate_fasta._resolve_mudata_target(protein_container, "protein")
-    assert validate_fasta._resolve_all_feature_targets(protein_container) == {}
-
-    with pytest.raises(ValueError, match="leading_protein_field"):
-        validate_fasta._resolve_leading_protein_field(ion, "missing")
-    ion.var["Leading"] = [None]
-    assert validate_fasta._resolve_leading_protein_field(ion, "Leading") == "Leading"
-    leading = validate_fasta._feature_leading_proteins(
-        ion,
-        "Leading",
-        is_uniprot=True,
-    )
-    assert leading.isna().all()
-
-
-def _mapping_fixture(
-    *,
-    global_names: list[str],
-    sequence: str | None = None,
-) -> tuple[Any, dict[str, _TargetInput], pd.DataFrame]:
-    protein = _adata(
-        level="protein",
-        names=["protein"],
-        var=pd.DataFrame({"Protein_Group": ["P1"]}, index=["protein"]),
-    )
-    feature = _adata(level="ion", names=["feature"])
-    item = _TargetInput(
-        name="ion",
-        target=feature,
-        normalized_sequences=pd.Series([sequence], index=["feature"], dtype="object"),
-        leading_proteins=pd.Series([None], index=["feature"], dtype="object"),
-        leading_protein_field=None,
-    )
-    owner = SimpleNamespace(
-        var_names=pd.Index(global_names),
-        n_vars=len(global_names),
-        mod={"protein": protein},
-        varp={},
-    )
-    matches = pd.DataFrame(columns=["sequence", "proteinname"])
-    return owner, {"ion": item}, matches
-
-
-def test_mulink_topology_and_existing_shape_guards() -> None:
-    owner, targets, matches = _mapping_fixture(global_names=["duplicate", "duplicate"])
-    with pytest.raises(ValueError, match="globally unique"):
-        validate_fasta._store_mulink_feature_mapping(
-            owner,
-            targets,
-            matches,
-            protein_match_on="Protein_Group",
-            is_uniprot=True,
-        )
-
-    owner, targets, matches = _mapping_fixture(global_names=["protein"])
-    with pytest.raises(ValueError, match="absent from the MuData global"):
-        validate_fasta._store_mulink_feature_mapping(
-            owner,
-            targets,
-            matches,
-            protein_match_on="Protein_Group",
-            is_uniprot=True,
-        )
-
-    owner, targets, matches = _mapping_fixture(
-        global_names=["feature", "protein"],
-        sequence=None,
-    )
-    stats = validate_fasta._store_mulink_feature_mapping(
-        owner,
-        targets,
-        matches,
-        protein_match_on="Protein_Group",
-        is_uniprot=True,
-    )
-    assert stats.n_fasta_edges == 0
-
-    owner, targets, matches = _mapping_fixture(
-        global_names=["feature", "protein"],
-        sequence=None,
-    )
-    owner.varp["feature_mapping"] = csr_matrix((1, 1))
-    with pytest.raises(ValueError, match="feature_mapping.*shape"):
-        validate_fasta._store_mulink_feature_mapping(
-            owner,
-            targets,
-            matches,
-            protein_match_on="Protein_Group",
-            is_uniprot=True,
-        )
-
-    owner, targets, matches = _mapping_fixture(
-        global_names=["feature", "protein"],
-        sequence=None,
-    )
-    owner.varp["_apb_fasta_feature_mapping_contribution"] = csr_matrix((1, 1))
-    with pytest.raises(ValueError, match="contribution.*shape"):
-        validate_fasta._store_mulink_feature_mapping(
-            owner,
-            targets,
-            matches,
-            protein_match_on="Protein_Group",
-            is_uniprot=True,
+        fasta_adapter.read_peptide_mudata_modality_input(
+            container,
+            "protein",
         )
 
 
-def test_single_pattern_distinguishes_none_from_disabled() -> None:
-    assert FastaConfig.from_single_patterns(None, None).decoy_patterns is None
-    assert FastaConfig.from_single_patterns("", None).decoy_patterns == ()
+def test_feature_mapping_uses_only_typed_domain_inputs() -> None:
+    peptide_nodes = validate_fasta.PeptideFeatureNodes(
+        nodes=(validate_fasta.PeptideFeatureNode(position=0, sequence="PEP"),),
+        total_nodes=2,
+    )
+    protein_nodes = validate_fasta.ProteinFeatureNodes(
+        positions_by_accession={"P1": (1,)},
+        total_nodes=2,
+    )
+    matches = validate_fasta.PeptideProteinMatches(
+        accessions_by_sequence={"PEP": frozenset({"P1", "P2"})},
+        all_accessions=frozenset({"P1", "P2"}),
+    )
+    result = validate_fasta.build_feature_mapping(peptide_nodes, protein_nodes, matches)
+    assert result.mapping[0, 1] == 1
+    assert result.represented_accessions == frozenset({"P1"})
+    assert result.unrepresented_accessions == frozenset({"P2"})
+
+    different_axis = validate_fasta.ProteinFeatureNodes(
+        positions_by_accession={"P1": (1,)},
+        total_nodes=3,
+    )
+    with pytest.raises(ValueError, match="different global feature-axis sizes"):
+        validate_fasta.build_feature_mapping(peptide_nodes, different_axis, matches)
+
+
+def test_pattern_policies_distinguish_inference_from_disabled() -> None:
+    inferred = FastaConfig(decoy=InferredPatterns(candidates=(r"^REV_",)))
+    disabled = FastaConfig(decoy=ExplicitPatterns(patterns=()))
+    assert inferred.decoy.mode == "infer"
+    assert disabled.decoy.mode == "explicit"

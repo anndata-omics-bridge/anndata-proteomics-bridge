@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pandas as pd
+from conversion_support import convert_to_anndata
 from numpy.testing import assert_array_equal
 
-from anndata_proteomics.converters.assemble import convert
 from anndata_proteomics.converters.recognize import matches
-from anndata_proteomics.rules.loader import load_packaged_rule
+from anndata_proteomics.rules.loader import load_packaged_rule_for_version
 
 
 def test_wombat_preserves_charge_states_as_distinct_ions() -> None:
-    rule = load_packaged_rule("wombat", "ion", "0.9.11")
+    rule = load_packaged_rule_for_version("wombat", "ion", "0.9.11")
     frame = pd.DataFrame(
         {
             "modified_peptide": [
@@ -25,7 +25,7 @@ def test_wombat_preserves_charge_states_as_distinct_ions() -> None:
         }
     )
 
-    result = convert(frame, rule)
+    result = convert_to_anndata(frame, rule)
 
     assert result.shape == (2, 2)
     assert result.var_names.tolist() == [
@@ -36,8 +36,8 @@ def test_wombat_preserves_charge_states_as_distinct_ions() -> None:
 
 
 def test_wombat_levels_match_their_native_output_schemas() -> None:
-    ion = load_packaged_rule("wombat", "ion", "0.9.11")
-    peptidoform = load_packaged_rule("wombat", "peptidoform", "0.9.11")
+    ion = load_packaged_rule_for_version("wombat", "ion", "0.9.11")
+    peptidoform = load_packaged_rule_for_version("wombat", "peptidoform", "0.9.11")
     ion_headers = {
         "modified_peptide",
         "protein_group",
@@ -58,7 +58,7 @@ def test_wombat_levels_match_their_native_output_schemas() -> None:
 
 
 def test_wombat_peptidoform_uses_reported_abundance_and_psm_layers() -> None:
-    rule = load_packaged_rule("wombat", "peptidoform", "0.9.11")
+    rule = load_packaged_rule_for_version("wombat", "peptidoform", "0.9.11")
     frame = pd.DataFrame(
         {
             "modified_peptide": ["PEPTIDE"],
@@ -68,7 +68,7 @@ def test_wombat_peptidoform_uses_reported_abundance_and_psm_layers() -> None:
         }
     )
 
-    result = convert(frame, rule)
+    result = convert_to_anndata(frame, rule)
 
     assert result.var_names.tolist() == ["PEPTIDE"]
     assert_array_equal(result.X, [[10.0]])

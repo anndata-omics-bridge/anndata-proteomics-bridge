@@ -1,55 +1,29 @@
-"""Structural types for sparse matrix operations used across APB."""
+"""Exact in-memory matrix types accepted by backend-neutral calculations."""
 
 from __future__ import annotations
 
-from typing import Any, Protocol, TypeIs
+from typing import TypeIs
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy import sparse
+from scipy.sparse import csc_array, csc_matrix, csr_array, csr_matrix
+
+type DenseQuantMatrix = NDArray[np.float32] | NDArray[np.float64]
+type SparseQuantMatrix = (
+    csr_matrix[np.float32]
+    | csr_matrix[np.float64]
+    | csc_matrix[np.float32]
+    | csc_matrix[np.float64]
+    | csr_array[np.float32]
+    | csr_array[np.float64]
+    | csc_array[np.float32]
+    | csc_array[np.float64]
+)
+type QuantMatrix = DenseQuantMatrix | SparseQuantMatrix
+
+_SPARSE_TYPES = (csr_matrix, csc_matrix, csr_array, csc_array)
 
 
-class SparseMatrix(Protocol):
-    """Operations shared by SciPy sparse matrices and sparse arrays."""
-
-    # Element type is intentionally unconstrained: SciPy's containers are generic in it,
-    # and a mutable attribute is invariant, so pinning it here would reject csr_matrix[float64].
-    data: NDArray[Any]
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        """Matrix dimensions, ``(n_obs, n_vars)`` for a quantitative layer."""
-        ...
-
-    def toarray(self) -> NDArray[np.generic]:
-        """Materialize the sparse values as a dense NumPy array."""
-        ...
-
-
-type QuantMatrix = NDArray[np.floating[Any]] | SparseMatrix
-"""A quantitative layer as stored: dense NumPy values or a SciPy sparse container.
-
-Slicing is deliberately absent from :class:`SparseMatrix`: SciPy's ``__getitem__`` is
-declared over its own shape type variables and no structural signature accepts every
-container, so the two helpers that slice a layer by row take an unconstrained matrix.
-"""
-
-
-def is_sparse_matrix(value: object) -> TypeIs[SparseMatrix]:
-    """Narrow values recognized by SciPy to their shared sparse operations."""
-    return sparse.issparse(value)
-
-
-def named_layers(adata: Any) -> dict[str, Any]:
-    """Return only the explicitly named layers of an AnnData.
-
-    From anndata 0.13, ``adata.layers`` also yields ``X`` under a ``None`` key. APB
-    always writes ``X`` as a copy of ``axis.x_layer``, so that entry is a duplicate
-    under a name no rule declares; iterating it raw leaks a ``"None"`` layer into
-    summaries and logs.
-
-    Structurally typed: ``readers.summary`` passes its own lightweight metadata record
-    here rather than a real AnnData, and ``AnnData.layers`` is a plain attribute that no
-    read-only protocol can describe without excluding one of the two callers.
-    """
-    return {name: layer for name, layer in adata.layers.items() if name is not None}
+def is_sparse_matrix(value: QuantMatrix) -> TypeIs[SparseQuantMatrix]:
+    """Narrow a quantitative matrix to the supported SciPy containers."""
+    return isinstance(value, _SPARSE_TYPES)

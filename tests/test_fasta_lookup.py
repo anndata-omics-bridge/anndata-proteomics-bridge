@@ -1,4 +1,4 @@
-"""Tests for ``test_data.find_fasta`` and FASTA-vs-module pairing.
+"""Tests for typed test-data FASTA lookup and module pairing.
 
 Exercises the single-cell module (HY FASTA) alongside an HYE module to
 prove the lookup distinguishes the two and that the
@@ -16,8 +16,12 @@ from anndata_proteomics.test_data import (
     DOWNLOADED_DB,
     FASTA_DIR,
     TEST_DATA_DIR,
+    AnnotationUnavailable,
+    FastaUnavailable,
+    VendorDataUnavailable,
     find_annotation,
-    find_fasta,
+    find_fasta_for_dataset,
+    find_fasta_for_module,
     find_test_data,
 )
 
@@ -32,24 +36,20 @@ def _require_fasta_cache():
 
 def test_find_fasta_returns_hye_for_dda_modules():
     _require_fasta_cache()
-    fasta = find_fasta(module="dda_qexactive")
-    assert fasta is not None
+    fasta = find_fasta_for_module("dda_qexactive")
+    assert isinstance(fasta, Path)
     assert fasta.name == _HYE_NAME
 
 
 def test_find_fasta_returns_hy_for_singlecell():
     _require_fasta_cache()
-    fasta = find_fasta(module="dia_singlecell")
-    assert fasta is not None
+    fasta = find_fasta_for_module("dia_singlecell")
+    assert isinstance(fasta, Path)
     assert fasta.name == _HY_NAME
 
 
-def test_find_fasta_returns_none_for_unknown_module():
-    assert find_fasta(module="nonexistent_module") is None
-
-
-def test_find_fasta_returns_none_without_arguments():
-    assert find_fasta() is None
+def test_find_fasta_returns_typed_unavailable_for_unknown_module():
+    assert find_fasta_for_module("nonexistent_module") == FastaUnavailable("nonexistent_module")
 
 
 def test_find_fasta_uses_explicit_test_data_root(tmp_path: Path) -> None:
@@ -57,7 +57,7 @@ def test_find_fasta_uses_explicit_test_data_root(tmp_path: Path) -> None:
     expected.parent.mkdir()
     expected.write_text(">protein\nPEPTIDE\n")
 
-    assert find_fasta(module="dda_qexactive", test_data_dir=tmp_path) == expected
+    assert find_fasta_for_module("dda_qexactive", test_data_dir=tmp_path) == expected
 
 
 def test_find_annotation_uses_explicit_test_data_root(tmp_path: Path) -> None:
@@ -66,7 +66,9 @@ def test_find_annotation_uses_explicit_test_data_root(tmp_path: Path) -> None:
     expected.write_text('[[samples]]\nraw_file = "run1"\n')
 
     assert find_annotation(module="dia_aif", test_data_dir=tmp_path) == expected
-    assert find_annotation(module="unknown", test_data_dir=tmp_path) is None
+    assert find_annotation(module="unknown", test_data_dir=tmp_path) == AnnotationUnavailable(
+        "unknown"
+    )
 
 
 def test_find_fasta_resolves_dataset_from_explicit_test_data_root(tmp_path: Path) -> None:
@@ -82,7 +84,7 @@ def test_find_fasta_resolves_dataset_from_explicit_test_data_root(tmp_path: Path
         "dia_singlecell,results-repo/fixture-hash/input_file.tsv,ok\n"
     )
 
-    assert find_fasta(dataset_dir=dataset_dir, test_data_dir=tmp_path) == fasta
+    assert find_fasta_for_dataset(dataset_dir, test_data_dir=tmp_path) == fasta
 
 
 def test_find_fasta_resolves_module_from_dataset_dir():
@@ -93,17 +95,17 @@ def test_find_fasta_resolves_module_from_dataset_dir():
     # Exercise the dataset-dir branch against a real cached submission.
     # correctly through the index lookup.
     dataset = find_test_data("DIA-NN")
-    if dataset is None:
+    if isinstance(dataset, VendorDataUnavailable):
         pytest.skip("DIA-NN test data not downloaded")
-    fasta = find_fasta(dataset_dir=dataset)
-    assert fasta is not None
+    fasta = find_fasta_for_dataset(dataset)
+    assert isinstance(fasta, Path)
     assert fasta.name == _HYE_NAME
 
 
 def test_hye_fasta_contains_all_three_species():
     _require_fasta_cache()
-    fasta = find_fasta(module="dia_aif")
-    assert fasta is not None
+    fasta = find_fasta_for_module("dia_aif")
+    assert isinstance(fasta, Path)
     df = fasta_to_dataframe(fasta)
     suffixes = df["fasta.id"].str.extract(r"_(HUMAN|YEAST|ECOLI)$")[0].dropna()
     counts = suffixes.value_counts().to_dict()
@@ -114,8 +116,8 @@ def test_hye_fasta_contains_all_three_species():
 
 def test_hy_fasta_omits_ecoli_proteome():
     _require_fasta_cache()
-    fasta = find_fasta(module="dia_singlecell")
-    assert fasta is not None
+    fasta = find_fasta_for_module("dia_singlecell")
+    assert isinstance(fasta, Path)
     df = fasta_to_dataframe(fasta)
     suffixes = df["fasta.id"].str.extract(r"_(HUMAN|YEAST|ECOLI)$")[0].dropna()
     counts = suffixes.value_counts().to_dict()

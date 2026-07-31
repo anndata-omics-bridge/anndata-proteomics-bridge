@@ -1,4 +1,4 @@
-"""Load a converted APB result (``.h5ad`` AnnData or ``.h5mu`` MuData) back into memory."""
+"""Load APB AnnData and MuData results from disk."""
 
 from __future__ import annotations
 

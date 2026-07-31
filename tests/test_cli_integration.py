@@ -14,8 +14,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from anndata_proteomics.rules.registry import find_rule
-from anndata_proteomics.test_data import find_param_file, find_test_data
+from anndata_proteomics.rules.registry import find_rule_for_version
+from anndata_proteomics.test_data import (
+    ParameterFileUnavailable,
+    VendorDataUnavailable,
+    find_param_file,
+    find_test_data,
+)
 
 # The console script lives next to the python that's running pytest.
 # Resolving via sys.executable means tests work regardless of whether the venv
@@ -40,7 +45,7 @@ def test_cli_validate_no_args_returns_zero() -> None:
 
 
 def test_cli_validate_path_happy() -> None:
-    p = find_rule("diann", "ion", "2.0.0").path
+    p = find_rule_for_version("diann", "ion", "2.0.0").path
     r = _run("validate", str(p))
     assert r.returncode == 0, r.stderr
     assert "PASS" in r.stderr
@@ -99,9 +104,9 @@ def _require(software: str):
 
     data_file = find_test_data(software)
     param_file = find_param_file(software)
-    if data_file is None or not data_file.exists():
+    if isinstance(data_file, VendorDataUnavailable) or not data_file.exists():
         pytest.skip(f"no {software} test data available")
-    if param_file is None or not param_file.exists():
+    if isinstance(param_file, ParameterFileUnavailable) or not param_file.exists():
         pytest.skip(f"no {software} param fixture available")
     return data_file, param_file
 
@@ -111,9 +116,9 @@ def test_cli_convert_with_rule_config_writes_h5ad(tmp_path: Path) -> None:
     import pytest
 
     data_file = find_test_data("WOMBAT")
-    if data_file is None or not data_file.exists():
+    if isinstance(data_file, VendorDataUnavailable) or not data_file.exists():
         pytest.skip("no WOMBAT test data available")
-    rule = find_rule("wombat", "peptidoform", "0.9.11").path
+    rule = find_rule_for_version("wombat", "peptidoform", "0.9.11").path
     out_base = tmp_path / "wombat"
     out = out_base.with_suffix(".h5ad")
     r = _run(

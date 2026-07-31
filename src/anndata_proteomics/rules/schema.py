@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from itertools import combinations
-from typing import Annotated, Any, Literal, override
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from anndata_proteomics.modifications import schema as modification_schema
 from anndata_proteomics.params.model import Parameters
@@ -20,6 +21,11 @@ UnknownPolicy = modification_schema.UnknownPolicy
 
 InputShape = Literal["long", "wide"]
 QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein", "fragment"]
+
+PEPTIDE_LEVELS: frozenset[QuantificationLevel] = frozenset(
+    {"ion", "fragment", "peptidoform", "peptide"}
+)
+"""Quantification levels whose features carry a peptide sequence."""
 EncodingMode = Literal["numeric", "factor"]
 DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_table"]
 ColumnComputeMode = Literal[
@@ -39,6 +45,14 @@ _PROFORMA_COMPUTE_NAME = {
 }
 
 _SAMPLE_GROUP = "sample"
+
+
+class RuleCompositionError(ValueError):
+    """A source document cannot produce a complete effective rule."""
+
+    def __init__(self, message: str, path: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.path = path
 
 
 class _Strict(BaseModel):
@@ -128,6 +142,39 @@ class ColumnRoles(_Strict):
         }
 
 
+class NoValuePattern(_Strict):
+    """A numeric layer contains directly parseable scalar values."""
+
+    mode: Literal["none"] = "none"
+
+
+class RegexValuePattern(_Strict):
+    """Extract one numeric capture group from each structured layer value."""
+
+    mode: Literal["regex"] = "regex"
+    pattern: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_pattern(self) -> RegexValuePattern:
+        try:
+            compiled = re.compile(self.pattern)
+        except re.error as exc:
+            raise ValueError(f"value_pattern is not a valid regex: {exc}") from exc
+        if compiled.groups != 1:
+            raise ValueError(
+                f"value_pattern must have exactly one capture group, found {compiled.groups}."
+            )
+        return self
+
+
+type ValuePattern = Annotated[
+    NoValuePattern | RegexValuePattern,
+    Field(discriminator="mode"),
+]
+
+NO_VALUE_PATTERN = NoValuePattern()
+
+
 class Layer(_Strict):
     """A quantitative layer fed by one ``source``.
 
@@ -143,11 +190,11 @@ class Layer(_Strict):
     ``required = true`` to gate a layer (a file missing it is rejected). The
     ``axis.x_layer`` is always required regardless of this flag.
 
-    ``value_pattern`` handles vendor columns whose cells are structured strings rather
-    than bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex
-    with exactly one capture group, applied per cell before numeric coercion; the first
-    match wins and non-matching cells become NaN. Without it such a column silently
-    coerces to an all-NaN layer.
+    A regex ``value_pattern`` handles vendor columns whose cells are structured strings
+    rather than bare numbers (PEAKS ``AScore`` is ``site:modification:score``). Its
+    ``pattern`` has exactly one capture group, applied per cell before numeric coercion;
+    the first match wins and non-matching cells become NaN. ``mode = "none"`` explicitly
+    declares directly parseable scalar values.
     """
 
     name: str
@@ -155,7 +202,7 @@ class Layer(_Strict):
     encoding_mode: EncodingMode = "numeric"
     categories: dict[str, int] = Field(default_factory=dict)
     missing_values: list[float] = Field(default_factory=list)
-    value_pattern: str = ""
+    value_pattern: ValuePattern = NO_VALUE_PATTERN
     required: bool = False
 
     @model_validator(mode="after")
@@ -168,27 +215,15 @@ class Layer(_Strict):
             raise ValueError(
                 f"Layer {self.name!r}: 'missing_values' is only valid for numeric layers."
             )
-        if self.encoding_mode == "factor" and self.value_pattern:
+        if self.encoding_mode == "factor" and isinstance(self.value_pattern, RegexValuePattern):
             raise ValueError(
                 f"Layer {self.name!r}: 'value_pattern' is only valid for numeric layers."
             )
-        if self.value_pattern:
-            try:
-                compiled = re.compile(self.value_pattern)
-            except re.error as exc:
-                raise ValueError(
-                    f"Layer {self.name!r}: 'value_pattern' is not a valid regex: {exc}"
-                ) from exc
-            if compiled.groups != 1:
-                raise ValueError(
-                    f"Layer {self.name!r}: 'value_pattern' must have exactly one capture "
-                    f"group, found {compiled.groups}."
-                )
         return self
 
 
 class SampleNameCleanup(_Strict):
-    pattern: str = ""
+    pattern: str = Field(min_length=1)
 
 
 class PositionalFragments(_Strict):
@@ -469,48 +504,42 @@ class RuleFragment(_Strict):
     modifications: Modifications | None = None
     fragments: Fragments | None = None
 
-    def as_merge_dict(self) -> dict[str, Any]:
-        """Return only fields explicitly present in this fragment."""
-        return self.model_dump(by_alias=True, exclude_unset=True, mode="json")
+
+class SearchParameterCondition(Parameters):
+    """Typed equality conditions over explicitly declared search-parameter fields."""
+
+    def matches(self, search_parameters: Parameters) -> bool:
+        """Return whether every explicitly declared condition value matches."""
+        fields = self.model_fields_set
+        expected = self.model_dump(include=fields, mode="python")
+        observed = search_parameters.model_dump(include=fields, mode="python")
+        return expected == observed
+
+    def agrees_with(self, other: SearchParameterCondition) -> bool:
+        """Return whether overlapping equality conditions agree."""
+        shared_fields = self.model_fields_set & other.model_fields_set
+        own_values = self.model_dump(include=shared_fields, mode="python")
+        other_values = other.model_dump(include=shared_fields, mode="python")
+        return own_values == other_values
 
 
 class SearchParameterOverride(_Strict):
     """One search-parameter condition and its level-local axis override."""
 
-    when_search_parameters: dict[str, Any] = Field(min_length=1)
+    when_search_parameters: SearchParameterCondition = Field(json_schema_extra={"minProperties": 1})
     axis: PartialAxis
 
-    @field_validator("when_search_parameters")
-    @classmethod
-    def _normalize_search_parameter_values(cls, value: dict[str, Any]) -> dict[str, Any]:
-        unknown = sorted(set(value) - Parameters.model_fields.keys())
-        if unknown:
-            raise ValueError(f"unknown search-parameter field(s): {unknown}")
-        normalized = Parameters.model_validate(value)
-        return {name: getattr(normalized, name) for name in value}
-
     @model_validator(mode="after")
-    def _axis_is_not_empty(self) -> SearchParameterOverride:
+    def _fragments_are_not_empty(self) -> SearchParameterOverride:
+        if not self.when_search_parameters.model_fields_set:
+            raise ValueError("search-parameter condition must declare at least one field")
         if not self.axis.model_fields_set:
             raise ValueError("search-parameter override axis must declare at least one field")
         return self
 
     def matches(self, search_parameters: Parameters) -> bool:
         """Return whether all normalized parameter conditions match."""
-        return all(
-            getattr(search_parameters, name) == expected
-            for name, expected in self.when_search_parameters.items()
-        )
-
-    def as_merge_dict(self) -> dict[str, Any]:
-        """Return the axis fragment in ordinary rule-merge shape."""
-        return {
-            "axis": self.axis.model_dump(
-                by_alias=True,
-                exclude_unset=True,
-                mode="json",
-            )
-        }
+        return self.when_search_parameters.matches(search_parameters)
 
 
 class LevelRuleFragment(RuleFragment):
@@ -526,41 +555,18 @@ class LevelRuleFragment(RuleFragment):
     """
 
     search_parameter_overrides: list[SearchParameterOverride] = Field(default_factory=list)
-    requires_search_parameters: dict[str, Any] = Field(default_factory=dict)
+    requires_search_parameters: SearchParameterCondition = Field(
+        default_factory=SearchParameterCondition
+    )
 
-    @field_validator("requires_search_parameters")
-    @classmethod
-    def _normalize_required_search_parameters(cls, value: dict[str, Any]) -> dict[str, Any]:
-        unknown = sorted(set(value) - Parameters.model_fields.keys())
-        if unknown:
-            raise ValueError(f"unknown search-parameter field(s): {unknown}")
-        normalized = Parameters.model_validate(value)
-        return {name: getattr(normalized, name) for name in value}
+    def is_unconditionally_available(self) -> bool:
+        """Return whether this level requires no parsed search-parameter evidence."""
+        return not self.requires_search_parameters.model_fields_set
 
-    def is_available(self, search_parameters: Parameters | None) -> bool:
-        """Return whether this level is offered for the given parsed search parameters.
-
-        An ungated level is always available. A gated level needs parameters to compare
-        against, so it is unavailable when none could be parsed — offering it blind would
-        resolve the wrong level for exactly the inputs the gate exists to separate.
-        """
-        if not self.requires_search_parameters:
-            return True
-        if search_parameters is None:
-            return False
-        return all(
-            getattr(search_parameters, name) == expected
-            for name, expected in self.requires_search_parameters.items()
-        )
-
-    @override
-    def as_merge_dict(self) -> dict[str, Any]:
-        """Return the level body without its materialization-time overrides."""
-        return self.model_dump(
-            by_alias=True,
-            exclude={"search_parameter_overrides", "requires_search_parameters"},
-            exclude_unset=True,
-            mode="json",
+    def is_available_for(self, search_parameters: Parameters) -> bool:
+        """Return whether this level is offered for concrete search parameters."""
+        return self.is_unconditionally_available() or self.requires_search_parameters.matches(
+            search_parameters
         )
 
 
@@ -577,55 +583,84 @@ class ParseRuleDocument(_Strict):
     def effective_rule(
         self,
         level: QuantificationLevel,
-        search_parameters: Parameters | None = None,
     ) -> ParseRule:
-        """Merge and validate one level as the effective converter contract."""
+        """Compose one level without search-parameter overrides."""
+        if level not in self.levels:
+            raise KeyError(level)
+        return self._materialize_rule(level, [])
+
+    def parameterized_effective_rule(
+        self,
+        level: QuantificationLevel,
+        search_parameters: Parameters,
+    ) -> ParseRule:
+        """Compose one level with every matching search-parameter override."""
         if level not in self.levels:
             raise KeyError(level)
         level_fragment = self.levels[level]
-        matching_overrides = (
-            [
-                override
-                for override in level_fragment.search_parameter_overrides
-                if override.matches(search_parameters)
-            ]
-            if search_parameters is not None
-            else []
-        )
+        matching_overrides = [
+            override
+            for override in level_fragment.search_parameter_overrides
+            if override.matches(search_parameters)
+        ]
         return self._materialize_rule(level, matching_overrides)
 
-    def level_is_available(
+    def level_is_unconditionally_available(
         self,
         level: QuantificationLevel,
-        search_parameters: Parameters | None = None,
     ) -> bool:
-        """Return whether ``level`` is offered for these parsed search parameters."""
+        """Return whether ``level`` exists and requires no parameter evidence."""
         if level not in self.levels:
             return False
-        return self.levels[level].is_available(search_parameters)
+        return self.levels[level].is_unconditionally_available()
 
-    def available_levels(
+    def level_is_available_for(
         self,
-        search_parameters: Parameters | None = None,
-    ) -> list[QuantificationLevel]:
-        """Levels whose ``requires_search_parameters`` gate is satisfied, in source order."""
+        level: QuantificationLevel,
+        search_parameters: Parameters,
+    ) -> bool:
+        """Return whether ``level`` exists and its parameter gate is satisfied."""
+        if level not in self.levels:
+            return False
+        return self.levels[level].is_available_for(search_parameters)
+
+    def unconditionally_available_levels(self) -> list[QuantificationLevel]:
+        """Return ungated levels in stable source order."""
         return [
             level
             for level, fragment in self.levels.items()
-            if fragment.is_available(search_parameters)
+            if fragment.is_unconditionally_available()
         ]
 
-    def effective_rules(
+    def available_levels_for(
         self,
-        search_parameters: Parameters | None = None,
+        search_parameters: Parameters,
+    ) -> list[QuantificationLevel]:
+        """Return levels whose parameter gate is satisfied, in source order."""
+        return [
+            level
+            for level, fragment in self.levels.items()
+            if fragment.is_available_for(search_parameters)
+        ]
+
+    def effective_rules(self) -> dict[QuantificationLevel, ParseRule]:
+        """Return every declared level without search-parameter overrides."""
+        return {level: self.effective_rule(level) for level in self.levels}
+
+    def parameterized_effective_rules(
+        self,
+        search_parameters: Parameters,
     ) -> dict[QuantificationLevel, ParseRule]:
-        """Validate and return every effective level in stable source order.
+        """Return every declared level with matching parameter overrides applied.
 
         Returns every declared level regardless of its availability gate: this is the
         document's full contract, used by validation and rule listing. Resolution filters
-        by ``available_levels``.
+        by ``available_levels_for``.
         """
-        return {level: self.effective_rule(level, search_parameters) for level in self.levels}
+        return {
+            level: self.parameterized_effective_rule(level, search_parameters)
+            for level in self.levels
+        }
 
     def validate_effective_rule_variants(self, level: QuantificationLevel) -> None:
         """Validate the default and every condition-compatible override combination."""
@@ -641,24 +676,54 @@ class ParseRuleDocument(_Strict):
     def _materialize_rule(
         self,
         level: QuantificationLevel,
-        overrides: list[SearchParameterOverride] | tuple[SearchParameterOverride, ...],
+        overrides: Sequence[SearchParameterOverride],
     ) -> ParseRule:
-        """Merge a level and an already-selected override sequence."""
-        body = _merge_rule_dicts(
-            self.base.as_merge_dict(),
-            self.levels[level].as_merge_dict(),
-        )
-        for parameter_override in overrides:
-            body = _merge_rule_dicts(body, parameter_override.as_merge_dict())
-        return ParseRule.model_validate(
-            {
-                "schema_version": self.schema_version,
-                "file_version": self.file_version,
-                "software_name": self.software_name,
-                "software_version": self.software_version,
-                "quantification_level": level,
-                **body,
-            }
+        """Compose typed fragments into one effective converter contract."""
+        level_fragment = self.levels[level]
+        sample_name_cleanup = self.base.sample_name_cleanup
+        if "sample_name_cleanup" in level_fragment.model_fields_set:
+            level_cleanup = level_fragment.sample_name_cleanup
+            base_cleanup = self.base.sample_name_cleanup
+            sample_name_cleanup = level_cleanup
+            if level_cleanup is not None and base_cleanup is not None:
+                sample_name_cleanup = _compose_sample_name_cleanup(
+                    base_cleanup,
+                    level_cleanup,
+                )
+
+        modifications = self.base.modifications
+        if "modifications" in level_fragment.model_fields_set:
+            level_modifications = level_fragment.modifications
+            base_modifications = self.base.modifications
+            modifications = level_modifications
+            if level_modifications is not None and base_modifications is not None:
+                modifications = _compose_modifications(
+                    base_modifications,
+                    level_modifications,
+                )
+
+        fragments = self.base.fragments
+        if "fragments" in level_fragment.model_fields_set:
+            level_fragments = level_fragment.fragments
+            base_fragments = self.base.fragments
+            fragments = level_fragments
+            if level_fragments is not None and base_fragments is not None:
+                fragments = _compose_fragments(base_fragments, level_fragments)
+
+        return ParseRule(
+            schema_version=self.schema_version,
+            file_version=self.file_version,
+            software_name=self.software_name,
+            software_version=self.software_version,
+            quantification_level=level,
+            input_shape=_compose_input_shape(self.base, level_fragment),
+            axis=_compose_axis(self.base, level_fragment, overrides),
+            columns=_compose_columns(self.base, level_fragment),
+            column_roles=_compose_column_roles(self.base, level_fragment),
+            layers=_compose_layers(self.base, level_fragment),
+            sample_name_cleanup=sample_name_cleanup,
+            modifications=modifications,
+            fragments=fragments,
         )
 
 
@@ -666,36 +731,431 @@ def _search_parameter_conditions_are_compatible(
     overrides: tuple[SearchParameterOverride, ...],
 ) -> bool:
     """Return whether selected equality conditions can form valid parameters."""
-    combined: dict[str, Any] = {}
-    for parameter_override in overrides:
-        for name, expected in parameter_override.when_search_parameters.items():
-            if name in combined and combined[name] != expected:
-                return False
-            combined[name] = expected
-    try:
-        Parameters.model_validate(combined)
-    except ValidationError:
-        return False
-    return True
+    conditions = [override.when_search_parameters for override in overrides]
+    equalities_agree = all(left.agrees_with(right) for left, right in combinations(conditions, 2))
+    return (
+        equalities_agree
+        and _charge_range_is_compatible(conditions)
+        and _peptide_length_range_is_compatible(conditions)
+        and _precursor_mz_range_is_compatible(conditions)
+        and _fragment_mz_range_is_compatible(conditions)
+    )
 
 
-def _is_array_of_objects(value: list[Any]) -> bool:
-    """Return whether a JSON array contains rule objects rather than scalar values."""
-    return bool(value) and all(isinstance(item, dict) for item in value)
+def _compose_input_shape(base: RuleFragment, level: LevelRuleFragment) -> InputShape:
+    """Return the declared input shape after the level overrides the base."""
+    value = level.input_shape if "input_shape" in level.model_fields_set else base.input_shape
+    if value is None:
+        raise RuleCompositionError("effective rule requires input_shape", ("input_shape",))
+    return value
 
 
-def _merge_rule_dicts(base: dict[str, Any], level: dict[str, Any]) -> dict[str, Any]:
-    """Deep-merge a level onto its same-document base using APB's rule semantics."""
-    merged = dict(base)
-    for key, level_value in level.items():
-        base_value = merged.get(key)
-        if isinstance(base_value, dict) and isinstance(level_value, dict):
-            merged[key] = _merge_rule_dicts(base_value, level_value)
-        elif isinstance(base_value, list) and isinstance(level_value, list):
-            if _is_array_of_objects(base_value) or _is_array_of_objects(level_value):
-                merged[key] = base_value + level_value
-            else:
-                merged[key] = level_value
+def _compose_axis(
+    base: RuleFragment,
+    level: LevelRuleFragment,
+    overrides: Sequence[SearchParameterOverride],
+) -> Axis:
+    """Compose partial axis declarations in source order."""
+    fragments: list[PartialAxis] = []
+    if base.axis is not None:
+        fragments.append(base.axis)
+    if "axis" in level.model_fields_set:
+        if level.axis is None:
+            fragments.clear()
         else:
-            merged[key] = level_value
-    return merged
+            fragments.append(level.axis)
+    fragments.extend(parameter_override.axis for parameter_override in overrides)
+    return Axis(
+        obs_keys=_compose_axis_obs_keys(fragments),
+        var_keys=_compose_axis_var_keys(fragments),
+        x_layer=_compose_axis_x_layer(fragments),
+        duplicates=_compose_axis_duplicates(fragments),
+    )
+
+
+def _compose_axis_obs_keys(fragments: Sequence[PartialAxis]) -> list[str]:
+    """Return the last declared observation keys, or raise a schema error."""
+    for fragment in reversed(fragments):
+        if "obs_keys" in fragment.model_fields_set:
+            if fragment.obs_keys is None:
+                raise RuleCompositionError(
+                    "effective rule requires axis.obs_keys", ("axis", "obs_keys")
+                )
+            return fragment.obs_keys
+    raise RuleCompositionError("effective rule requires axis.obs_keys", ("axis", "obs_keys"))
+
+
+def _compose_axis_var_keys(fragments: Sequence[PartialAxis]) -> list[str]:
+    """Return the last declared feature keys, or raise a schema error."""
+    for fragment in reversed(fragments):
+        if "var_keys" in fragment.model_fields_set:
+            if fragment.var_keys is None:
+                raise RuleCompositionError(
+                    "effective rule requires axis.var_keys", ("axis", "var_keys")
+                )
+            return fragment.var_keys
+    raise RuleCompositionError("effective rule requires axis.var_keys", ("axis", "var_keys"))
+
+
+def _compose_axis_x_layer(fragments: Sequence[PartialAxis]) -> str:
+    """Return the last declared primary layer, or raise a schema error."""
+    for fragment in reversed(fragments):
+        if "x_layer" in fragment.model_fields_set:
+            if fragment.x_layer is None:
+                raise RuleCompositionError(
+                    "effective rule requires axis.x_layer", ("axis", "x_layer")
+                )
+            return fragment.x_layer
+    raise RuleCompositionError("effective rule requires axis.x_layer", ("axis", "x_layer"))
+
+
+def _compose_axis_duplicates(fragments: Sequence[PartialAxis]) -> Duplicates:
+    """Return the last declared duplicate policy or its schema default."""
+    for fragment in reversed(fragments):
+        if "duplicates" in fragment.model_fields_set:
+            if fragment.duplicates is None:
+                raise RuleCompositionError("axis.duplicates cannot be null", ("axis", "duplicates"))
+            return fragment.duplicates
+    return Duplicates()
+
+
+def _compose_columns(base: RuleFragment, level: LevelRuleFragment) -> Columns:
+    """Compose partial observation and feature column declarations."""
+    fragments: list[PartialColumns] = []
+    if base.columns is not None:
+        fragments.append(base.columns)
+    if "columns" in level.model_fields_set:
+        if level.columns is None:
+            fragments.clear()
+        else:
+            fragments.append(level.columns)
+    return Columns(
+        obs=_compose_axis_column_group(fragments, "obs"),
+        var=_compose_axis_column_group(fragments, "var"),
+    )
+
+
+def _compose_axis_column_group(
+    columns: Sequence[PartialColumns],
+    group: Literal["obs", "var"],
+) -> ColumnGroup:
+    """Compose one required axis column group from typed fragments."""
+    fragments: list[PartialColumnGroup] = []
+    is_null = False
+    for fragment in columns:
+        if group not in fragment.model_fields_set:
+            continue
+        value = fragment.obs if group == "obs" else fragment.var
+        if value is None:
+            fragments.clear()
+            is_null = True
+        else:
+            if is_null:
+                fragments.clear()
+            fragments.append(value)
+            is_null = False
+    if is_null or not fragments:
+        raise RuleCompositionError(f"effective rule requires columns.{group}", ("columns", group))
+    return _compose_column_group(fragments, group)
+
+
+def _compose_column_group(
+    fragments: Sequence[PartialColumnGroup],
+    group: Literal["obs", "var"],
+) -> ColumnGroup:
+    """Merge typed mapping fields and append typed computed-column declarations."""
+    return ColumnGroup(
+        select=_compose_selected_columns(fragments, group),
+        optional_select=_compose_optional_columns(fragments, group),
+        compute=_compose_computed_columns(fragments, group),
+    )
+
+
+def _compose_selected_columns(
+    fragments: Sequence[PartialColumnGroup],
+    group: Literal["obs", "var"],
+) -> dict[str, str]:
+    """Compose required source-column mappings."""
+    selected: dict[str, str] = {}
+    is_null = False
+    for fragment in fragments:
+        if "select" not in fragment.model_fields_set:
+            continue
+        if fragment.select is None:
+            selected.clear()
+            is_null = True
+        else:
+            if is_null:
+                selected.clear()
+            selected.update(fragment.select)
+            is_null = False
+    if is_null:
+        raise RuleCompositionError(
+            f"columns.{group}.select cannot be null", ("columns", group, "select")
+        )
+    return selected
+
+
+def _compose_optional_columns(
+    fragments: Sequence[PartialColumnGroup],
+    group: Literal["obs", "var"],
+) -> dict[str, str]:
+    """Compose best-effort source-column mappings."""
+    selected: dict[str, str] = {}
+    is_null = False
+    for fragment in fragments:
+        if "optional_select" not in fragment.model_fields_set:
+            continue
+        if fragment.optional_select is None:
+            selected.clear()
+            is_null = True
+        else:
+            if is_null:
+                selected.clear()
+            selected.update(fragment.optional_select)
+            is_null = False
+    if is_null:
+        raise RuleCompositionError(
+            f"columns.{group}.optional_select cannot be null",
+            ("columns", group, "optional_select"),
+        )
+    return selected
+
+
+def _compose_computed_columns(
+    fragments: Sequence[PartialColumnGroup],
+    group: Literal["obs", "var"],
+) -> list[ColumnCompute]:
+    """Append computed-column declarations in document order."""
+    computed: list[ColumnCompute] = []
+    is_null = False
+    for fragment in fragments:
+        if "compute" not in fragment.model_fields_set:
+            continue
+        if fragment.compute is None:
+            computed.clear()
+            is_null = True
+        else:
+            if is_null:
+                computed.clear()
+            computed.extend(fragment.compute)
+            is_null = False
+    if is_null:
+        raise RuleCompositionError(
+            f"columns.{group}.compute cannot be null", ("columns", group, "compute")
+        )
+    return computed
+
+
+def _compose_column_roles(base: RuleFragment, level: LevelRuleFragment) -> ColumnRoles:
+    """Compose semantic column-role declarations field by field."""
+    base_roles = base.column_roles
+    roles = base_roles
+    if "column_roles" in level.model_fields_set:
+        if level.column_roles is None:
+            raise RuleCompositionError("column_roles cannot be null", ("column_roles",))
+        roles = level.column_roles
+    elif "column_roles" in base.model_fields_set and base_roles is None:
+        raise RuleCompositionError("column_roles cannot be null", ("column_roles",))
+    if roles is None:
+        return ColumnRoles()
+    if base_roles is None or roles is base_roles:
+        return roles
+
+    protein_assignment = base_roles.protein_assignment
+    fasta_accessions = base_roles.fasta_accessions
+    if "protein_assignment" in roles.model_fields_set:
+        protein_assignment = roles.protein_assignment
+    if "fasta_accessions" in roles.model_fields_set:
+        fasta_accessions = roles.fasta_accessions
+    return ColumnRoles(
+        protein_assignment=protein_assignment,
+        fasta_accessions=fasta_accessions,
+    )
+
+
+def _compose_layers(base: RuleFragment, level: LevelRuleFragment) -> list[Layer]:
+    """Append typed layer declarations from the base and selected level."""
+    if "layers" not in level.model_fields_set:
+        selected = base.layers
+    elif level.layers is None:
+        selected = None
+    elif base.layers is None:
+        selected = level.layers
+    else:
+        selected = [*base.layers, *level.layers]
+    if selected is None:
+        raise RuleCompositionError("effective rule requires layers", ("layers",))
+    if not selected:
+        raise RuleCompositionError("effective rule requires at least one layer", ("layers",))
+    return selected
+
+
+def _compose_sample_name_cleanup(
+    base: SampleNameCleanup,
+    level: SampleNameCleanup,
+) -> SampleNameCleanup:
+    """Compose two present wide-sample cleanup declarations."""
+    if "pattern" in level.model_fields_set:
+        return level
+    return base
+
+
+def _compose_modifications(
+    base: Modifications,
+    level: Modifications,
+) -> Modifications:
+    """Compose two present modification-parser declarations."""
+    if isinstance(base, TokenRegexModifications) and isinstance(level, TokenRegexModifications):
+        return _compose_token_regex_modifications(base, level)
+    if isinstance(base, SiteListModifications) and isinstance(level, SiteListModifications):
+        return _compose_site_list_modifications(base, level)
+    raise ValueError("a level modification parser cannot change the parser declared by its base")
+
+
+def _compose_fragments(base: Fragments, level: Fragments) -> Fragments:
+    """Compose two present packed-fragment declarations."""
+    if isinstance(base, PositionalFragments) and isinstance(level, PositionalFragments):
+        return _compose_positional_fragments(base, level)
+    if isinstance(base, ColumnLabeledFragments) and isinstance(level, ColumnLabeledFragments):
+        return _compose_column_labeled_fragments(base, level)
+    raise ValueError(
+        "a level fragment declaration cannot change the label strategy declared by its base"
+    )
+
+
+def _compose_token_regex_modifications(
+    base: TokenRegexModifications,
+    level: TokenRegexModifications,
+) -> TokenRegexModifications:
+    """Compose two token-regex parser declarations without untyped dictionaries."""
+    return TokenRegexModifications(
+        parser="token_regex",
+        source_column=level.source_column,
+        token_pattern=level.token_pattern,
+        token_position=(
+            level.token_position
+            if "token_position" in level.model_fields_set
+            else base.token_position
+        ),
+        case_sensitive=(
+            level.case_sensitive
+            if "case_sensitive" in level.model_fields_set
+            else base.case_sensitive
+        ),
+        unknown_policy=(
+            level.unknown_policy
+            if "unknown_policy" in level.model_fields_set
+            else base.unknown_policy
+        ),
+        output_column=(
+            level.output_column if "output_column" in level.model_fields_set else base.output_column
+        ),
+        map=[*base.map, *level.map],
+    )
+
+
+def _compose_site_list_modifications(
+    base: SiteListModifications,
+    level: SiteListModifications,
+) -> SiteListModifications:
+    """Compose two site-list parser declarations without untyped dictionaries."""
+    return SiteListModifications(
+        parser="site_list",
+        sequence_column=level.sequence_column,
+        modification_column=level.modification_column,
+        site_column=level.site_column,
+        delimiter=(level.delimiter if "delimiter" in level.model_fields_set else base.delimiter),
+        site_base=level.site_base if "site_base" in level.model_fields_set else base.site_base,
+        case_sensitive=(
+            level.case_sensitive
+            if "case_sensitive" in level.model_fields_set
+            else base.case_sensitive
+        ),
+        unknown_policy=(
+            level.unknown_policy
+            if "unknown_policy" in level.model_fields_set
+            else base.unknown_policy
+        ),
+        output_column=(
+            level.output_column if "output_column" in level.model_fields_set else base.output_column
+        ),
+        map=[*base.map, *level.map],
+    )
+
+
+def _compose_positional_fragments(
+    base: PositionalFragments,
+    level: PositionalFragments,
+) -> PositionalFragments:
+    """Compose two positional-fragment declarations field by field."""
+    return PositionalFragments(
+        label_strategy="positional",
+        value_columns=level.value_columns,
+        delimiter=(level.delimiter if "delimiter" in level.model_fields_set else base.delimiter),
+        label_output=(
+            level.label_output if "label_output" in level.model_fields_set else base.label_output
+        ),
+    )
+
+
+def _compose_column_labeled_fragments(
+    base: ColumnLabeledFragments,
+    level: ColumnLabeledFragments,
+) -> ColumnLabeledFragments:
+    """Compose two column-labeled fragment declarations field by field."""
+    return ColumnLabeledFragments(
+        label_strategy="column",
+        value_columns=level.value_columns,
+        label_column=level.label_column,
+        delimiter=(level.delimiter if "delimiter" in level.model_fields_set else base.delimiter),
+        label_output=(
+            level.label_output if "label_output" in level.model_fields_set else base.label_output
+        ),
+    )
+
+
+def _charge_range_is_compatible(conditions: Sequence[SearchParameterCondition]) -> bool:
+    minimum = None
+    maximum = None
+    for condition in conditions:
+        if "min_precursor_charge" in condition.model_fields_set:
+            minimum = condition.min_precursor_charge
+        if "max_precursor_charge" in condition.model_fields_set:
+            maximum = condition.max_precursor_charge
+    return minimum is None or maximum is None or minimum <= maximum
+
+
+def _peptide_length_range_is_compatible(
+    conditions: Sequence[SearchParameterCondition],
+) -> bool:
+    minimum = None
+    maximum = None
+    for condition in conditions:
+        if "min_peptide_length" in condition.model_fields_set:
+            minimum = condition.min_peptide_length
+        if "max_peptide_length" in condition.model_fields_set:
+            maximum = condition.max_peptide_length
+    return minimum is None or maximum is None or minimum <= maximum
+
+
+def _precursor_mz_range_is_compatible(conditions: Sequence[SearchParameterCondition]) -> bool:
+    minimum = None
+    maximum = None
+    for condition in conditions:
+        if "min_precursor_mz" in condition.model_fields_set:
+            minimum = condition.min_precursor_mz
+        if "max_precursor_mz" in condition.model_fields_set:
+            maximum = condition.max_precursor_mz
+    return minimum is None or maximum is None or minimum <= maximum
+
+
+def _fragment_mz_range_is_compatible(conditions: Sequence[SearchParameterCondition]) -> bool:
+    minimum = None
+    maximum = None
+    for condition in conditions:
+        if "min_fragment_mz" in condition.model_fields_set:
+            minimum = condition.min_fragment_mz
+        if "max_fragment_mz" in condition.model_fields_set:
+            maximum = condition.max_fragment_mz
+    return minimum is None or maximum is None or minimum <= maximum

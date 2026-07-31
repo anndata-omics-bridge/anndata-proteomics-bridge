@@ -16,6 +16,7 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from anndata_proteomics.modifications.model import (
     ModificationOccurrence,
@@ -30,23 +31,20 @@ class MapEntry:
 
     token: str
     name: str
-    accession: str | None = None
-    target: list[str] | None = None  # allowed residues/termini (from the Unimod registry)
-    position: str | None = "Anywhere"
-    mass_delta: float | None = None
+    accession: str
+    target: tuple[str, ...]
+    position: str
+    mass_delta: float
 
 
 @dataclass(frozen=True)
 class ModificationRule:
     """Parsed ``[modifications]`` section."""
 
-    source_column: str
     token_pattern: str
     token_position: str  # "before_residue" | "after_residue"
     case_sensitive: bool = False
     unknown_policy: str = "preserve"  # "preserve" | "drop" | "error"
-    sequence_column: str | None = None
-    output_column: str = "proforma_sequence"
     entries: tuple[MapEntry, ...] = ()
 
 
@@ -73,43 +71,132 @@ _TERMINUS_TARGETS = {
 }
 
 
-def _target_matches(
-    entry_target: list[str] | None, adjacent_residue: str | None, position: str
-) -> bool:
+@dataclass(frozen=True)
+class ResidueLocation:
+    """A modification localized to one sequence residue."""
+
+    sequence_index: int
+    residue: str
+
+
+@dataclass(frozen=True)
+class TerminalLocation:
+    """A terminal modification beside a concrete sequence residue."""
+
+    position: Literal["N-term", "C-term"]
+    adjacent_residue: str
+
+
+@dataclass(frozen=True)
+class TerminalOnlyLocation:
+    """A terminal modification with no residue association."""
+
+    position: Literal["N-term", "C-term"]
+
+
+@dataclass(frozen=True)
+class UnlocalizedLocation:
+    """A non-terminal token that cannot be attached to a residue."""
+
+
+@dataclass(frozen=True)
+class ParsedMass:
+    """A vendor token parsed as a numeric mass shift."""
+
+    value: float
+
+
+@dataclass(frozen=True)
+class NonNumericToken:
+    """A vendor token is not a numeric mass shift."""
+
+    token: str
+
+
+@dataclass(frozen=True)
+class MatchedMapEntry:
+    """A vendor token matched one modification-map entry."""
+
+    entry: MapEntry
+
+
+@dataclass(frozen=True)
+class UnmatchedMapEntry:
+    """No modification-map entry matched a vendor token and location."""
+
+    token: str
+
+
+ModificationLocation = (
+    ResidueLocation | TerminalLocation | TerminalOnlyLocation | UnlocalizedLocation
+)
+
+_NUMERIC_TOKEN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_INTEGER_SITE = re.compile(r"^[+-]?\d+$")
+
+
+def _target_matches(entry_target: tuple[str, ...], location: ModificationLocation) -> bool:
     """Decide whether an entry's allowed ``target``s are compatible with a token's context.
 
-    ``entry_target`` is the list of residues/termini the modification may sit on.
-    Terminal targets (e.g. ``"N-term"``) match when the token's position is a
-    corresponding terminus; residue targets (``"M"``, ``"C"``, …) match by
-    amino-acid identity. Matches if ANY listed target is compatible. An empty/None
-    target matches anything.
+    ``entry_target`` is the tuple of residues/termini the modification may sit on.
+    Terminal targets (e.g. ``"N-term"``) match a corresponding terminal
+    location; residue targets (``"M"``, ``"C"``, …) match its adjacent amino
+    acid. An empty target tuple matches anything.
     """
     if not entry_target:
         return True
+    position = _location_position(location)
+    adjacent_residue = _adjacent_residue(location)
     for target in entry_target:
         if target in _TERMINUS_TARGETS:
             if target.endswith(position) or target == position:
                 return True
-        elif adjacent_residue is not None and target == adjacent_residue:
+        elif isinstance(adjacent_residue, AdjacentResidue) and target == adjacent_residue.value:
             return True
     return False
 
 
-def _parse_mass(raw: str) -> float | None:
+@dataclass(frozen=True)
+class AdjacentResidue:
+    """A location has an adjacent amino-acid residue."""
+
+    value: str
+
+
+@dataclass(frozen=True)
+class NoAdjacentResidue:
+    """A location has no adjacent amino-acid residue."""
+
+
+def _location_position(location: ModificationLocation) -> str:
+    if isinstance(location, ResidueLocation | UnlocalizedLocation):
+        return "Anywhere"
+    return location.position
+
+
+def _adjacent_residue(
+    location: ModificationLocation,
+) -> AdjacentResidue | NoAdjacentResidue:
+    if isinstance(location, ResidueLocation):
+        return AdjacentResidue(location.residue)
+    if isinstance(location, TerminalLocation):
+        return AdjacentResidue(location.adjacent_residue)
+    return NoAdjacentResidue()
+
+
+def _parse_mass(raw: str) -> ParsedMass | NonNumericToken:
     cleaned = raw.strip().lstrip("+")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
+    if _NUMERIC_TOKEN.fullmatch(cleaned):
+        return ParsedMass(float(cleaned))
+    return NonNumericToken(raw)
 
 
 def _match_entry(
     entries: Iterable[MapEntry],
     raw_token: str,
-    adjacent_residue: str | None,
-    position: str,
+    location: ModificationLocation,
     case_sensitive: bool,
-) -> MapEntry | None:
+) -> MatchedMapEntry | UnmatchedMapEntry:
     """Pick the best map entry for a vendor token.
 
     For numeric tokens the lookup key is the tuple
@@ -118,75 +205,49 @@ def _match_entry(
     """
     candidates = tuple(entries)
     parsed_mass = _parse_mass(raw_token)
-    if parsed_mass is not None:
-        match = _match_mass_entry(
-            candidates,
-            parsed_mass,
-            adjacent_residue,
-            position,
-        )
-        if match is not None:
-            return match
+    if isinstance(parsed_mass, ParsedMass):
+        for entry in candidates:
+            if _entry_context_matches(entry, location) and math.isclose(
+                entry.mass_delta,
+                parsed_mass.value,
+                abs_tol=_MASS_TOLERANCE,
+            ):
+                return MatchedMapEntry(entry)
+
     cmp_token = raw_token if case_sensitive else raw_token.lower()
-    return _match_token_entry(
-        candidates,
-        cmp_token,
-        adjacent_residue,
-        position,
-        case_sensitive,
-    )
-
-
-def _match_mass_entry(
-    entries: tuple[MapEntry, ...],
-    parsed_mass: float,
-    adjacent_residue: str | None,
-    position: str,
-) -> MapEntry | None:
-    for entry in entries:
-        if entry.mass_delta is None:
+    for entry in candidates:
+        if not _entry_context_matches(entry, location):
             continue
-        if not math.isclose(entry.mass_delta, parsed_mass, abs_tol=_MASS_TOLERANCE):
-            continue
-        if _entry_context_matches(entry, adjacent_residue, position):
-            return entry
-    return None
-
-
-def _match_token_entry(
-    entries: tuple[MapEntry, ...],
-    cmp_token: str,
-    adjacent_residue: str | None,
-    position: str,
-    case_sensitive: bool,
-) -> MapEntry | None:
-    for entry in entries:
         entry_token = entry.token if case_sensitive else entry.token.lower()
-        if entry_token != cmp_token:
-            continue
-        if _entry_context_matches(entry, adjacent_residue, position):
-            return entry
-    return None
+        if entry_token == cmp_token:
+            return MatchedMapEntry(entry)
+    return UnmatchedMapEntry(raw_token)
 
 
 def _entry_context_matches(
     entry: MapEntry,
-    adjacent_residue: str | None,
-    position: str,
+    location: ModificationLocation,
 ) -> bool:
-    return (not entry.position or entry.position == position) and _target_matches(
+    position = _location_position(location)
+    return entry.position == position and _target_matches(
         entry.target,
-        adjacent_residue,
-        position,
+        location,
     )
 
 
 @dataclass
 class _PendingToken:
     raw_token: str
-    residue_index: int | None  # None for terminal
-    position: str  # "Anywhere" | "N-term" | "C-term"
-    adjacent_residue: str | None
+    location: ModificationLocation
+
+
+@dataclass(frozen=True)
+class _TokenPlacement:
+    """Location plus sequence characters consumed while placing one token."""
+
+    location: ModificationLocation
+    consumed_residues: tuple[str, ...]
+    next_cursor: int
 
 
 def _strip_terminal_markers(seq: str) -> str:
@@ -196,6 +257,42 @@ def _strip_terminal_markers(seq: str) -> str:
     while seq and seq[-1] in _TERM_MARKERS:
         seq = seq[:-1]
     return seq
+
+
+def _place_token(
+    seq: str,
+    match: re.Match[str],
+    token_position: str,
+    stripped_chars: list[str],
+) -> _TokenPlacement:
+    """Locate one regex token relative to the residues parsed before it."""
+    if not stripped_chars and match.start() == 0:
+        adjacent = seq[match.end() : match.end() + 1]
+        location: ModificationLocation = (
+            TerminalLocation("N-term", adjacent) if adjacent else TerminalOnlyLocation("N-term")
+        )
+        return _TokenPlacement(location, (), match.end())
+
+    if match.end() == len(seq) and token_position != "before_residue":
+        location = (
+            TerminalLocation("C-term", stripped_chars[-1])
+            if stripped_chars
+            else TerminalOnlyLocation("C-term")
+        )
+        return _TokenPlacement(location, (), match.end())
+
+    if token_position == "before_residue":
+        next_residue = seq[match.end() : match.end() + 1]
+        if next_residue.isalpha():
+            location = ResidueLocation(len(stripped_chars), next_residue)
+            return _TokenPlacement(location, (next_residue,), match.end() + 1)
+
+    location = (
+        ResidueLocation(len(stripped_chars) - 1, stripped_chars[-1])
+        if stripped_chars
+        else UnlocalizedLocation()
+    )
+    return _TokenPlacement(location, (), match.end())
 
 
 def _tokenize(
@@ -216,34 +313,10 @@ def _tokenize(
         groups = [g for g in match.groups() if g is not None]
         raw_token = groups[0] if groups else match.group(0)
 
-        if not stripped_chars and match.start() == 0:
-            position = "N-term"
-            residue_idx = None
-            adjacent = seq[match.end() : match.end() + 1] or None
-        elif match.end() == len(seq) and token_position != "before_residue":
-            position = "C-term"
-            residue_idx = None
-            adjacent = stripped_chars[-1] if stripped_chars else None
-        elif token_position == "before_residue":
-            next_residue = seq[match.end() : match.end() + 1]
-            if next_residue.isalpha():
-                stripped_chars.append(next_residue)
-                cursor = match.end() + 1
-                position = "Anywhere"
-                residue_idx = len(stripped_chars) - 1
-                adjacent = next_residue
-                pending.append(_PendingToken(raw_token, residue_idx, position, adjacent))
-                continue
-            position = "Anywhere"
-            residue_idx = len(stripped_chars) - 1 if stripped_chars else None
-            adjacent = stripped_chars[-1] if stripped_chars else None
-        else:
-            position = "Anywhere"
-            residue_idx = len(stripped_chars) - 1 if stripped_chars else None
-            adjacent = stripped_chars[-1] if stripped_chars else None
-
-        pending.append(_PendingToken(raw_token, residue_idx, position, adjacent))
-        cursor = match.end()
+        placement = _place_token(seq, match, token_position, stripped_chars)
+        stripped_chars.extend(placement.consumed_residues)
+        pending.append(_PendingToken(raw_token, placement.location))
+        cursor = placement.next_cursor
 
     for ch in seq[cursor:]:
         if ch.isalpha():
@@ -263,39 +336,77 @@ def _resolve_tokens(
     unknown_list: list[str] = []
 
     for tok in pending:
-        entry = _match_entry(
+        matched = _match_entry(
             rule.entries,
             tok.raw_token,
-            tok.adjacent_residue,
-            tok.position,
+            tok.location,
             rule.case_sensitive,
         )
-        if entry is not None:
-            occurrences.append(
-                ModificationOccurrence(
-                    name=entry.name,
-                    accession=entry.accession,
-                    target_residue=tok.adjacent_residue,
-                    sequence_index=tok.residue_index,
-                    position=tok.position,
-                    mass_delta=entry.mass_delta,
-                    source_token=tok.raw_token,
-                )
-            )
+        if isinstance(matched, MatchedMapEntry):
+            occurrences.append(_modification_occurrence(matched.entry, tok.raw_token, tok.location))
             continue
         if rule.unknown_policy == "error":
             raise ValueError(f"unknown modification token: {tok.raw_token!r}")
         if rule.unknown_policy == "drop":
             continue
         unknown_list.append(tok.raw_token)
-        if tok.position == "N-term":
-            unknown_tokens[-1] = tok.raw_token
-        elif tok.position == "C-term":
-            unknown_tokens[len(stripped)] = tok.raw_token
-        elif tok.residue_index is not None:
-            unknown_tokens[tok.residue_index] = tok.raw_token
+        _record_unknown_token(unknown_tokens, tok.raw_token, tok.location, len(stripped))
 
     return occurrences, unknown_tokens, unknown_list
+
+
+def _modification_occurrence(
+    entry: MapEntry,
+    raw_token: str,
+    location: ModificationLocation,
+) -> ModificationOccurrence:
+    if isinstance(location, ResidueLocation):
+        return ModificationOccurrence(
+            name=entry.name,
+            accession=entry.accession,
+            target_residue=location.residue,
+            sequence_index=location.sequence_index,
+            position="Anywhere",
+            mass_delta=entry.mass_delta,
+            source_token=raw_token,
+        )
+    if isinstance(location, TerminalLocation):
+        return ModificationOccurrence(
+            name=entry.name,
+            accession=entry.accession,
+            target_residue=location.adjacent_residue,
+            position=location.position,
+            mass_delta=entry.mass_delta,
+            source_token=raw_token,
+        )
+    if isinstance(location, TerminalOnlyLocation):
+        return ModificationOccurrence(
+            name=entry.name,
+            accession=entry.accession,
+            position=location.position,
+            mass_delta=entry.mass_delta,
+            source_token=raw_token,
+        )
+    return ModificationOccurrence(
+        name=entry.name,
+        accession=entry.accession,
+        position="Anywhere",
+        mass_delta=entry.mass_delta,
+        source_token=raw_token,
+    )
+
+
+def _record_unknown_token(
+    unknown_tokens: dict[int, str],
+    raw_token: str,
+    location: ModificationLocation,
+    sequence_length: int,
+) -> None:
+    if isinstance(location, ResidueLocation):
+        unknown_tokens[location.sequence_index] = raw_token
+    elif isinstance(location, TerminalLocation | TerminalOnlyLocation):
+        index = -1 if location.position == "N-term" else sequence_length
+        unknown_tokens[index] = raw_token
 
 
 def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequence:
@@ -315,7 +426,7 @@ def apply_rule(modified_sequence: str, rule: ModificationRule) -> ModifiedSequen
     )
 
 
-def _site_to_position(site: int, rule: SiteListRule, n_residues: int) -> tuple[str, int | None]:
+def _site_location(site: int, rule: SiteListRule, stripped: str) -> ModificationLocation:
     """Map a vendor site value to a ProForma position and 0-based residue index.
 
     Site ``0`` is the N-terminus by convention, independent of ``site_base``: a
@@ -323,11 +434,11 @@ def _site_to_position(site: int, rule: SiteListRule, n_residues: int) -> tuple[s
     at and uses ``0``. Sites past the sequence end are reported as C-terminal.
     """
     if site == 0:
-        return "N-term", None
+        return TerminalOnlyLocation("N-term")
     index = site - rule.site_base
-    if index >= n_residues:
-        return "C-term", None
-    return "Anywhere", index
+    if index >= len(stripped):
+        return TerminalOnlyLocation("C-term")
+    return ResidueLocation(index, stripped[index])
 
 
 def apply_site_list(
@@ -358,40 +469,24 @@ def apply_site_list(
     unknown_list: list[str] = []
 
     for raw_token, raw_site in zip(tokens, raw_sites, strict=True):
-        try:
-            site = int(raw_site)
-        except ValueError as exc:
+        if not _INTEGER_SITE.fullmatch(raw_site.strip()):
             raise ValueError(
                 f"non-integer modification site {raw_site!r} for sequence {sequence!r}"
-            ) from exc
-
-        position, index = _site_to_position(site, rule, len(stripped))
-        entry = by_token.get(raw_token if rule.case_sensitive else raw_token.lower())
-
-        if entry is not None:
-            occurrences.append(
-                ModificationOccurrence(
-                    name=entry.name,
-                    accession=entry.accession,
-                    target_residue=stripped[index] if index is not None else None,
-                    sequence_index=index,
-                    position=position,
-                    mass_delta=entry.mass_delta,
-                    source_token=raw_token,
-                )
             )
+        site = int(raw_site)
+
+        location = _site_location(site, rule, stripped)
+        token_key = raw_token if rule.case_sensitive else raw_token.lower()
+
+        if token_key in by_token:
+            occurrences.append(_modification_occurrence(by_token[token_key], raw_token, location))
             continue
         if rule.unknown_policy == "error":
             raise ValueError(f"unknown modification token: {raw_token!r}")
         if rule.unknown_policy == "drop":
             continue
         unknown_list.append(raw_token)
-        if position == "N-term":
-            unknown_tokens[-1] = raw_token
-        elif position == "C-term":
-            unknown_tokens[len(stripped)] = raw_token
-        elif index is not None:
-            unknown_tokens[index] = raw_token
+        _record_unknown_token(unknown_tokens, raw_token, location, len(stripped))
 
     proforma = render_proforma(stripped, occurrences, unknown_tokens=unknown_tokens)
     return ModifiedSequence(

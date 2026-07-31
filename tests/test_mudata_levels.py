@@ -16,9 +16,9 @@ from pathlib import Path
 import anndata as ad
 import mudata
 from conftest import ConversionFixture
+from conversion_support import convert_versioned_level_to_anndata
 from mudata import MuData
 
-from anndata_proteomics.converters import pipeline as ui
 from anndata_proteomics.rules.schema import QuantificationLevel
 
 # Per-level var_names prefix; the bare id stays available in the .var columns.
@@ -30,7 +30,12 @@ _PREFIX: dict[QuantificationLevel, str] = {
 
 
 def _convert(fixture: ConversionFixture, level: QuantificationLevel) -> ad.AnnData:
-    return ui.convert_level(fixture["df"].copy(), fixture["slug"], level, fixture["version"])
+    return convert_versioned_level_to_anndata(
+        fixture["df"].copy(),
+        fixture["slug"],
+        level,
+        fixture["version"],
+    )
 
 
 def _build_levels(fixture: ConversionFixture) -> dict[str, ad.AnnData]:

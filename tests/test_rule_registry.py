@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from anndata_proteomics.rules.registry import (
+    AmbiguousRuleError,
     RuleNotFound,
     document_paths_for_software,
     find_rule,
+    find_rule_for_version,
     iter_packaged_documents,
     iter_packaged_rules,
     packaged_rules_root,
@@ -37,14 +39,14 @@ def test_diann_has_two_version_documents() -> None:
 
 
 def test_find_rule_resolves_existing_version_group() -> None:
-    locator = find_rule("diann", "protein", "1.9.2")
+    locator = find_rule_for_version("diann", "protein", "1.9.2")
     assert locator.path.parent.name == "v1"
     assert locator.level == "protein"
-    assert find_rule("diann", "protein", "2.3.0").path.parent.name == "v2"
+    assert find_rule_for_version("diann", "protein", "2.3.0").path.parent.name == "v2"
 
 
 def test_find_rule_without_version_rejects_nonidentical_diann_ion() -> None:
-    with pytest.raises(RuleNotFound):
+    with pytest.raises(AmbiguousRuleError):
         find_rule("diann", "ion")
 
 

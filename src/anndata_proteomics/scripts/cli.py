@@ -28,29 +28,39 @@ from mudata import MuData
 from pandas import DataFrame
 
 from anndata_proteomics._logging import configure_default_sink
-from anndata_proteomics._matrix_types import named_layers
-from anndata_proteomics.annotation import apply as annotation_apply
+from anndata_proteomics.adapters.anndata import annotation as annotation_adapter
+from anndata_proteomics.adapters.anndata import conversion as conversion_adapter
+from anndata_proteomics.adapters.anndata import description as description_adapter
+from anndata_proteomics.adapters.anndata import fasta as fasta_adapter
+from anndata_proteomics.adapters.anndata import proteobench as proteobench_adapter
+from anndata_proteomics.adapters.anndata import result as result_adapter
+from anndata_proteomics.adapters.anndata import rules as rules_adapter
+from anndata_proteomics.adapters.anndata.matrix import layer_names
 from anndata_proteomics.annotation import loader as annotation_loader
-from anndata_proteomics.annotation import validate_fasta, var_fasta
-from anndata_proteomics.annotation.validate_fasta import FastaValidationConfig
-from anndata_proteomics.annotation.var_fasta import ProteinFastaAnnotationConfig
+from anndata_proteomics.annotation.validate_fasta import PeptideFastaMatchingConfig
+from anndata_proteomics.annotation.var_fasta import annotate_proteins_from_fasta
 from anndata_proteomics.converters import pipeline as conversion_pipeline
-from anndata_proteomics.converters.assemble import convert as _run_convert
-from anndata_proteomics.fasta.config import FastaConfig
+from anndata_proteomics.fasta.config import (
+    DEFAULT_CONTAMINANT_POLICY,
+    DEFAULT_DECOY_POLICY,
+    ExplicitPatterns,
+    FastaConfig,
+)
 from anndata_proteomics.proteobench import config as proteobench_config
-from anndata_proteomics.proteobench import pipeline as proteobench_pipeline
-from anndata_proteomics.readers import result as result_reader
-from anndata_proteomics.readers import summary as summary_reader
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule, load_rule_document
 from anndata_proteomics.rules.registry import iter_packaged_rules
-from anndata_proteomics.rules.schema import QuantificationLevel
+from anndata_proteomics.rules.schema import PEPTIDE_LEVELS, ParseRuleDocument, QuantificationLevel
 from anndata_proteomics.rules.validate import (
     log_and_exit_code,
     validate_all_packaged,
     validate_file,
 )
+from anndata_proteomics.workflows import conversion as conversion_workflow
+from anndata_proteomics.workflows import fasta as fasta_workflow
+from anndata_proteomics.workflows import proteobench as proteobench_workflow
+from anndata_proteomics.workflows import sample_annotation as annotation_workflow
 
 app = App(name="apb", help="anndata_proteomics (APB) CLI", help_on_error=True)
 
@@ -90,13 +100,6 @@ class ConvertCliOptions:
 
 
 DEFAULT_CONVERT_CLI_OPTIONS = ConvertCliOptions()
-
-
-@dataclass(frozen=True, slots=True)
-class _ConvertRequest:
-    data: Path
-    level: QuantificationLevel | None
-    options: ConvertCliOptions
 
 
 @app.command
@@ -155,7 +158,6 @@ def convert(
     --strict promotes layer-contract warnings to errors. An empty X layer is always an
     error; --strict extends that to every other declared layer.
     """
-    request = _ConvertRequest(data=data, level=level, options=options)
     if options.output is not None and options.output.suffix:
         logger.error(
             f"--output must be an extensionless basename, got {options.output}; "
@@ -163,126 +165,286 @@ def convert(
         )
         return 2
     df = read_table(data)
+    suffix = ".h5ad" if level is not None else ".h5mu"
+    output = (
+        data.with_suffix(suffix) if options.output is None else Path(f"{options.output}{suffix}")
+    )
+
     if options.rule_config is not None:
-        return _convert_with_rule_document(df, request)
-    return _convert_with_packaged_rules(df, request)
-
-
-def _convert_with_rule_document(df: DataFrame, request: _ConvertRequest) -> int:
-    assert request.options.rule_config is not None
-    document = load_rule_document(request.options.rule_config)
-    rule_slug = conversion_pipeline.software_slug(document.software_name)
-    parameter_resolution = (
-        conversion_pipeline.resolve_parameters(
-            request.options.params,
-            request.options.params_software or rule_slug,
-        )
-        if request.options.params is not None
-        else None
-    )
-    search_parameters = (
-        parameter_resolution.parameters if parameter_resolution is not None else None
-    )
-    if request.level is not None:
-        if request.level not in document.levels:
+        document = load_rule_document(options.rule_config)
+        rule_slug = conversion_pipeline.software_slug(document.software_name)
+        if level is not None and level not in document.levels:
             logger.error(
-                f"{request.options.rule_config} has no level {request.level!r}; "
-                f"available: {list(document.levels)}"
+                f"{options.rule_config} has no level {level!r}; available: {list(document.levels)}"
             )
             return 1
-        adata = _run_convert(
-            df,
-            document.effective_rule(request.level, search_parameters),
-            params_path=None if parameter_resolution is not None else request.options.params,
-            strict=request.options.strict,
-        )
-        if parameter_resolution is not None:
-            conversion_pipeline.attach_parameter_resolution(
-                adata,
-                parameter_resolution,
-                selection_method="rule_config",
-                warn_missing=True,
+        if options.params is None:
+            result = (
+                _convert_configured_level(df, document, level, options.strict, output)
+                if level is not None
+                else _convert_configured_levels(
+                    df,
+                    document,
+                    options.rule_config,
+                    options.strict,
+                    output,
+                )
             )
         else:
-            conversion_pipeline.set_rule_selection_method(adata, "rule_config")
-        return _write_anndata(adata, request.options.output, request.data)
-    rules = conversion_pipeline.matching_rules(
-        document.effective_rules(search_parameters), df.columns
-    )
-    if not rules:
-        logger.error(
-            f"no level in {request.options.rule_config} matches the columns in {request.data}"
+            parameter_resolution = conversion_pipeline.resolve_parameters(
+                options.params,
+                options.params_software or rule_slug,
+            )
+            result = (
+                _convert_parameterized_configured_level(
+                    df,
+                    document,
+                    level,
+                    parameter_resolution,
+                    options.strict,
+                    output,
+                )
+                if level is not None
+                else _convert_parameterized_configured_levels(
+                    df,
+                    document,
+                    options.rule_config,
+                    parameter_resolution,
+                    options.strict,
+                    output,
+                )
+            )
+    else:
+        if options.software is not None:
+            slug = options.software
+        else:
+            recognition = conversion_pipeline.recognize_software(df.columns)
+            if not isinstance(recognition, conversion_pipeline.RecognizedSoftware):
+                logger.error(
+                    f"could not auto-detect the vendor for {data}; "
+                    "pass --software SLUG or --rule-config PATH"
+                )
+                return 1
+            slug = recognition.slug
+        if options.params is None:
+            logger.error("pass --params (it gives the software version) or --rule-config PATH")
+            return 1
+        parameter_resolution = conversion_pipeline.resolve_parameters(
+            options.params,
+            options.params_software or slug,
         )
-        return 1
-    md = conversion_pipeline.build_mudata_from_rules(
-        df,
-        rules,
-        params_path=request.options.params,
-        parameter_resolution=parameter_resolution,
-        rule_selection_method="rule_config",
-        software=rule_slug,
-        strict=request.options.strict,
-    )
-    return _write_mudata(md, request.options.output, request.data)
+        _log_parameter_resolution(slug, parameter_resolution)
+        result = (
+            _convert_packaged_level(
+                df,
+                slug,
+                level,
+                parameter_resolution,
+                options.strict,
+                output,
+            )
+            if level is not None
+            else _convert_packaged_levels(
+                df,
+                slug,
+                parameter_resolution,
+                options.strict,
+                output,
+            )
+        )
+    return result
 
 
-def _convert_with_packaged_rules(df: DataFrame, request: _ConvertRequest) -> int:
-    slug = request.options.software or conversion_pipeline.recognize_software(df.columns)
-    if slug is None:
-        logger.error(
-            f"could not auto-detect the vendor for {request.data}; "
-            "pass --software SLUG or --rule-config PATH"
-        )
-        return 1
-    if request.options.params is None:
-        logger.error("pass --params (it gives the software version) or --rule-config PATH")
-        return 1
-    parameter_resolution = conversion_pipeline.resolve_parameters(
-        request.options.params,
-        request.options.params_software or slug,
+def _convert_configured_level(
+    data: DataFrame,
+    document: ParseRuleDocument,
+    level: QuantificationLevel,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write one explicitly configured, unparameterized level."""
+    selection = conversion_pipeline.RuleSelection(document.effective_rule(level), "rule_config")
+    conversion = conversion_workflow.convert_selected_level(
+        data,
+        level,
+        selection,
+        strict=strict,
     )
-    version, version_status = conversion_pipeline.resolve_rule_version(parameter_resolution, slug)
-    logger.info(f"vendor={slug} software_version={version!r} version_status={version_status}")
-    if request.level is not None:
-        adata = conversion_pipeline.convert_level(
-            df,
-            slug,
-            request.level,
-            version,
-            params_path=request.options.params,
-            parameter_resolution=parameter_resolution,
-            strict=request.options.strict,
-        )
-        return _write_anndata(adata, request.options.output, request.data)
-    levels = conversion_pipeline.convertible_levels(
+    return _write_anndata(conversion_adapter.to_anndata(conversion), output)
+
+
+def _convert_parameterized_configured_level(
+    data: DataFrame,
+    document: ParseRuleDocument,
+    level: QuantificationLevel,
+    resolution: conversion_pipeline.ParameterResolution,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write one explicitly configured, parameterized level."""
+    rule = document.parameterized_effective_rule(level, resolution.parameters)
+    selection = conversion_pipeline.RuleSelection(rule, "rule_config")
+    conversion = conversion_workflow.convert_selected_level(
+        data,
+        level,
+        selection,
+        strict=strict,
+    )
+    adata = conversion_adapter.to_anndata(conversion)
+    _write_parameter_resolution(adata, resolution)
+    return _write_anndata(adata, output)
+
+
+def _convert_configured_levels(
+    data: DataFrame,
+    document: ParseRuleDocument,
+    rule_config: Path,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write every matching explicitly configured level."""
+    return _convert_matching_configured_levels(
+        data,
+        document.effective_rules(),
+        rule_config,
+        strict,
+        output,
+    )
+
+
+def _convert_parameterized_configured_levels(
+    data: DataFrame,
+    document: ParseRuleDocument,
+    rule_config: Path,
+    resolution: conversion_pipeline.ParameterResolution,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write every matching parameterized configured level."""
+    rules = document.parameterized_effective_rules(resolution.parameters)
+    matching = conversion_pipeline.matching_rules(rules, data.columns)
+    if not matching:
+        logger.error(f"no level in {rule_config} matches the input columns")
+        return 1
+    md = _convert_rule_mapping(data, matching, strict)
+    _write_parameter_resolution(md, resolution)
+    return _write_mudata(md, output)
+
+
+def _convert_matching_configured_levels(
+    data: DataFrame,
+    rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
+    rule_config: Path,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write the configured rules whose columns match the input."""
+    matching = conversion_pipeline.matching_rules(rules, data.columns)
+    if not matching:
+        logger.error(f"no level in {rule_config} matches the input columns")
+        return 1
+    return _write_mudata(_convert_rule_mapping(data, matching, strict), output)
+
+
+def _convert_rule_mapping(
+    data: DataFrame,
+    rules: dict[QuantificationLevel, conversion_pipeline.ParseRule],
+    strict: bool,
+) -> MuData:
+    """Convert one concrete mapping of effective rules into a MuData artifact."""
+    selections: dict[QuantificationLevel, conversion_pipeline.RuleSelection] = {
+        level: conversion_pipeline.RuleSelection(rule, "rule_config")
+        for level, rule in rules.items()
+    }
+    conversions = conversion_workflow.convert_selected_levels(data, selections, strict=strict)
+    return conversion_adapter.to_mudata(conversions)
+
+
+def _convert_packaged_level(
+    data: DataFrame,
+    slug: str,
+    level: QuantificationLevel,
+    resolution: conversion_pipeline.ParameterResolution,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write one packaged level selected from parsed parameters."""
+    conversion = conversion_workflow.convert_level_from_parameters(
+        data,
         slug,
-        version,
-        df.columns,
-        version_status=version_status,
-        search_parameters=parameter_resolution.parameters,
+        level,
+        resolution,
+        strict=strict,
     )
-    if not levels:
+    adata = conversion_adapter.to_anndata(conversion)
+    _write_parameter_resolution(adata, resolution)
+    return _write_anndata(adata, output)
+
+
+def _convert_packaged_levels(
+    data: DataFrame,
+    slug: str,
+    resolution: conversion_pipeline.ParameterResolution,
+    strict: bool,
+    output: Path,
+) -> int:
+    """Convert and write all packaged levels selected from parsed parameters."""
+    selections = conversion_workflow.select_rules_from_parameters(data.columns, slug, resolution)
+    if not selections:
+        version = conversion_pipeline.resolve_rule_version(resolution, slug)
+        version_label = (
+            version.value
+            if isinstance(version, conversion_pipeline.PresentRuleVersion)
+            else "missing"
+        )
         logger.error(
-            f"no quantification level resolves for {slug} at software version {version!r}; "
-            "check --params / --software"
+            f"no quantification level resolves for {slug} at software version "
+            f"{version_label!r}; check --params / --software"
         )
         return 1
-    md = conversion_pipeline.build_mudata(
-        df,
-        slug,
-        version,
-        params_path=request.options.params,
-        parameter_resolution=parameter_resolution,
-        strict=request.options.strict,
+    conversions = conversion_workflow.convert_selected_levels(data, selections, strict=strict)
+    md = conversion_adapter.to_mudata(conversions)
+    _write_parameter_resolution(md, resolution)
+    return _write_mudata(md, output)
+
+
+def _log_parameter_resolution(
+    slug: str,
+    resolution: conversion_pipeline.ParameterResolution,
+) -> None:
+    """Log the concrete software-version result used for packaged rule selection."""
+    version = conversion_pipeline.resolve_rule_version(resolution, slug)
+    version_label = (
+        version.value if isinstance(version, conversion_pipeline.PresentRuleVersion) else "missing"
     )
-    return _write_mudata(md, request.options.output, request.data)
+    logger.info(
+        "vendor={} software_version={} version_status={}",
+        slug,
+        version_label,
+        conversion_pipeline.version_status(version),
+    )
 
 
-def _write_mudata(md: MuData, output: Path | None, data: Path) -> int:
-    out = _output_path(output, data, ".h5mu")
-    _write_atomically(out, md.write_h5mu)
-    _remove_stale_sibling(out, ".h5ad")
-    logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
+def _write_parameter_resolution(
+    target: AnnData | MuData,
+    resolution: conversion_pipeline.ParameterResolution,
+) -> None:
+    """Persist one parsed parameter result across one converted artifact."""
+    conversion_adapter.write_parameter_resolution(target, resolution)
+    if isinstance(target, MuData):
+        for modality in target.mod.values():
+            conversion_adapter.write_parameter_resolution(modality, resolution)
+    if isinstance(resolution.version, conversion_pipeline.MissingRuleVersion):
+        logger.warning(
+            "no software version in search parameters {}; selected rule by columns",
+            resolution.source_path,
+        )
+
+
+def _write_mudata(md: MuData, output: Path) -> int:
+    _write_atomically(output, md.write_h5mu)
+    _remove_stale_sibling(output, ".h5ad")
+    logger.info(f"wrote {output}  obs={md.n_obs}  modalities={list(md.mod)}")
     return 0
 
 
@@ -294,18 +456,12 @@ def _write_container(obj: AnnData | MuData, out: Path) -> None:
         obj.write_h5ad(out)
 
 
-def _write_anndata(adata: AnnData, output: Path | None, data: Path) -> int:
+def _write_anndata(adata: AnnData, output: Path) -> int:
     """Write a single-level AnnData to .h5ad and log a one-line summary."""
-    out = _output_path(output, data, ".h5ad")
-    _write_atomically(out, adata.write_h5ad)
-    _remove_stale_sibling(out, ".h5mu")
-    logger.info(f"wrote {out}  shape={adata.shape}  layers={list(named_layers(adata))}")
+    _write_atomically(output, adata.write_h5ad)
+    _remove_stale_sibling(output, ".h5mu")
+    logger.info(f"wrote {output}  shape={adata.shape}  layers={list(layer_names(adata))}")
     return 0
-
-
-def _output_path(output: Path | None, data: Path, suffix: str) -> Path:
-    """Resolve a result path, appending APB's chosen suffix to explicit basenames."""
-    return data.with_suffix(suffix) if output is None else Path(f"{output}{suffix}")
 
 
 def _write_atomically(output: Path, writer: Callable[[Path], None]) -> None:
@@ -332,7 +488,11 @@ def summary_cmd(
     json: bool = False,
 ) -> int:
     """Print APB's lightweight shape and stored-metadata view."""
-    result = summary_reader.describe_path(path, modality=modality)
+    result = (
+        description_adapter.describe_path(path)
+        if modality is None
+        else description_adapter.describe_modality_path(path, modality)
+    )
     print(jsonlib.dumps(result, indent=None if json else 2, sort_keys=True))
     return 0
 
@@ -349,9 +509,15 @@ def annotate(
     CSV, and TSV tables. Joins sample records onto obs by run/file name and writes the
     enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input.
     """
-    obj = result_reader.load_converted_result(data)
-    annotation = annotation_loader.load_annotation(annotations)
-    annotation_apply.annotate_obs(obj, annotation)
+    obj = result_adapter.load_converted_result(data)
+    loaded = annotation_loader.load_annotation(annotations)
+    observation_frames = annotation_adapter.read_observation_frames(obj)
+    result = annotation_workflow.run_sample_annotation(
+        observation_frames,
+        loaded.table,
+        loaded.origin,
+    )
+    annotation_adapter.write_sample_annotation(obj, result)
 
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
     _write_container(obj, out)
@@ -381,72 +547,105 @@ def fasta(
         logger.error("no FASTA file given; usage: apb fasta DATA FASTA [FASTA ...]")
         return 1
 
-    sources = list(fasta_files)
-    obj = result_reader.load_converted_result(data)
-    has_protein = (
-        "protein" in obj.mod if isinstance(obj, MuData) else _quantification_level(obj) == "protein"
-    )
-    peptide_modalities = (
-        [
+    sources = tuple(fasta_files)
+    obj = result_adapter.load_converted_result(data)
+    if isinstance(obj, MuData):
+        has_protein = "protein" in obj.mod
+        peptide_modalities = [
             name
             for name, target in obj.mod.items()
-            if _quantification_level(target) in {"ion", "fragment", "peptidoform", "peptide"}
+            if isinstance(target, AnnData)
+            and rules_adapter.require_quantification_level(target) in PEPTIDE_LEVELS
         ]
-        if isinstance(obj, MuData)
-        else (
-            [_quantification_level(obj)]
-            if _quantification_level(obj) in {"ion", "fragment", "peptidoform", "peptide"}
-            else []
+    else:
+        level = rules_adapter.require_quantification_level(obj)
+        has_protein = level == "protein"
+        peptide_modalities = [level] if level in PEPTIDE_LEVELS else []
+    decoy_policy = (
+        DEFAULT_DECOY_POLICY
+        if options.decoy_pattern is None
+        else ExplicitPatterns(patterns=(options.decoy_pattern,) if options.decoy_pattern else ())
+    )
+    contaminant_policy = (
+        DEFAULT_CONTAMINANT_POLICY
+        if options.contaminant_pattern is None
+        else ExplicitPatterns(
+            patterns=(options.contaminant_pattern,) if options.contaminant_pattern else ()
         )
     )
-    identifier_config = FastaConfig.from_single_patterns(
-        options.decoy_pattern,
-        options.contaminant_pattern,
+    identifier_config = FastaConfig(
+        decoy=decoy_policy,
+        contaminant=contaminant_policy,
+    )
+    match_on = (
+        fasta_adapter.STORED_FASTA_ACCESSIONS
+        if options.match_on is None
+        else (
+            fasta_adapter.FASTA_ACCESSIONS_INDEX
+            if options.match_on == "index"
+            else fasta_adapter.FastaAccessionsColumn(options.match_on)
+        )
+    )
+    cleavage = (
+        fasta_workflow.STORED_CLEAVAGE_OR_TRYPSIN
+        if options.cleavage is None
+        else fasta_workflow.NamedCleavage(options.cleavage)
+    )
+    minimum_length = (
+        fasta_workflow.STORED_MINIMUM_LENGTH_OR_DEFAULT
+        if options.min_length is None
+        else fasta_workflow.MinimumPeptideLength(options.min_length)
+    )
+    maximum_length = (
+        fasta_workflow.STORED_MAXIMUM_LENGTH_OR_DEFAULT
+        if options.max_length is None
+        else fasta_workflow.MaximumPeptideLength(options.max_length)
     )
 
     if has_protein:
-        var_fasta.annotate_var_from_fasta(
-            obj,
-            sources,
-            ProteinFastaAnnotationConfig(
-                match_on=options.match_on,
-                is_uniprot=options.is_uniprot,
-                identifiers=identifier_config,
-                cleavage=options.cleavage,
-                min_length=options.min_length,
-                max_length=options.max_length,
-            ),
-        )
-
-    if options.validate and peptide_modalities:
-        validation_config = FastaValidationConfig(
-            sequence_field=options.sequence_field,
-            backend=options.backend,
-            identifiers=identifier_config,
-            leading_protein_field=options.leading_protein_field,
-            protein_match_on=options.match_on,
-            il_equivalent=options.il_equivalent,
+        protein_config = fasta_adapter.AnnDataProteinFastaConfig(
+            match_on=match_on,
             is_uniprot=options.is_uniprot,
+            identifiers=identifier_config,
+            cleavage=cleavage,
+            minimum_length=minimum_length,
+            maximum_length=maximum_length,
         )
         if isinstance(obj, MuData):
-            results = validate_fasta.validate_peptide_modalities_against_fasta(
+            _annotate_protein_mudata(obj, sources, protein_config)
+        else:
+            _annotate_protein_anndata(obj, sources, protein_config)
+
+    if options.validate and peptide_modalities:
+        reported_proteins = (
+            fasta_adapter.STORED_REPORTED_PROTEINS
+            if options.leading_protein_field is None
+            else fasta_adapter.ReportedProteinsColumn(options.leading_protein_field)
+        )
+        validation_config = fasta_adapter.AnnDataPeptideFastaConfig(
+            sequence_field=options.sequence_field,
+            matching=PeptideFastaMatchingConfig(
+                backend=options.backend,
+                identifiers=identifier_config,
+                il_equivalent=options.il_equivalent,
+                is_uniprot=options.is_uniprot,
+            ),
+            reported_proteins=reported_proteins,
+        )
+        if isinstance(obj, MuData):
+            _validate_peptide_mudata(
                 obj,
                 sources,
-                validation_config,
+                fasta_adapter.MuDataPeptideFastaConfig(
+                    validation=validation_config,
+                    protein_match_on=match_on,
+                ),
             )
         else:
-            result = validate_fasta.validate_peptides_against_fasta(
+            _validate_peptide_anndata(
                 obj,
                 sources,
                 validation_config,
-            )
-            results = {_quantification_level(obj) or "features": result}
-        for name, result in results.items():
-            logger.info(
-                "{}: {}/{} peptide-derived features occur in FASTA",
-                name,
-                result.n_matched_features,
-                result.n_features,
             )
 
     if not has_protein and (not options.validate or not peptide_modalities):
@@ -460,6 +659,120 @@ def fasta(
     _write_container(obj, out)
     logger.info(f"wrote {out}")
     return 0
+
+
+def _annotate_protein_anndata(
+    target: AnnData,
+    sources: tuple[Path, ...],
+    config: fasta_adapter.AnnDataProteinFastaConfig,
+) -> None:
+    """Compose protein extraction, calculation, and AnnData persistence."""
+    extracted = fasta_workflow.resolve_protein_annotation_input(
+        fasta_adapter.read_protein_annotation_input(target, config)
+    )
+    result = annotate_proteins_from_fasta(
+        extracted.protein_groups,
+        sources,
+        extracted.config,
+    )
+    fasta_adapter.write_protein_annotation(target, result, extracted.provenance)
+    fasta_adapter.write_anndata_fasta_config(target, result.fasta_config)
+
+
+def _annotate_protein_mudata(
+    target: MuData,
+    sources: tuple[Path, ...],
+    config: fasta_adapter.AnnDataProteinFastaConfig,
+) -> None:
+    """Compose protein extraction, calculation, and MuData persistence."""
+    protein = fasta_adapter.require_protein_mudata_target(target)
+    extracted = fasta_workflow.resolve_protein_annotation_input(
+        fasta_adapter.read_protein_annotation_input(protein, config)
+    )
+    result = annotate_proteins_from_fasta(
+        extracted.protein_groups,
+        sources,
+        extracted.config,
+    )
+    fasta_adapter.write_protein_annotation(protein, result, extracted.provenance)
+    fasta_adapter.write_mudata_fasta_config(target, result.fasta_config)
+
+
+def _validate_peptide_anndata(
+    target: AnnData,
+    sources: tuple[Path, ...],
+    config: fasta_adapter.AnnDataPeptideFastaConfig,
+) -> None:
+    """Compose peptide extraction, shared-scan calculation, and AnnData persistence."""
+    extracted = fasta_adapter.read_peptide_anndata_input(target, config)
+    workflow = fasta_workflow.validate_peptide_levels((extracted,), sources, config.matching)
+    result = workflow.levels[extracted.name]
+    fasta_adapter.write_peptide_validation(target, result, config.sequence_field)
+    fasta_adapter.write_anndata_fasta_config(target, workflow.fasta_config)
+    _log_peptide_validation(extracted.name, result)
+
+
+def _validate_peptide_mudata(
+    target: MuData,
+    sources: tuple[Path, ...],
+    config: fasta_adapter.MuDataPeptideFastaConfig,
+) -> None:
+    """Compose shared-scan peptide validation and optional MuLink persistence."""
+    extracted = fasta_adapter.read_peptide_mudata_inputs(target, config)
+    workflow = fasta_workflow.validate_peptide_levels(
+        extracted,
+        sources,
+        config.validation.matching,
+    )
+    if fasta_adapter.has_protein_mudata_target(target):
+        mapping_input = fasta_adapter.read_feature_mapping_input(
+            target,
+            tuple(workflow.levels),
+            config.protein_match_on,
+        )
+        mapping = fasta_workflow.build_mulink_feature_mapping(mapping_input.axes, workflow)
+        state = fasta_adapter.read_feature_mapping_state(
+            target,
+            mapping.feature_mapping.mapping.shape,
+        )
+        update = fasta_workflow.calculate_feature_mapping_update(
+            state,
+            mapping,
+            mapping_input.protein_match_on,
+        )
+        fasta_adapter.write_feature_mapping(target, update)
+        for name, result in workflow.levels.items():
+            modality = fasta_adapter.require_peptide_mudata_target(target, name)
+            fasta_adapter.write_peptide_validation_with_feature_mapping(
+                modality,
+                result,
+                config.validation.sequence_field,
+                update.stats,
+            )
+            _log_peptide_validation(name, result)
+    else:
+        for name, result in workflow.levels.items():
+            modality = fasta_adapter.require_peptide_mudata_target(target, name)
+            fasta_adapter.write_peptide_validation(
+                modality,
+                result,
+                config.validation.sequence_field,
+            )
+            _log_peptide_validation(name, result)
+    fasta_adapter.write_mudata_fasta_config(target, workflow.fasta_config)
+
+
+def _log_peptide_validation(
+    name: str,
+    result: fasta_workflow.PeptideValidation,
+) -> None:
+    """Log the per-level match count returned by the FASTA workflow."""
+    logger.info(
+        "{}: {}/{} peptide-derived features occur in FASTA",
+        name,
+        result.matching.n_matched_features,
+        result.matching.n_features,
+    )
 
 
 @app.command
@@ -476,11 +789,15 @@ def proteobench(
     command; scoring requires ``sample_name`` and ``condition`` in each scored observation
     table. The default output is ``<stem>.proteobench<suffix>`` beside the input.
     """
-    obj = result_reader.load_converted_result(data)
-    proteobench_pipeline.score_quantification(
-        obj,
+    obj = result_adapter.load_converted_result(data)
+    targets = tuple(proteobench_adapter.resolve_targets(obj))
+    extracted = tuple(proteobench_adapter.read_level(target) for target in targets)
+    results = proteobench_workflow.score_levels(
+        tuple(level.calculation for level in extracted),
         proteobench_config.load_module_settings(module_settings),
     )
+    for target, level, result in zip(targets, extracted, results, strict=True):
+        proteobench_adapter.store_result(target, result, level.roles)
 
     out = output or data.with_name(f"{data.stem}.proteobench{data.suffix}")
     if out.suffix != data.suffix:
@@ -490,11 +807,6 @@ def proteobench(
     _write_atomically(out, lambda path: _write_container(obj, path))
     logger.info(f"wrote {out}")
     return 0
-
-
-def _quantification_level(obj: AnnData | MuData) -> str | None:
-    """Return APB's stored quantification level for one AnnData-like object."""
-    return (obj.uns.get("anndata_proteomics") or {}).get("quantification_level")
 
 
 def main() -> int:

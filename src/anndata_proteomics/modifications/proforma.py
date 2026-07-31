@@ -8,7 +8,7 @@ from anndata_proteomics.modifications.model import ModificationOccurrence
 def render_proforma(
     stripped: str,
     occurrences: list[ModificationOccurrence],
-    unknown_tokens: dict[int, str] | None = None,
+    unknown_tokens: dict[int, str],
 ) -> str:
     """Build a ProForma 2.0 string from a stripped sequence + modifications.
 
@@ -21,9 +21,9 @@ def render_proforma(
         ``stripped``; ``position`` may be ``"N-term"`` / ``"C-term"`` for
         terminal modifications (then ``sequence_index`` is ignored).
     unknown_tokens
-        Optional mapping ``{sequence_index: original_vendor_token}`` for
+        Mapping ``{sequence_index: original_vendor_token}`` for
         unresolved tokens. Index ``-1`` denotes N-term, ``len(stripped)``
-        denotes C-term. Rendered verbatim inside brackets.
+        denotes C-term. Pass an empty mapping when every token was resolved.
 
     Notes
     -----
@@ -33,7 +33,7 @@ def render_proforma(
     """
     nterm, cterm, by_residue = _group_occurrences(occurrences)
     _add_unknown_tokens(
-        unknown_tokens or {},
+        unknown_tokens,
         sequence_length=len(stripped),
         nterm=nterm,
         cterm=cterm,

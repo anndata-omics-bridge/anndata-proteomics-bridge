@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from anndata_proteomics.params.model import Parameters
+from anndata_proteomics.params.model import Parameters, ParamsError
 from anndata_proteomics.params.parsers.diann import extract_params
 
 PROTEOBENCH_PARAMS = Path(__file__).resolve().parent / "params"
@@ -85,8 +85,6 @@ def test_extract_params_rejects_non_diann_file_cleanly(tmp_path: Path):
     # A FragPipe workflow file mis-attached to a DIA-NN submission (real ProteoBench case): no
     # `diann --` command line and no DIA-NN version banner → a clean ParamsError, not
     # InvalidVersion.
-    from anndata_proteomics.params.model import ParamsError
-
     bad = tmp_path / "param_0..workflow"
     bad.write_text("# FragPipe (22.0) runtime properties\nfragpipe.config.bin-msfragger=/x\n")
     with pytest.raises(ParamsError, match="not a DIA-NN parameter file"):
@@ -125,16 +123,29 @@ def test_diann_detects_exact_dda_log_marker_without_flag(tmp_path: Path):
     assert extract_params(params_file).acquisition_method == "DDA"
 
 
-@pytest.mark.parametrize("version", ["", "not-a-version"])
-def test_extract_params_tolerates_missing_or_garbage_version(tmp_path: Path, version: str):
-    # Exercise the public parser path that previously called Version("") in
-    # the <1.8 gate.
-    banner = (
-        f"DIA-NN {version} (Data-Independent Acquisition by Neural Networks)\n" if version else ""
-    )
+def test_extract_params_accepts_unversioned_version_invariant_unimod4(tmp_path: Path):
     params_file = tmp_path / "diann.log"
-    params_file.write_text(f"{banner}diann --unimod4\n")
+    params_file.write_text("diann --unimod4\n")
 
     params = extract_params(params_file)
 
-    assert params.software_version == (version or None)
+    assert params.software_version is None
+    assert [mod.name for mod in params.fixed_mods] == ["C[Carbamidomethyl]"]
+
+
+def test_extract_params_rejects_invalid_version_instead_of_guessing(tmp_path: Path):
+    params_file = tmp_path / "diann.log"
+    params_file.write_text(
+        "DIA-NN not-a-version (Data-Independent Acquisition by Neural Networks)\ndiann --unimod4\n"
+    )
+
+    with pytest.raises(ParamsError, match="invalid DIA-NN version"):
+        extract_params(params_file)
+
+
+def test_unversioned_version_sensitive_unimod_is_rejected(tmp_path: Path):
+    params_file = tmp_path / "diann.log"
+    params_file.write_text("diann --unimod35\n")
+
+    with pytest.raises(ParamsError, match="version is required"):
+        extract_params(params_file)

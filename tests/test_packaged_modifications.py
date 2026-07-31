@@ -8,14 +8,14 @@ import pandas as pd
 import pytest
 
 from anndata_proteomics.modifications.pipeline import apply_modifications
-from anndata_proteomics.rules.loader import load_rule
+from anndata_proteomics.rules.loader import load_rule_from_path
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
 
 PARSING_RULES = Path(__file__).parent.parent / "src" / "anndata_proteomics" / "parsing_rules"
 
 
 def _load(relative: str, level: QuantificationLevel) -> ParseRule:
-    return load_rule(PARSING_RULES / relative, level)
+    return load_rule_from_path(PARSING_RULES / relative, level)
 
 
 @pytest.mark.parametrize(

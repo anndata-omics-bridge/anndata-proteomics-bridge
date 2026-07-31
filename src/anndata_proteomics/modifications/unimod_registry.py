@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import tomllib
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,6 +39,27 @@ class UnimodRegistry(BaseModel):
     entries: list[UnimodEntry] = Field(min_length=1)
 
 
+@dataclass(frozen=True)
+class UnimodMatch:
+    """A canonical Unimod record matched a lookup query."""
+
+    entry: UnimodEntry
+
+
+@dataclass(frozen=True)
+class UnrecognizedUnimodName:
+    """No canonical Unimod record matched a name or accession."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class UnrecognizedUnimodMass:
+    """No canonical Unimod record matched a monoisotopic mass."""
+
+    mass_delta: float
+
+
 _REGISTRY_TOML = Path(__file__).with_name("unimod_registry.toml")
 
 
@@ -60,21 +82,19 @@ def load_registry() -> dict[str, UnimodEntry]:
 def resolve(accession: str) -> UnimodEntry:
     """Return the canonical record for ``accession`` or raise ``KeyError``."""
     registry = load_registry()
-    try:
-        return registry[accession]
-    except KeyError:
+    if accession not in registry:
         raise KeyError(
             f"accession {accession!r} not found in unimod_registry.toml; "
             f"add it there before referencing it from a parsing rule"
-        ) from None
+        )
+    return registry[accession]
 
 
-def find_by_name(name: str) -> UnimodEntry | None:
+def find_by_name(name: str) -> UnimodMatch | UnrecognizedUnimodName:
     """Find a canonical modification by accession, name, or shared synonym.
 
-    Unknown names return ``None`` so parameter parsers can preserve
-    vendor-specific vocabulary instead of forcing it into the small bundled
-    registry.
+    Unknown names return a tagged result so parameter parsers can preserve
+    vendor-specific vocabulary without using nullable control flow.
     """
     normalized = name.strip().casefold()
     registry = load_registry()
@@ -86,20 +106,20 @@ def find_by_name(name: str) -> UnimodEntry | None:
             *(alias.casefold() for alias in entry.aliases),
         }
         if normalized in known_names:
-            return entry
+            return UnimodMatch(entry)
 
-    return None
+    return UnrecognizedUnimodName(name)
 
 
 def find_by_mass(
     mass_delta: float,
     *,
     tolerance: float = 0.001,
-) -> UnimodEntry | None:
+) -> UnimodMatch | UnrecognizedUnimodMass:
     """Find one canonical modification by monoisotopic mass within tolerance.
 
-    Unknown masses return ``None``. An ambiguous match raises because silently
-    choosing one identity would corrupt the search-parameter record.
+    Unknown masses return a tagged result. An ambiguous match raises because
+    silently choosing one identity would corrupt the search-parameter record.
     """
     if tolerance < 0:
         raise ValueError("mass tolerance must be non-negative")
@@ -119,4 +139,6 @@ def find_by_mass(
         raise ValueError(
             f"mass delta {mass_delta} is ambiguous within {tolerance} Da: {accessions}"
         )
-    return matches[0] if matches else None
+    if matches:
+        return UnimodMatch(matches[0])
+    return UnrecognizedUnimodMass(mass_delta)

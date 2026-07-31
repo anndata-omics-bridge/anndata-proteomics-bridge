@@ -12,14 +12,16 @@ from pydantic import ValidationError
 
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.rules.loader import (
-    load_packaged_rule,
-    load_rule,
-    load_rules,
+    load_parameterized_packaged_rule_for_version,
+    load_parameterized_rules,
+    load_single_parameterized_rule,
     parse_rule_document,
-    resolve_rule_for_version,
+    resolve_parameterized_rule_for_version,
 )
 from anndata_proteomics.rules.schema import (
+    ParseRule,
     ParseRuleDocument,
+    SearchParameterCondition,
     _search_parameter_conditions_are_compatible,
 )
 
@@ -75,11 +77,14 @@ def test_override_selects_axis_from_normalized_search_parameters() -> None:
     )
 
     override = document.levels["ion"].search_parameter_overrides[0]
-    assert override.when_search_parameters == {"enable_match_between_runs": True}
+    assert isinstance(override.when_search_parameters, SearchParameterCondition)
+    assert override.when_search_parameters.model_dump(exclude_unset=True) == {
+        "enable_match_between_runs": True
+    }
     assert document.effective_rule("ion").axis.x_layer == "Intensity"
-    assert document.effective_rule("ion", Parameters()).axis.x_layer == "Intensity"
+    assert document.parameterized_effective_rule("ion", Parameters()).axis.x_layer == "Intensity"
     assert (
-        document.effective_rule(
+        document.parameterized_effective_rule(
             "ion",
             Parameters(enable_match_between_runs=True),
         ).axis.x_layer
@@ -107,14 +112,14 @@ def test_all_matching_overrides_apply_in_source_order() -> None:
     )
 
     assert (
-        document.effective_rule(
+        document.parameterized_effective_rule(
             "ion",
             Parameters(acquisition_method="DDA"),
         ).axis.x_layer
         == "Alternate"
     )
     assert (
-        document.effective_rule(
+        document.parameterized_effective_rule(
             "ion",
             Parameters(
                 acquisition_method="DDA",
@@ -124,7 +129,9 @@ def test_all_matching_overrides_apply_in_source_order() -> None:
         == "Intensity"
     )
     assert (
-        document.effective_rules(Parameters(acquisition_method="DIA"))["ion"].axis.x_layer
+        document.parameterized_effective_rules(Parameters(acquisition_method="DIA"))[
+            "ion"
+        ].axis.x_layer
         == "Intensity"
     )
 
@@ -143,7 +150,7 @@ def test_all_matching_overrides_apply_in_source_order() -> None:
                     "axis": {"x_layer": "Alternate"},
                 }
             ),
-            "too_short",
+            "must declare at least one field",
         ),
         (
             lambda data: data["levels"]["ion"]["search_parameter_overrides"].append(
@@ -152,7 +159,7 @@ def test_all_matching_overrides_apply_in_source_order() -> None:
                     "axis": {"x_layer": "Alternate"},
                 }
             ),
-            "unknown search-parameter",
+            "extra_forbidden",
         ),
         (
             lambda data: data["levels"]["ion"]["search_parameter_overrides"].append(
@@ -268,28 +275,28 @@ def test_loader_functions_propagate_search_parameters(tmp_path: Path) -> None:
     )
     parameters = Parameters(acquisition_method="DDA")
 
-    assert load_rule(path, search_parameters=parameters).axis.x_layer == "Alternate"
-    assert load_rules(path, search_parameters=parameters)["ion"].axis.x_layer == "Alternate"
+    assert load_single_parameterized_rule(path, parameters).axis.x_layer == "Alternate"
+    assert load_parameterized_rules(path, parameters)["ion"].axis.x_layer == "Alternate"
 
 
 def test_packaged_loader_functions_propagate_search_parameters() -> None:
     parameters = Parameters(acquisition_method="DDA")
 
-    packaged = load_packaged_rule(
+    packaged = load_parameterized_packaged_rule_for_version(
         "diann",
         "ion",
         "2.6.0",
-        search_parameters=parameters,
+        parameters,
     )
-    resolved = resolve_rule_for_version(
+    resolved = resolve_parameterized_rule_for_version(
         "diann",
         "ion",
         "2.6.0",
-        search_parameters=parameters,
+        parameters,
     )
 
     assert packaged.axis.x_layer == "Ms1_Normalised"
-    assert resolved is not None
+    assert isinstance(resolved, ParseRule)
     assert resolved.axis.x_layer == "Ms1_Normalised"
 
 
@@ -309,37 +316,39 @@ def _gated_document(
 def test_requires_search_parameters_normalizes_and_gates_availability() -> None:
     document = _parse(_gated_document({"combine_charge_states": False}))
 
-    assert document.levels["ion"].requires_search_parameters == {"combine_charge_states": False}
-    assert document.level_is_available("ion", Parameters(combine_charge_states=False))
-    assert not document.level_is_available("ion", Parameters(combine_charge_states=True))
+    requirements = document.levels["ion"].requires_search_parameters
+    assert isinstance(requirements, SearchParameterCondition)
+    assert requirements.model_dump(exclude_unset=True) == {"combine_charge_states": False}
+    assert document.level_is_available_for("ion", Parameters(combine_charge_states=False))
+    assert not document.level_is_available_for("ion", Parameters(combine_charge_states=True))
     # A gate needs parameters to compare against; without them the level is not offered.
-    assert not document.level_is_available("ion", None)
+    assert not document.level_is_unconditionally_available("ion")
 
 
 def test_ungated_level_is_always_available() -> None:
     document = _parse(_document())
 
-    assert document.level_is_available("ion", None)
-    assert document.level_is_available("ion", Parameters(combine_charge_states=True))
+    assert document.level_is_unconditionally_available("ion")
+    assert document.level_is_available_for("ion", Parameters(combine_charge_states=True))
 
 
 def test_level_is_available_is_false_for_an_undeclared_level() -> None:
     document = _parse(_document())
 
-    assert not document.level_is_available("protein", Parameters())
+    assert not document.level_is_available_for("protein", Parameters())
 
 
 def test_available_levels_filters_by_gate_in_source_order() -> None:
     document = _parse(_gated_document({"combine_charge_states": False}))
 
-    assert document.available_levels(Parameters(combine_charge_states=False)) == ["ion"]
-    assert document.available_levels(Parameters(combine_charge_states=True)) == []
-    assert document.available_levels(None) == []
-    assert _parse(_document()).available_levels(None) == ["ion"]
+    assert document.available_levels_for(Parameters(combine_charge_states=False)) == ["ion"]
+    assert document.available_levels_for(Parameters(combine_charge_states=True)) == []
+    assert document.unconditionally_available_levels() == []
+    assert _parse(_document()).unconditionally_available_levels() == ["ion"]
 
 
 def test_requires_search_parameters_rejects_unknown_fields() -> None:
-    with pytest.raises(ValidationError, match="unknown search-parameter field"):
+    with pytest.raises(ValidationError, match="extra_forbidden"):
         _parse(_gated_document({"not_a_parameter_field": True}))
 
 
@@ -347,7 +356,9 @@ def test_requires_search_parameters_does_not_reach_the_effective_rule() -> None:
     """The gate decides availability only; it must not leak into the merged rule body."""
     document = _parse(_gated_document({"combine_charge_states": False}))
 
-    rule = document.effective_rule("ion", Parameters(combine_charge_states=False))
+    rule = document.parameterized_effective_rule("ion", Parameters(combine_charge_states=False))
 
     assert not hasattr(rule, "requires_search_parameters")
-    assert document.effective_rules(Parameters(combine_charge_states=True)).keys() == {"ion"}
+    assert document.parameterized_effective_rules(
+        Parameters(combine_charge_states=True)
+    ).keys() == {"ion"}

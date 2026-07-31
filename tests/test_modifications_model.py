@@ -64,7 +64,7 @@ def test_proforma_residue_with_accession():
             name="Oxidation", accession="UNIMOD:35", sequence_index=0, position="Anywhere"
         )
     ]
-    assert render_proforma("MPEPTIDE", occ) == "M[UNIMOD:35]PEPTIDE"
+    assert render_proforma("MPEPTIDE", occ, {}) == "M[UNIMOD:35]PEPTIDE"
 
 
 def test_proforma_nterm_and_internal():
@@ -74,12 +74,12 @@ def test_proforma_nterm_and_internal():
             name="Oxidation", accession="UNIMOD:35", sequence_index=3, position="Anywhere"
         ),
     ]
-    assert render_proforma("PEPMIDE", occ) == "[UNIMOD:1]-PEPM[UNIMOD:35]IDE"
+    assert render_proforma("PEPMIDE", occ, {}) == "[UNIMOD:1]-PEPM[UNIMOD:35]IDE"
 
 
 def test_proforma_falls_back_to_name():
     occ = [ModificationOccurrence(name="Oxidation", sequence_index=0)]
-    assert render_proforma("M", occ) == "M[Oxidation]"
+    assert render_proforma("M", occ, {}) == "M[Oxidation]"
 
 
 def test_proforma_unknown_token_preserved():
@@ -94,7 +94,7 @@ _OX_M = MapEntry(
     token="15.9949",
     name="Oxidation",
     accession="UNIMOD:35",
-    target=["M"],
+    target=("M",),
     position="Anywhere",
     mass_delta=15.9949,
 )
@@ -102,7 +102,7 @@ _CAM_C = MapEntry(
     token="57.0215",
     name="Carbamidomethyl",
     accession="UNIMOD:4",
-    target=["C"],
+    target=("C",),
     position="Anywhere",
     mass_delta=57.02146,
 )
@@ -110,7 +110,7 @@ _AC_NT = MapEntry(
     token="42.0106",
     name="Acetyl",
     accession="UNIMOD:1",
-    target=["N-term"],
+    target=("N-term",),
     position="N-term",
     mass_delta=42.0106,
 )
@@ -124,7 +124,6 @@ def _rule(
     entries: tuple[MapEntry, ...] = (_OX_M, _CAM_C, _AC_NT),
 ) -> ModificationRule:
     return ModificationRule(
-        source_column="Modified Sequence",
         token_pattern=token_pattern,
         token_position=token_position,
         unknown_policy=unknown_policy,
@@ -156,15 +155,17 @@ def test_apply_rule_maxquant_style_parens():
                 token="ox",
                 name="Oxidation",
                 accession="UNIMOD:35",
-                target=["M"],
+                target=("M",),
                 position="Anywhere",
+                mass_delta=15.994915,
             ),
             MapEntry(
                 token="ac",
                 name="Acetyl",
                 accession="UNIMOD:1",
-                target=["N-term"],
+                target=("N-term",),
                 position="N-term",
+                mass_delta=42.010565,
             ),
         ),
     )
@@ -201,7 +202,7 @@ def test_apply_rule_mass_disambiguated_by_target():
                 token="79.9663",
                 name="Phospho-S",
                 accession="UNIMOD:21",
-                target=["S"],
+                target=("S",),
                 position="Anywhere",
                 mass_delta=79.9663,
             ),
@@ -209,7 +210,7 @@ def test_apply_rule_mass_disambiguated_by_target():
                 token="79.9663",
                 name="Sulfo-Y",
                 accession="UNIMOD:40",
-                target=["Y"],
+                target=("Y",),
                 position="Anywhere",
                 mass_delta=79.9663,
             ),
@@ -229,7 +230,7 @@ def test_apply_rule_phospho_multi_target_s_t_y():
                 token="79.96633",
                 name="Phospho",
                 accession="UNIMOD:21",
-                target=["S", "T", "Y"],
+                target=("S", "T", "Y"),
                 position="Anywhere",
                 mass_delta=79.96633,
             ),
@@ -251,7 +252,7 @@ def test_apply_rule_glygly_on_lysine():
                 token="114.04293",
                 name="GG",
                 accession="UNIMOD:121",
-                target=["K"],
+                target=("K",),
                 position="Anywhere",
                 mass_delta=114.04293,
             ),
@@ -271,8 +272,9 @@ def test_apply_rule_alphapept_before_residue_lowercase():
                 token="ox",
                 name="Oxidation",
                 accession="UNIMOD:35",
-                target=["M"],
+                target=("M",),
                 position="Anywhere",
+                mass_delta=15.994915,
             ),
         ),
     )

@@ -304,7 +304,10 @@ def test_convert_wide_value_pattern_extracts_numbers_from_structured_cells() -> 
         }
     )
 
-    pieces = convert_wide(df, _structured_layer_rule(value_pattern=r":(-?\d+(?:\.\d+)?)$"))
+    pieces = convert_wide(
+        df,
+        _structured_layer_rule(value_pattern={"mode": "regex", "pattern": r":(-?\d+(?:\.\d+)?)$"}),
+    )
 
     score = pieces.layers["Score"]
     assert score[0, 0] == 12.5
@@ -327,7 +330,10 @@ def test_convert_wide_single_column_layer_does_not_fill_down_the_feature_axis() 
         }
     )
 
-    pieces = convert_wide(df, _structured_layer_rule(value_pattern=r":(-?\d+(?:\.\d+)?)$"))
+    pieces = convert_wide(
+        df,
+        _structured_layer_rule(value_pattern={"mode": "regex", "pattern": r":(-?\d+(?:\.\d+)?)$"}),
+    )
 
     score = pieces.layers["Score"]
     assert score[0, 2] == 9.0

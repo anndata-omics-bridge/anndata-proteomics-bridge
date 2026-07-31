@@ -6,9 +6,40 @@ from pathlib import Path
 from typing import IO
 
 import yaml
+from pydantic import BaseModel, ConfigDict
 
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.parsers._common import read_text
+
+
+class _WombatModel(BaseModel):
+    """Strict-enough base for the consumed WOMBAT-P YAML sections."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class _WombatParameters(_WombatModel):
+    enzyme: str
+    miscleavages: int
+    fixed_mods: str
+    variable_mods: str
+    max_mods: int
+    min_peptide_length: int
+    max_peptide_length: int
+    precursor_mass_tolerance: str
+    fragment_mass_tolerance: str
+    ident_fdr_protein: float
+    ident_fdr_peptide: float
+    ident_fdr_psm: float
+    min_precursor_charge: int
+    max_precursor_charge: int
+    enable_match_between_runs: bool
+    normalization_method: str | bool
+
+
+class _WombatDocument(_WombatModel):
+    version: str
+    params: _WombatParameters
 
 
 def _homogenize_mod_xtandem(mod_str: str) -> str:
@@ -39,35 +70,39 @@ def extract_params(source: str | Path | IO[bytes] | IO[str]) -> Parameters:
 
     Mirrors ``proteobench.io.params.wombat.extract_params``.
     """
-    record = yaml.safe_load(read_text(source))
-    p = record["params"]
+    record = _WombatDocument.model_validate(yaml.safe_load(read_text(source)))
+    parameters = record.params
 
-    enzyme = p["enzyme"]
+    enzyme = parameters.enzyme
     if enzyme == "trypsin":
         enzyme = "Trypsin"
 
     return Parameters.model_validate(
         {
             "software_name": "Wombat",
-            "software_version": record["version"],
+            "software_version": record.version,
             "search_engine": "various",
             "enzyme": enzyme,
-            "allowed_miscleavages": p["miscleavages"],
-            "fixed_mods": ", ".join(_homogenize_mod_xtandem(m) for m in p["fixed_mods"].split(",")),
-            "variable_mods": ", ".join(
-                _homogenize_mod_xtandem(m) for m in p["variable_mods"].split(",")
+            "allowed_miscleavages": parameters.miscleavages,
+            "fixed_mods": ", ".join(
+                _homogenize_mod_xtandem(modification)
+                for modification in parameters.fixed_mods.split(",")
             ),
-            "max_mods": p["max_mods"],
-            "min_peptide_length": p["min_peptide_length"],
-            "max_peptide_length": p["max_peptide_length"],
-            "precursor_mass_tolerance": p["precursor_mass_tolerance"],
-            "fragment_mass_tolerance": p["fragment_mass_tolerance"],
-            "ident_fdr_protein": p["ident_fdr_protein"],
-            "ident_fdr_peptide": p["ident_fdr_peptide"],
-            "ident_fdr_psm": p["ident_fdr_psm"],
-            "min_precursor_charge": p["min_precursor_charge"],
-            "max_precursor_charge": p["max_precursor_charge"],
-            "enable_match_between_runs": p["enable_match_between_runs"],
-            "abundance_normalization_ions": p["normalization_method"],
+            "variable_mods": ", ".join(
+                _homogenize_mod_xtandem(modification)
+                for modification in parameters.variable_mods.split(",")
+            ),
+            "max_mods": parameters.max_mods,
+            "min_peptide_length": parameters.min_peptide_length,
+            "max_peptide_length": parameters.max_peptide_length,
+            "precursor_mass_tolerance": parameters.precursor_mass_tolerance,
+            "fragment_mass_tolerance": parameters.fragment_mass_tolerance,
+            "ident_fdr_protein": parameters.ident_fdr_protein,
+            "ident_fdr_peptide": parameters.ident_fdr_peptide,
+            "ident_fdr_psm": parameters.ident_fdr_psm,
+            "min_precursor_charge": parameters.min_precursor_charge,
+            "max_precursor_charge": parameters.max_precursor_charge,
+            "enable_match_between_runs": parameters.enable_match_between_runs,
+            "abundance_normalization_ions": parameters.normalization_method,
         }
     )

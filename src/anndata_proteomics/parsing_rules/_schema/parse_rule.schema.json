@@ -223,7 +223,7 @@
     },
     "Layer": {
       "additionalProperties": false,
-      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\n``value_pattern`` handles vendor columns whose cells are structured strings rather\nthan bare numbers (PEAKS ``AScore`` is ``site:modification:score``). It is a regex\nwith exactly one capture group, applied per cell before numeric coercion; the first\nmatch wins and non-matching cells become NaN. Without it such a column silently\ncoerces to an all-NaN layer.",
+      "description": "A quantitative layer fed by one ``source``.\n\n``source`` interpretation is owned by the rule-level ``input_shape``:\n\n- ``input_shape=\"long\"``: ``source`` is an exact vendor column name.\n- ``input_shape=\"wide\"``: ``source`` is a regex over matrix headers and must\n  contain a ``(?P<sample>...)`` named group (enforced on ``ParseRule``).\n\nLayers are optional by default: captured when the ``source`` is present in the\ninput and silently skipped when absent, so a rule can declare the full superset\nof a vendor's volatile columns without rejecting exports that omit some. Set\n``required = true`` to gate a layer (a file missing it is rejected). The\n``axis.x_layer`` is always required regardless of this flag.\n\nA regex ``value_pattern`` handles vendor columns whose cells are structured strings\nrather than bare numbers (PEAKS ``AScore`` is ``site:modification:score``). Its\n``pattern`` has exactly one capture group, applied per cell before numeric coercion;\nthe first match wins and non-matching cells become NaN. ``mode = \"none\"`` explicitly\ndeclares directly parseable scalar values.",
       "properties": {
         "name": {
           "title": "Name",
@@ -257,9 +257,10 @@
           "type": "array"
         },
         "value_pattern": {
-          "default": "",
-          "title": "Value Pattern",
-          "type": "string"
+          "$ref": "#/$defs/ValuePattern",
+          "default": {
+            "mode": "none"
+          }
         },
         "required": {
           "default": false,
@@ -292,6 +293,20 @@
         "accession"
       ],
       "title": "ModificationMapEntry",
+      "type": "object"
+    },
+    "NoValuePattern": {
+      "additionalProperties": false,
+      "description": "A numeric layer contains directly parseable scalar values.",
+      "properties": {
+        "mode": {
+          "const": "none",
+          "default": "none",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "NoValuePattern",
       "type": "object"
     },
     "PositionalFragments": {
@@ -329,15 +344,40 @@
       "title": "PositionalFragments",
       "type": "object"
     },
-    "SampleNameCleanup": {
+    "RegexValuePattern": {
       "additionalProperties": false,
+      "description": "Extract one numeric capture group from each structured layer value.",
       "properties": {
+        "mode": {
+          "const": "regex",
+          "default": "regex",
+          "title": "Mode",
+          "type": "string"
+        },
         "pattern": {
-          "default": "",
+          "minLength": 1,
           "title": "Pattern",
           "type": "string"
         }
       },
+      "required": [
+        "pattern"
+      ],
+      "title": "RegexValuePattern",
+      "type": "object"
+    },
+    "SampleNameCleanup": {
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {
+          "minLength": 1,
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
       "title": "SampleNameCleanup",
       "type": "object"
     },
@@ -480,6 +520,23 @@
       ],
       "title": "TokenRegexModifications",
       "type": "object"
+    },
+    "ValuePattern": {
+      "discriminator": {
+        "mapping": {
+          "none": "#/$defs/NoValuePattern",
+          "regex": "#/$defs/RegexValuePattern"
+        },
+        "propertyName": "mode"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NoValuePattern"
+        },
+        {
+          "$ref": "#/$defs/RegexValuePattern"
+        }
+      ]
     }
   },
   "additionalProperties": false,

@@ -8,10 +8,18 @@ import pandas as pd
 
 from anndata_proteomics.readers.tabular import (
     detect_decimal_separator,
+    detect_text_delimiter,
     read_csv,
     read_parquet,
     read_tsv,
 )
+
+
+def test_one_column_text_has_an_explicit_tab_default(tmp_path: Path) -> None:
+    path = tmp_path / "one-column.txt"
+    path.write_text("Feature\nA\nB\n", encoding="utf-8")
+
+    assert detect_text_delimiter(path) == "\t"
 
 
 def test_read_csv_basic(tmp_path: Path) -> None:

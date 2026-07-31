@@ -8,8 +8,10 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from conversion_support import convert_to_anndata
 
-from anndata_proteomics.converters.assemble import convert
+from anndata_proteomics.adapters.anndata import conversion as conversion_adapter
+from anndata_proteomics.converters import pipeline as conversion_pipeline
 from anndata_proteomics.rules.schema import ParseRule
 
 RULE: dict[str, Any] = {
@@ -88,7 +90,7 @@ def _make_df() -> pd.DataFrame:
 
 
 def test_convert_adds_proforma_column_to_var():
-    adata = convert(_make_df(), _make_rule())
+    adata = convert_to_anndata(_make_df(), _make_rule())
     assert "ProForma_ion" in adata.var.columns
     proforma_values = sorted(adata.var["ProForma_ion"].tolist())
     assert "PEPM[UNIMOD:35]TIDE/2" in proforma_values
@@ -98,7 +100,7 @@ def test_convert_adds_proforma_column_to_var():
 
 
 def test_convert_var_indexed_by_proforma():
-    adata = convert(_make_df(), _make_rule())
+    adata = convert_to_anndata(_make_df(), _make_rule())
     assert sorted(adata.var_names) == [
         "PEPC[UNIMOD:4]TIDE/2",
         "PEPM[UNIMOD:35]TIDE/2",
@@ -108,7 +110,7 @@ def test_convert_var_indexed_by_proforma():
 def test_convert_normalizes_float_charge_in_proforma_ion():
     df = _make_df()
     df["Precursor.Charge"] = [2.0, 2.0, 2.0, 2.0]
-    adata = convert(df, _make_rule())
+    adata = convert_to_anndata(df, _make_rule())
     assert sorted(adata.var_names) == [
         "PEPC[UNIMOD:4]TIDE/2",
         "PEPM[UNIMOD:35]TIDE/2",
@@ -119,7 +121,7 @@ def test_convert_rejects_non_positive_charge_for_proforma_ion():
     df = _make_df()
     df.loc[0, "Precursor.Charge"] = 0
     with pytest.raises(ValueError, match="positive"):
-        convert(df, _make_rule())
+        convert_to_anndata(df, _make_rule())
 
 
 def test_convert_rejects_non_integral_charge_for_proforma_ion():
@@ -127,27 +129,22 @@ def test_convert_rejects_non_integral_charge_for_proforma_ion():
     df["Precursor.Charge"] = df["Precursor.Charge"].astype(float)
     df.loc[0, "Precursor.Charge"] = 2.5
     with pytest.raises(ValueError, match="integer"):
-        convert(df, _make_rule())
+        convert_to_anndata(df, _make_rule())
 
 
 def test_convert_with_params_path_attaches_search_parameters(tmp_path: Path) -> None:
     proteobench_params = Path(__file__).resolve().parent / "params" / "sage_parameterfile.json"
     if not proteobench_params.exists():
         pytest.skip("ProteoBench fixture missing")
-    adata = convert(_make_df(), _make_rule(), params_path=proteobench_params)
+    adata = convert_to_anndata(_make_df(), _make_rule())
+    resolution = conversion_pipeline.resolve_parameters(proteobench_params, "sage")
+    conversion_adapter.write_parameter_resolution(
+        adata,
+        resolution,
+    )
     uns = adata.uns["anndata_proteomics"]
     assert "search_parameters" in uns
     parsed = json.loads(uns["search_parameters"])
     assert parsed["software_name"] == "Sage"
     assert parsed["software_version"] == "0.14.6"
     assert uns["search_parameters_path"] == str(proteobench_params)
-
-
-def test_convert_with_params_path_for_unknown_software_keeps_path_only(tmp_path: Path) -> None:
-    rule = ParseRule.model_validate({**RULE, "software_name": "UnknownTool"})
-    fake = tmp_path / "fake_params.txt"
-    fake.write_text("dummy")
-    adata = convert(_make_df(), rule, params_path=fake)
-    uns = adata.uns["anndata_proteomics"]
-    assert "search_parameters" not in uns
-    assert uns["search_parameters_path"] == str(fake)
