@@ -44,13 +44,15 @@ def _adata(
 
 
 def test_fasta_config_reader_handles_missing_and_byte_payloads() -> None:
-    empty = SimpleNamespace(uns={})
+    empty = ad.AnnData()
     assert read_fasta_config(empty) is None
-    empty.uns["anndata_proteomics"] = {"other": "metadata"}
+    namespace: dict[str, Any] = {"other": "metadata"}
+    empty.uns["anndata_proteomics"] = namespace
     assert read_fasta_config(empty) is None
 
     resolved = resolve_fasta_config(["REV_P1"], FastaConfig())
-    empty.uns["anndata_proteomics"]["fasta_config"] = resolved.model_dump_json().encode()
+    # h5py hands back bytes, not str, for a round-tripped JSON payload.
+    namespace["fasta_config"] = resolved.model_dump_json().encode()
     assert read_fasta_config(empty) == resolved
 
 

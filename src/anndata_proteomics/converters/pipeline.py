@@ -14,11 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import mudata
 import pandas as pd
 from anndata import AnnData
 from loguru import logger
 from mudata import MuData
 
+from anndata_proteomics.converters import assemble
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.model import Parameters
@@ -355,9 +357,8 @@ def convert_level(
     *,
     params_path: Path | str | None = None,
     parameter_resolution: ParameterResolution | None = None,
+    strict: bool = False,
 ) -> AnnData:
-    from anndata_proteomics.converters.assemble import convert
-
     if parameter_resolution is None and params_path is not None:
         parameter_resolution = resolve_parameters(params_path, slug)
     version, version_status = _effective_rule_version(
@@ -376,10 +377,11 @@ def convert_level(
         version_status=version_status,
         search_parameters=search_parameters,
     )
-    adata = convert(
+    adata = assemble.convert(
         df,
         rule,
         params_path=None if parameter_resolution is not None else params_path,
+        strict=strict,
     )
     if parameter_resolution is not None:
         attach_parameter_resolution(
@@ -401,6 +403,7 @@ def build_mudata(
     *,
     params_path: Path | str | None = None,
     parameter_resolution: ParameterResolution | None = None,
+    strict: bool = False,
 ) -> MuData:
     """Build a MuData over the levels whose version-selected rule fits this file (shared run axis).
 
@@ -442,6 +445,7 @@ def build_mudata(
         parameter_resolution=parameter_resolution,
         rule_selection_method=selection_method,
         software=slug,
+        strict=strict,
     )
 
 
@@ -453,10 +457,9 @@ def build_mudata_from_rules(
     parameter_resolution: ParameterResolution | None = None,
     rule_selection_method: RuleSelectionMethod | None = None,
     software: str | None = None,
+    strict: bool = False,
 ) -> MuData:
     """Build MuData from already selected effective rules."""
-    import mudata
-
     if not rules:
         raise ValueError("no levels supplied")
     mods: dict[str, AnnData] = {}
@@ -464,12 +467,11 @@ def build_mudata_from_rules(
         if level not in rules:
             continue
         logger.info(f"converting level: {level}")
-        from anndata_proteomics.converters.assemble import convert
-
-        adata = convert(
+        adata = assemble.convert(
             df.copy(),
             rules[level],
             params_path=None if parameter_resolution is not None else params_path,
+            strict=strict,
         )
         if parameter_resolution is not None:
             attach_parameter_resolution(

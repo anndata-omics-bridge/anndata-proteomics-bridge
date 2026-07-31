@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from anndata_proteomics.readers.tabular import (
     detect_text_delimiter,
@@ -44,8 +45,6 @@ def read_table(path: Path | str) -> pd.DataFrame:
 
 def read_table_columns(path: Path | str) -> list[str]:
     """Read only column names using the same format rules as :func:`read_table`."""
-    import pyarrow.parquet as pq
-
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".parquet":

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
+from anndata import AnnData
+
+from anndata_proteomics._containers import UnsHolder
 from anndata_proteomics.rules.schema import ParseRule
 
 _NAMESPACE = "anndata_proteomics"
@@ -11,7 +14,7 @@ _RULE_KEY = "rule_json"
 type ColumnRoleName = Literal["protein_assignment", "fasta_accessions"]
 
 
-def read_stored_rule(target: Any) -> ParseRule | None:
+def read_stored_rule(target: UnsHolder) -> ParseRule | None:
     """Return the effective parsing rule stored by conversion, if present."""
     namespace = target.uns.get(_NAMESPACE) or {}
     raw = namespace.get(_RULE_KEY)
@@ -25,7 +28,7 @@ def read_stored_rule(target: Any) -> ParseRule | None:
     return ParseRule.model_validate_json(raw)
 
 
-def read_stored_column_role(target: Any, role: ColumnRoleName) -> str | None:
+def read_stored_column_role(target: AnnData, role: ColumnRoleName) -> str | None:
     """Return one declared semantic ``var`` column without guessing its name."""
     rule = read_stored_rule(target)
     if rule is None:

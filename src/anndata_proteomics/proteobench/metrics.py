@@ -154,7 +154,7 @@ def _absolute_aggregate(name: str):
     raise ValueError(f"unsupported aggregation {name!r}")
 
 
-def _json_compatible(value: Any) -> Any:
+def _json_compatible(value: object) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_compatible(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):

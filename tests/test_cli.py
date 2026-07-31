@@ -19,6 +19,7 @@ import pytest
 
 from anndata_proteomics.rules.registry import find_rule, packaged_rules_root
 from anndata_proteomics.scripts.cli import (
+    ConvertCliOptions,
     _write_atomically,
     convert,
     export_schema_cmd,
@@ -182,15 +183,24 @@ def test_convert_with_explicit_rule_config_writes_h5ad(tmp_path: Path) -> None:
         convert(
             data_path,
             "ion",
-            params=params_path,
-            rule_config=rule_path,
-            output=output_base,
+            ConvertCliOptions(
+                params=params_path,
+                rule_config=rule_path,
+                output=output_base,
+            ),
         )
     assert not output.exists()
     assert stale.exists()
 
     without_params = tmp_path / "without_params"
-    assert convert(data_path, "ion", rule_config=rule_path, output=without_params) == 0
+    assert (
+        convert(
+            data_path,
+            "ion",
+            ConvertCliOptions(rule_config=rule_path, output=without_params),
+        )
+        == 0
+    )
     import anndata as ad
 
     no_params_metadata = ad.read_h5ad(without_params.with_suffix(".h5ad")).uns["anndata_proteomics"]
@@ -217,7 +227,10 @@ def test_convert_with_multilevel_rule_config_writes_h5mu(tmp_path: Path) -> None
     rule_path.write_text(json.dumps(document))
 
     output_base = tmp_path / "out"
-    rc = convert(data_path, rule_config=rule_path, output=output_base)
+    rc = convert(
+        data_path,
+        options=ConvertCliOptions(rule_config=rule_path, output=output_base),
+    )
 
     assert rc == 0
     output = output_base.with_suffix(".h5mu")
@@ -249,7 +262,10 @@ def test_convert_with_single_level_rule_config_writes_one_modality_h5mu(
     rule_path = tmp_path / "rules.json"
     rule_path.write_text(json.dumps(_tiny_rule_document()))
 
-    rc = convert(data_path, rule_config=rule_path, output=tmp_path / "out")
+    rc = convert(
+        data_path,
+        options=ConvertCliOptions(rule_config=rule_path, output=tmp_path / "out"),
+    )
 
     assert rc == 0
     assert list(mudata.read_h5mu(tmp_path / "out.h5mu").mod) == ["ion"]
@@ -261,7 +277,10 @@ def test_convert_rejects_output_extension(
     data_path = tmp_path / "tiny.tsv"
     output = tmp_path / "out.h5ad"
 
-    rc = convert(data_path, rule_config=tmp_path / "rule.json", output=output)
+    rc = convert(
+        data_path,
+        options=ConvertCliOptions(rule_config=tmp_path / "rule.json", output=output),
+    )
 
     assert rc == 2
     assert "extensionless basename" in capsys.readouterr().err
@@ -284,7 +303,7 @@ def test_convert_requires_params_without_rule_config(
     # --software bypasses vendor detection, so the missing-params branch is reached.
     data_path = tmp_path / "x.tsv"
     data_path.write_text("Run\tSequence\nS1\tP1\n")
-    rc = convert(data_path, software="diann")
+    rc = convert(data_path, options=ConvertCliOptions(software="diann"))
     captured = capsys.readouterr()
     assert rc == 1
     assert "--params" in (captured.out + captured.err)

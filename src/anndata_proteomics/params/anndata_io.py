@@ -17,6 +17,7 @@ import json
 import anndata as ad
 import mudata as md
 
+from anndata_proteomics._containers import UnsHolder
 from anndata_proteomics.params.model import Parameters
 
 _UNS_KEY = "anndata_proteomics"
@@ -24,7 +25,7 @@ _PARAMS_KEY = "search_parameters"
 _PARAMS_PATH_KEY = "search_parameters_path"
 
 
-def read_search_parameters(adata: ad.AnnData) -> Parameters | None:
+def read_search_parameters(adata: UnsHolder) -> Parameters | None:
     """Return the stored :class:`Parameters`, or ``None`` if none were stored.
 
     Raises :class:`pydantic.ValidationError` if the stored payload no longer

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import csv
+import re
+from itertools import islice
 from pathlib import Path
 
 import pandas as pd
 
 _TEXT_DELIMITERS = ",\t"
+_COMMA_DECIMAL_RE = re.compile(r"^-?\d+,(\d+)$")
+_THOUSANDS_GROUP_WIDTH = 3
+_DECIMAL_SAMPLE_LINES = 500
 
 
 def detect_text_delimiter(path: Path | str) -> str:
@@ -22,23 +27,57 @@ def detect_text_delimiter(path: Path | str) -> str:
         return "\t"
 
 
+def detect_decimal_separator(path: Path | str, *, delimiter: str) -> str:
+    """Detect whether a delimited text file writes numbers with a comma decimal mark.
+
+    Vendors export numbers in the regional format of the machine that produced the file,
+    and nothing in the file declares which one was used, so this is inferred from content.
+    Only the shape of the number distinguishes the two readings of ``1,234``: a thousands
+    separator always groups exactly three digits, while a decimal comma is followed by a
+    fraction of any other width. A field whose comma is followed by three digits is
+    therefore left ambiguous and never counted as evidence.
+
+    A comma-delimited file cannot carry bare comma decimals at all, so it is reported as
+    dot-decimal without inspection.
+    """
+    if delimiter == ",":
+        return "."
+    decimal_like = 0
+    # Tolerant decoding: this scan only looks for digits and commas, and must not turn a
+    # file pandas can still read into a decode failure before pandas ever sees it.
+    with Path(path).open(encoding="utf-8-sig", newline="", errors="replace") as handle:
+        handle.readline()
+        for line in islice(handle, _DECIMAL_SAMPLE_LINES):
+            for field in line.rstrip("\n").split(delimiter):
+                match = _COMMA_DECIMAL_RE.match(field)
+                if match is not None and len(match.group(1)) != _THOUSANDS_GROUP_WIDTH:
+                    decimal_like += 1
+    return "," if decimal_like else "."
+
+
+def _read_delimited(path: Path | str, delimiter: str) -> pd.DataFrame:
+    """Read delimited text in the number format the file itself was written with."""
+    return pd.read_csv(
+        path,
+        sep=delimiter,
+        encoding="utf-8-sig",
+        decimal=detect_decimal_separator(path, delimiter=delimiter),
+    )
+
+
 def read_csv(path: Path | str) -> pd.DataFrame:
     """Read a comma-delimited file. UTF-8 with BOM tolerance."""
-    return pd.read_csv(path, encoding="utf-8-sig")
+    return _read_delimited(path, ",")
 
 
 def read_tsv(path: Path | str) -> pd.DataFrame:
     """Read a tab-delimited file. UTF-8 with BOM tolerance."""
-    return pd.read_csv(path, sep="\t", encoding="utf-8-sig")
+    return _read_delimited(path, "\t")
 
 
 def read_detected_text(path: Path | str) -> pd.DataFrame:
     """Read comma- or tab-delimited text after content-based delimiter detection."""
-    return pd.read_csv(
-        path,
-        sep=detect_text_delimiter(path),
-        encoding="utf-8-sig",
-    )
+    return _read_delimited(path, detect_text_delimiter(path))
 
 
 def read_delimited_columns(path: Path | str, *, delimiter: str) -> list[str]:

@@ -50,14 +50,14 @@ def test_rule_config_missing_level_and_no_match(
         cli.convert(
             tmp_path / "data.tsv",
             "protein",
-            rule_config=tmp_path / "rule.json",
+            cli.ConvertCliOptions(rule_config=tmp_path / "rule.json"),
         )
         == 1
     )
     assert (
         cli.convert(
             tmp_path / "data.tsv",
-            rule_config=tmp_path / "rule.json",
+            options=cli.ConvertCliOptions(rule_config=tmp_path / "rule.json"),
         )
         == 1
     )
@@ -113,9 +113,11 @@ def test_rule_config_materializes_single_and_mudata_with_parameters(
         cli.convert(
             tmp_path / "data.tsv",
             "ion",
-            params=resolution.source_path,
-            rule_config=tmp_path / "rule.json",
-            output=tmp_path / "single",
+            cli.ConvertCliOptions(
+                params=resolution.source_path,
+                rule_config=tmp_path / "rule.json",
+                output=tmp_path / "single",
+            ),
         )
         == 0
     )
@@ -135,9 +137,11 @@ def test_rule_config_materializes_single_and_mudata_with_parameters(
     assert (
         cli.convert(
             tmp_path / "data.tsv",
-            params=resolution.source_path,
-            rule_config=tmp_path / "rule.json",
-            output=tmp_path / "multi",
+            options=cli.ConvertCliOptions(
+                params=resolution.source_path,
+                rule_config=tmp_path / "rule.json",
+                output=tmp_path / "multi",
+            ),
         )
         == 0
     )
@@ -170,8 +174,7 @@ def test_packaged_level_and_mudata_conversion_paths(
         cli.convert(
             tmp_path / "data.tsv",
             "ion",
-            params=params,
-            output=output,
+            cli.ConvertCliOptions(params=params, output=output),
         )
         == 0
     )
@@ -199,8 +202,7 @@ def test_packaged_level_and_mudata_conversion_paths(
     assert (
         cli.convert(
             tmp_path / "data.tsv",
-            params=params,
-            output=tmp_path / "multi",
+            options=cli.ConvertCliOptions(params=params, output=tmp_path / "multi"),
         )
         == 0
     )
@@ -213,7 +215,7 @@ def test_packaged_level_and_mudata_conversion_paths(
         "convertible_levels",
         lambda *_args, **_kwargs: (),
     )
-    assert cli.convert(tmp_path / "data.tsv", params=params) == 1
+    assert cli.convert(tmp_path / "data.tsv", options=cli.ConvertCliOptions(params=params)) == 1
 
 
 def test_compound_conversion_separates_parameter_and_rule_software(
@@ -273,10 +275,12 @@ def test_compound_conversion_separates_parameter_and_rule_software(
         cli.convert(
             tmp_path / "report.tsv",
             "ion",
-            params=parameter_path,
-            software="diann",
-            params_software="fragpipe",
-            output=tmp_path / "converted",
+            cli.ConvertCliOptions(
+                params=parameter_path,
+                software="diann",
+                params_software="fragpipe",
+                output=tmp_path / "converted",
+            ),
         )
         == 0
     )

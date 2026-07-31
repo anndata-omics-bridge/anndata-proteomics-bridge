@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any
+from typing import Annotated
 
 from anndata import AnnData
 from cyclopts import App, Parameter
@@ -29,7 +29,18 @@ from pandas import DataFrame
 
 from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics._matrix_types import named_layers
+from anndata_proteomics.annotation import apply as annotation_apply
+from anndata_proteomics.annotation import loader as annotation_loader
+from anndata_proteomics.annotation import validate_fasta, var_fasta
+from anndata_proteomics.annotation.validate_fasta import FastaValidationConfig
+from anndata_proteomics.annotation.var_fasta import ProteinFastaAnnotationConfig
+from anndata_proteomics.converters import pipeline as conversion_pipeline
 from anndata_proteomics.converters.assemble import convert as _run_convert
+from anndata_proteomics.fasta.config import FastaConfig
+from anndata_proteomics.proteobench import config as proteobench_config
+from anndata_proteomics.proteobench import pipeline as proteobench_pipeline
+from anndata_proteomics.readers import result as result_reader
+from anndata_proteomics.readers import summary as summary_reader
 from anndata_proteomics.readers.dispatch import read_table
 from anndata_proteomics.rules import _export_schema
 from anndata_proteomics.rules.loader import load_rule, load_rule_document
@@ -67,14 +78,25 @@ DEFAULT_FASTA_CLI_OPTIONS = FastaCliOptions()
 
 
 @dataclass(frozen=True, slots=True)
+class ConvertCliOptions:
+    """Flat Cyclopts option group for ``apb convert``."""
+
+    params: Path | None = None
+    rule_config: Path | None = None
+    software: str | None = None
+    params_software: str | None = None
+    output: Path | None = None
+    strict: bool = False
+
+
+DEFAULT_CONVERT_CLI_OPTIONS = ConvertCliOptions()
+
+
+@dataclass(frozen=True, slots=True)
 class _ConvertRequest:
     data: Path
     level: QuantificationLevel | None
-    params: Path | None
-    rule_config: Path | None
-    software: str | None
-    params_software: str | None
-    output: Path | None
+    options: ConvertCliOptions
 
 
 @app.command
@@ -114,12 +136,7 @@ def export_schema_cmd() -> int:
 def convert(
     data: Path,
     level: QuantificationLevel | None = None,
-    *,
-    params: Path | None = None,
-    rule_config: Path | None = None,
-    software: str | None = None,
-    params_software: str | None = None,
-    output: Path | None = None,
+    options: Annotated[ConvertCliOptions, Parameter(name="*")] = DEFAULT_CONVERT_CLI_OPTIONS,
 ) -> int:
     """Convert a vendor file to a multi-level MuData (.h5mu) or one level to an AnnData (.h5ad).
 
@@ -135,43 +152,32 @@ def convert(
     converts every matching section in that document.
     --output is an extensionless basename. APB appends .h5mu for MuData or .h5ad for AnnData.
     Without --output, the result is written next to the input using the input stem.
+    --strict promotes layer-contract warnings to errors. An empty X layer is always an
+    error; --strict extends that to every other declared layer.
     """
-    request = _ConvertRequest(
-        data=data,
-        level=level,
-        params=params,
-        rule_config=rule_config,
-        software=software,
-        params_software=params_software,
-        output=output,
-    )
-    if output is not None and output.suffix:
+    request = _ConvertRequest(data=data, level=level, options=options)
+    if options.output is not None and options.output.suffix:
         logger.error(
-            f"--output must be an extensionless basename, got {output}; APB chooses .h5ad or .h5mu"
+            f"--output must be an extensionless basename, got {options.output}; "
+            "APB chooses .h5ad or .h5mu"
         )
         return 2
     df = read_table(data)
-    if rule_config is not None:
+    if options.rule_config is not None:
         return _convert_with_rule_document(df, request)
     return _convert_with_packaged_rules(df, request)
 
 
 def _convert_with_rule_document(df: DataFrame, request: _ConvertRequest) -> int:
-    from anndata_proteomics.converters.pipeline import (
-        attach_parameter_resolution,
-        build_mudata_from_rules,
-        matching_rules,
-        resolve_parameters,
-        set_rule_selection_method,
-        software_slug,
-    )
-
-    assert request.rule_config is not None
-    document = load_rule_document(request.rule_config)
-    rule_slug = software_slug(document.software_name)
+    assert request.options.rule_config is not None
+    document = load_rule_document(request.options.rule_config)
+    rule_slug = conversion_pipeline.software_slug(document.software_name)
     parameter_resolution = (
-        resolve_parameters(request.params, request.params_software or rule_slug)
-        if request.params is not None
+        conversion_pipeline.resolve_parameters(
+            request.options.params,
+            request.options.params_software or rule_slug,
+        )
+        if request.options.params is not None
         else None
     )
     search_parameters = (
@@ -180,77 +186,75 @@ def _convert_with_rule_document(df: DataFrame, request: _ConvertRequest) -> int:
     if request.level is not None:
         if request.level not in document.levels:
             logger.error(
-                f"{request.rule_config} has no level {request.level!r}; "
+                f"{request.options.rule_config} has no level {request.level!r}; "
                 f"available: {list(document.levels)}"
             )
             return 1
         adata = _run_convert(
             df,
             document.effective_rule(request.level, search_parameters),
-            params_path=None if parameter_resolution is not None else request.params,
+            params_path=None if parameter_resolution is not None else request.options.params,
+            strict=request.options.strict,
         )
         if parameter_resolution is not None:
-            attach_parameter_resolution(
+            conversion_pipeline.attach_parameter_resolution(
                 adata,
                 parameter_resolution,
                 selection_method="rule_config",
                 warn_missing=True,
             )
         else:
-            set_rule_selection_method(adata, "rule_config")
-        return _write_anndata(adata, request.output, request.data)
-    rules = matching_rules(document.effective_rules(search_parameters), df.columns)
+            conversion_pipeline.set_rule_selection_method(adata, "rule_config")
+        return _write_anndata(adata, request.options.output, request.data)
+    rules = conversion_pipeline.matching_rules(
+        document.effective_rules(search_parameters), df.columns
+    )
     if not rules:
-        logger.error(f"no level in {request.rule_config} matches the columns in {request.data}")
+        logger.error(
+            f"no level in {request.options.rule_config} matches the columns in {request.data}"
+        )
         return 1
-    md = build_mudata_from_rules(
+    md = conversion_pipeline.build_mudata_from_rules(
         df,
         rules,
-        params_path=request.params,
+        params_path=request.options.params,
         parameter_resolution=parameter_resolution,
         rule_selection_method="rule_config",
         software=rule_slug,
+        strict=request.options.strict,
     )
-    return _write_mudata(md, request.output, request.data)
+    return _write_mudata(md, request.options.output, request.data)
 
 
 def _convert_with_packaged_rules(df: DataFrame, request: _ConvertRequest) -> int:
-    from anndata_proteomics.converters.pipeline import (
-        build_mudata,
-        convert_level,
-        convertible_levels,
-        recognize_software,
-        resolve_parameters,
-        resolve_rule_version,
-    )
-
-    slug = request.software or recognize_software(df.columns)
+    slug = request.options.software or conversion_pipeline.recognize_software(df.columns)
     if slug is None:
         logger.error(
             f"could not auto-detect the vendor for {request.data}; "
             "pass --software SLUG or --rule-config PATH"
         )
         return 1
-    if request.params is None:
+    if request.options.params is None:
         logger.error("pass --params (it gives the software version) or --rule-config PATH")
         return 1
-    parameter_resolution = resolve_parameters(
-        request.params,
-        request.params_software or slug,
+    parameter_resolution = conversion_pipeline.resolve_parameters(
+        request.options.params,
+        request.options.params_software or slug,
     )
-    version, version_status = resolve_rule_version(parameter_resolution, slug)
+    version, version_status = conversion_pipeline.resolve_rule_version(parameter_resolution, slug)
     logger.info(f"vendor={slug} software_version={version!r} version_status={version_status}")
     if request.level is not None:
-        adata = convert_level(
+        adata = conversion_pipeline.convert_level(
             df,
             slug,
             request.level,
             version,
-            params_path=request.params,
+            params_path=request.options.params,
             parameter_resolution=parameter_resolution,
+            strict=request.options.strict,
         )
-        return _write_anndata(adata, request.output, request.data)
-    levels = convertible_levels(
+        return _write_anndata(adata, request.options.output, request.data)
+    levels = conversion_pipeline.convertible_levels(
         slug,
         version,
         df.columns,
@@ -263,14 +267,15 @@ def _convert_with_packaged_rules(df: DataFrame, request: _ConvertRequest) -> int
             "check --params / --software"
         )
         return 1
-    md = build_mudata(
+    md = conversion_pipeline.build_mudata(
         df,
         slug,
         version,
-        params_path=request.params,
+        params_path=request.options.params,
         parameter_resolution=parameter_resolution,
+        strict=request.options.strict,
     )
-    return _write_mudata(md, request.output, request.data)
+    return _write_mudata(md, request.options.output, request.data)
 
 
 def _write_mudata(md: MuData, output: Path | None, data: Path) -> int:
@@ -279,6 +284,14 @@ def _write_mudata(md: MuData, output: Path | None, data: Path) -> int:
     _remove_stale_sibling(out, ".h5ad")
     logger.info(f"wrote {out}  obs={md.n_obs}  modalities={list(md.mod)}")
     return 0
+
+
+def _write_container(obj: AnnData | MuData, out: Path) -> None:
+    """Write a loaded container back to ``out`` in its own on-disk format."""
+    if isinstance(obj, MuData):
+        obj.write_h5mu(out)
+    else:
+        obj.write_h5ad(out)
 
 
 def _write_anndata(adata: AnnData, output: Path | None, data: Path) -> int:
@@ -319,9 +332,7 @@ def summary_cmd(
     json: bool = False,
 ) -> int:
     """Print APB's lightweight shape and stored-metadata view."""
-    from anndata_proteomics.readers.summary import describe_path
-
-    result = describe_path(path, modality=modality)
+    result = summary_reader.describe_path(path, modality=modality)
     print(jsonlib.dumps(result, indent=None if json else 2, sort_keys=True))
     return 0
 
@@ -338,19 +349,12 @@ def annotate(
     CSV, and TSV tables. Joins sample records onto obs by run/file name and writes the
     enriched object. --output defaults to ``<stem>.annotated<suffix>`` next to the input.
     """
-    from anndata_proteomics.annotation.apply import annotate_obs
-    from anndata_proteomics.annotation.loader import load_annotation
-    from anndata_proteomics.readers.result import load_converted_result
-
-    obj = load_converted_result(data)
-    annotation = load_annotation(annotations)
-    annotate_obs(obj, annotation)
+    obj = result_reader.load_converted_result(data)
+    annotation = annotation_loader.load_annotation(annotations)
+    annotation_apply.annotate_obs(obj, annotation)
 
     out = output or data.with_name(f"{data.stem}.annotated{data.suffix}")
-    if hasattr(obj, "mod"):
-        obj.write_h5mu(out)
-    else:
-        obj.write_h5ad(out)
+    _write_container(obj, out)
     logger.info(f"wrote {out}")
     return 0
 
@@ -373,26 +377,12 @@ def fasta(
     Protein joins use the stored ``column_roles.fasta_accessions`` declaration;
     ``--match-on`` and ``--leading-protein-field`` are explicit overrides.
     """
-    from mudata import MuData
-
-    from anndata_proteomics.annotation.validate_fasta import (
-        FastaValidationConfig,
-        validate_peptide_modalities_against_fasta,
-        validate_peptides_against_fasta,
-    )
-    from anndata_proteomics.annotation.var_fasta import (
-        ProteinFastaAnnotationConfig,
-        annotate_var_from_fasta,
-    )
-    from anndata_proteomics.fasta.config import FastaConfig
-    from anndata_proteomics.readers.result import load_converted_result
-
     if not fasta_files:
         logger.error("no FASTA file given; usage: apb fasta DATA FASTA [FASTA ...]")
         return 1
 
     sources = list(fasta_files)
-    obj = load_converted_result(data)
+    obj = result_reader.load_converted_result(data)
     has_protein = (
         "protein" in obj.mod if isinstance(obj, MuData) else _quantification_level(obj) == "protein"
     )
@@ -415,7 +405,7 @@ def fasta(
     )
 
     if has_protein:
-        annotate_var_from_fasta(
+        var_fasta.annotate_var_from_fasta(
             obj,
             sources,
             ProteinFastaAnnotationConfig(
@@ -439,13 +429,13 @@ def fasta(
             is_uniprot=options.is_uniprot,
         )
         if isinstance(obj, MuData):
-            results = validate_peptide_modalities_against_fasta(
+            results = validate_fasta.validate_peptide_modalities_against_fasta(
                 obj,
                 sources,
                 validation_config,
             )
         else:
-            result = validate_peptides_against_fasta(
+            result = validate_fasta.validate_peptides_against_fasta(
                 obj,
                 sources,
                 validation_config,
@@ -467,10 +457,7 @@ def fasta(
         return 1
 
     out = options.output or data.with_name(f"{data.stem}.fasta{data.suffix}")
-    if isinstance(obj, MuData):
-        obj.write_h5mu(out)
-    else:
-        obj.write_h5ad(out)
+    _write_container(obj, out)
     logger.info(f"wrote {out}")
     return 0
 
@@ -489,14 +476,10 @@ def proteobench(
     command; scoring requires ``sample_name`` and ``condition`` in each scored observation
     table. The default output is ``<stem>.proteobench<suffix>`` beside the input.
     """
-    from anndata_proteomics.proteobench.config import load_module_settings
-    from anndata_proteomics.proteobench.pipeline import score_quantification
-    from anndata_proteomics.readers.result import load_converted_result
-
-    obj = load_converted_result(data)
-    score_quantification(
+    obj = result_reader.load_converted_result(data)
+    proteobench_pipeline.score_quantification(
         obj,
-        load_module_settings(module_settings),
+        proteobench_config.load_module_settings(module_settings),
     )
 
     out = output or data.with_name(f"{data.stem}.proteobench{data.suffix}")
@@ -504,13 +487,12 @@ def proteobench(
         raise ValueError(f"ProteoBench output must keep the input container suffix {data.suffix!r}")
     if out.resolve() == data.resolve():
         raise ValueError("ProteoBench output must differ from the input path")
-    writer = obj.write_h5mu if hasattr(obj, "mod") else obj.write_h5ad
-    _write_atomically(out, writer)
+    _write_atomically(out, lambda path: _write_container(obj, path))
     logger.info(f"wrote {out}")
     return 0
 
 
-def _quantification_level(obj: Any) -> str | None:
+def _quantification_level(obj: AnnData | MuData) -> str | None:
     """Return APB's stored quantification level for one AnnData-like object."""
     return (obj.uns.get("anndata_proteomics") or {}).get("quantification_level")
 

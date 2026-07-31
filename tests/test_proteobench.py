@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import anndata as ad
@@ -489,9 +488,13 @@ def test_role_target_and_optional_role_validation() -> None:
     adata = _adata()
     assert resolve.resolve_targets(adata) == [adata]
     other = _adata()
-    assert resolve.resolve_targets(SimpleNamespace(mod={"a": adata, "b": other})) == [adata, other]
-    with pytest.raises(ValueError, match="no modality to score"):
-        resolve.resolve_targets(SimpleNamespace(mod={}))
+    # Distinct feature names keep the MuData global var axis unique.
+    other.var_names = [f"other:{name}" for name in other.var_names]
+    with mudata.set_options(pull_on_update=False):
+        combined = MuData({"a": adata, "b": other})
+        assert resolve.resolve_targets(combined) == [adata, other]
+        with pytest.raises(ValueError, match="no modality to score"):
+            resolve.resolve_targets(MuData({}))
 
     missing_rule = _adata()
     missing_rule.uns["anndata_proteomics"]["rule_json"] = {}

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from anndata import AnnData
 
-from anndata_proteomics._matrix_types import is_sparse_matrix
+from anndata_proteomics._matrix_types import QuantMatrix, is_sparse_matrix
 from anndata_proteomics.proteobench.config import ExpectedRatio, ModuleSettings
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
@@ -78,7 +78,7 @@ class _LegacyComputation:
 @dataclass(frozen=True)
 class _LegacyAssembly:
     derived: pd.DataFrame
-    matrix: Any
+    matrix: QuantMatrix
     feature_ids: np.ndarray
     pre_unique: np.ndarray
     included: np.ndarray
@@ -176,7 +176,7 @@ def compute_intermediate(
     contaminants = _contaminants(proteins)
     decoys = np.zeros(target.n_vars, dtype=bool)
 
-    matrix = target.X
+    matrix = _require_quant_matrix(target)
     source_dtype = np.float32 if _is_float32_backed(matrix) else np.float64
     conditions = sorted(set(design.conditions.tolist()))
     stats, nr_observed = _derive_condition_statistics(
@@ -253,7 +253,7 @@ def _compute_legacy_intermediate(inputs: _LegacyComputation) -> pd.DataFrame:
         & (canonical_unique <= inputs.module_settings.general.min_count_multispec)
     )
     matrix = _collapse_positive_matrix(
-        inputs.target.X,
+        _require_quant_matrix(inputs.target),
         group_codes,
         len(unique_features),
         eligible,
@@ -357,7 +357,7 @@ def _assemble_legacy_intermediate(inputs: _LegacyAssembly) -> pd.DataFrame:
 
 
 def _derive_condition_statistics(
-    matrix: Any,
+    matrix: QuantMatrix,
     design: RunDesign,
     conditions: list[str],
     source_dtype: type[np.floating[Any]],
@@ -436,8 +436,18 @@ def _assemble_feature_statistics(
     return frame
 
 
+def _require_quant_matrix(target: AnnData) -> QuantMatrix:
+    """Return ``X`` as in-memory values, rejecting an absent or backed matrix."""
+    matrix = target.X
+    if matrix is None:
+        raise ValueError("ProteoBench scoring requires quantitative values in X")
+    if not isinstance(matrix, np.ndarray) and not is_sparse_matrix(matrix):
+        raise TypeError("ProteoBench scoring requires an in-memory X; load the object first")
+    return matrix
+
+
 def _collapse_positive_matrix(
-    matrix: Any,
+    matrix: QuantMatrix,
     group_codes: np.ndarray,
     n_groups: int,
     eligible: np.ndarray,
@@ -459,7 +469,7 @@ def _collapse_positive_matrix(
 
 
 def _condition_statistics(
-    matrix: Any,
+    matrix: QuantMatrix,
     rows: np.ndarray,
     source_dtype: type[np.floating[Any]],
 ) -> dict[str, np.ndarray]:
@@ -543,7 +553,7 @@ def _contaminants(proteins: pd.Series) -> np.ndarray:
     return proteins.str.contains("Cont_", regex=False, na=False).to_numpy(dtype=bool)
 
 
-def _is_float32_backed(matrix: Any) -> bool:
+def _is_float32_backed(matrix: QuantMatrix) -> bool:
     values = matrix.data if is_sparse_matrix(matrix) else np.asarray(matrix).ravel()
     finite = np.asarray(values)[np.isfinite(values)]
     if not finite.size:
@@ -552,7 +562,7 @@ def _is_float32_backed(matrix: Any) -> bool:
 
 
 def _matrix_block(
-    matrix: Any,
+    matrix: Any,  # SciPy slicing cannot be described structurally; see QuantMatrix.
     rows: np.ndarray,
     start: int,
     stop: int,
@@ -565,7 +575,7 @@ def _matrix_block(
 
 
 def _matrix_row(
-    matrix: Any,
+    matrix: Any,  # SciPy slicing cannot be described structurally; see QuantMatrix.
     row: int,
     dtype: type[np.floating[Any]],
 ) -> np.ndarray:

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 from loguru import logger
+from mudata import MuData
 from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
@@ -16,7 +17,7 @@ from anndata_proteomics.annotation.loader import AnnotationTable
 _MAX_REPORTED = 5
 
 
-def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
+def annotate_obs(obj: AnnData | MuData, annotation: AnnotationTable) -> AnnData | MuData:
     """Join sample annotations onto ``obj``'s ``obs`` axis in place.
 
     Raises ``ValueError`` if no observation matches any annotation record.
@@ -24,9 +25,9 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
     """
     match_on = annotation.match_on
 
-    holders = [obj]
-    if hasattr(obj, "mod"):
-        holders += [obj.mod[name] for name in obj.mod]
+    holders: list[AnnData | MuData] = [obj]
+    if isinstance(obj, MuData):
+        holders += list(obj.mod.values())
 
     primary_keys = _obs_keys(obj, match_on)
     frame, matched_key_field = _matching_annotation_frame(annotation, primary_keys)
@@ -43,7 +44,7 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
     cols_added: list[str] = []
     for holder in holders:
         cols_added = _join_obs_frame(
-            holder.obs,
+            _obs_frame(holder),
             _obs_keys(holder, match_on),
             frame,
         )
@@ -110,11 +111,19 @@ def _build_annotation_frame(
     return frame
 
 
-def _obs_keys(holder: Any, match_on: str) -> pd.Index:
+def _obs_frame(holder: AnnData | MuData) -> pd.DataFrame:
+    """Return an in-memory ``obs`` frame, rejecting a backed/lazy observation axis."""
+    obs = holder.obs
+    if not isinstance(obs, pd.DataFrame):
+        raise TypeError("sample annotation requires an in-memory obs DataFrame")
+    return obs
+
+
+def _obs_keys(holder: AnnData | MuData, match_on: str) -> pd.Index:
     """Return string join keys for one object's observation axis."""
     if match_on == "index":
         return pd.Index(holder.obs_names, dtype="object").astype(str)
-    obs = holder.obs
+    obs = _obs_frame(holder)
     if match_on not in obs.columns:
         raise ValueError(
             f"match_on column {match_on!r} not found in obs columns: {list(obs.columns)}"
@@ -160,7 +169,7 @@ def _warn_on_mismatch(
 
 
 def _record_provenance(
-    obj: Any,
+    obj: AnnData | MuData,
     annotation: AnnotationTable,
     cols_added: list[str],
     n_matched: int,

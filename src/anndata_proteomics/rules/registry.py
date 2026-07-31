@@ -19,6 +19,7 @@ from anndata_proteomics.rules._discovery import (
 from anndata_proteomics.rules._discovery import (
     packaged_rules_root as packaged_rules_root,
 )
+from anndata_proteomics.rules.loader import load_rule_document, resolve_rule_locator
 from anndata_proteomics.rules.schema import QuantificationLevel
 
 
@@ -28,8 +29,6 @@ class RuleNotFound(LookupError):
 
 def iter_packaged_rules() -> Iterator[RuleLocator]:
     """Yield every packaged document-level pair in stable order."""
-    from anndata_proteomics.rules.loader import load_rule_document
-
     for path in iter_packaged_documents():
         document = load_rule_document(path)
         for level in document.levels:
@@ -42,8 +41,6 @@ def find_rule(
     version: str | None = None,
 ) -> RuleLocator:
     """Resolve a packaged level locator or raise :class:`RuleNotFound`."""
-    from anndata_proteomics.rules.loader import resolve_rule_locator
-
     locator = resolve_rule_locator(software, level, version)
     if locator is None:
         raise RuleNotFound(

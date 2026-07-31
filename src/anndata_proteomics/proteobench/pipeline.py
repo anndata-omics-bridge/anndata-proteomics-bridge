@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from anndata import AnnData
+from mudata import MuData
 
 from anndata_proteomics.proteobench.config import ModuleSettings
 from anndata_proteomics.proteobench.intermediate import align_runs, compute_intermediate
@@ -17,9 +18,9 @@ _STORAGE_SCHEMA_VERSION = "0.1"
 
 
 def score_quantification(
-    obj: Any,
+    obj: AnnData | MuData,
     module_settings: ModuleSettings,
-) -> Any:
+) -> AnnData | MuData:
     """Compute and store ProteoBench HYE intermediates and scores.
 
     Scores are per quantification level, so a MuData is scored modality by modality and each
@@ -41,7 +42,7 @@ def score_quantification(
 
 
 def _score_target(
-    target: Any,
+    target: AnnData,
     module_settings: ModuleSettings,
 ) -> None:
     """Compute and store one level's intermediates and scores in place."""

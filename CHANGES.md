@@ -1,5 +1,53 @@
 # Changes
 
+- 2026-07-31: Detect a comma decimal separator in delimited text and read the file in the
+  number format it was actually written with. Vendors export numbers in the regional
+  format of the producing machine and nothing in the file declares which one, so two
+  Spectronaut `dia_astral` submissions (`4d93f6f4`, `2eb6ecaa`) wrote `702,1904907226562`
+  and every fractional value in them coerced to NaN: `PG_Quantity` reached the protein
+  AnnData with 15 of 66 222 cells, which is why its ProteoBench scores were all null with
+  `nr_feature: 15`. It now reads 54 199 of 66 222. Detection uses the only signal that
+  separates the two readings of `1,234` — a thousands separator always groups exactly
+  three digits, a decimal fraction is almost never exactly three wide — so a three-digit
+  group is left ambiguous and never counted; comma-delimited files are exempt by
+  construction. Across the cached corpus it flags exactly those two files and leaves the
+  other 76 text inputs on `.`.
+- 2026-07-31: Add layer-occupancy conversion contract checks
+  (`converters/checks.py`). Every conversion logs present/total per declared layer, and a
+  layer under 0.1% occupancy *beside a populated sibling* is rejected as lost data rather
+  than a sparse experiment — the sibling comparison is what keeps genuinely sparse
+  single-cell acquisitions, where every layer is sparse together, from failing. An
+  effectively empty `axis.x_layer` is always an error because it makes the object
+  unusable; other layers warn, and `apb convert --strict` promotes those warnings to
+  errors. No aggregate is persisted and no sparse matrix is densified, so the
+  report-metric boundary in `TODO/TODO_pmultiqc_support.md` still holds.
+
+- 2026-07-31: Replace every function-level import in `src/` with a module-scope import (25
+  across six modules). Neither reason usually given for deferring them held: no cycle
+  existed — `rules.loader` imports `rules._discovery`, not `rules.registry`, and
+  `converters.long`/`wide`/`_fragments` do not import `converters.assemble` — and there was
+  no startup saving, because `cli.py` already imports anndata, mudata and pandas at module
+  scope, so adding `converters.pipeline` on top measures 0.4 ms against the 395 ms already
+  paid. They *were* load-bearing for a third reason: importing a name inside a function
+  rebinds it per call, which is what let ten tests monkeypatch through the defining module.
+  `cli.py` and `converters.pipeline` therefore import the module rather than the name
+  (`conversion_pipeline.build_mudata`, `assemble.convert`), matching what APB Studio already
+  does; that keeps the late binding those tests rely on without deferring anything.
+  Platform-conditional imports (`msvcrt`/`fcntl` in APB Studio's `disk`) stay deferred,
+  which is the one case that must.
+- 2026-07-31: Replace `Any` with concrete container types across the annotation, FASTA,
+  ProteoBench and CLI signatures (28 signature `Any` down to 7). `load_converted_result`
+  now returns `AnnData | MuData`, which is what caught four latent defects: three
+  duplicated `hasattr(obj, "mod")` write branches (now one `_write_container` helper), two
+  `hasattr` narrowings strict Pyright cannot follow (now `isinstance`), an `obs` that
+  anndata 0.13 may hand back as a lazy `Dataset2D`, and an `X` that may be `None` or a
+  backed `CSCDataset`. The last two now raise the same "requires in-memory" diagnostic
+  `align_runs` already used. New `_containers.UnsHolder` types the three shared `uns`
+  readers, and `_matrix_types.QuantMatrix` names the dense-or-sparse layer type. The
+  remaining seven `Any` are JSON/HDF5-decoded values and the two deliberately duck-typed
+  readers, each documented as such; value-introspecting parameters moved to `object` so
+  type checking stays on inside their bodies.
+
 - 2026-07-30: Support AlphaDIA at ion level across all 11 cached submissions and six
   versions, in three shape-distinct documents: `alphadia/v1_10` (wide TSV, one bare run
   column per sample), `alphadia/v1_12` (long TSV), `alphadia/v2` (long parquet, dotted

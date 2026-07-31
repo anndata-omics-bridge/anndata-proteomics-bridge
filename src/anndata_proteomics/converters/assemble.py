@@ -10,7 +10,11 @@ from pathlib import Path
 import anndata as ad
 import pandas as pd
 
+from anndata_proteomics.converters._fragments import explode_fragments
 from anndata_proteomics.converters._pieces import ConversionPieces
+from anndata_proteomics.converters.checks import check_layer_occupancy
+from anndata_proteomics.converters.long import convert_long
+from anndata_proteomics.converters.wide import convert_wide
 from anndata_proteomics.modifications.pipeline import apply_modifications
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.registry import available_software, parse_params
@@ -48,6 +52,7 @@ def convert(
     rule: ParseRule,
     *,
     params_path: str | Path | None = None,
+    strict: bool = False,
 ) -> ad.AnnData:
     """One-shot: normalize modifications, dispatch long/wide, then assemble.
 
@@ -57,6 +62,8 @@ def convert(
         Vendor-quant DataFrame (already loaded via ``readers``).
     rule
         Parsed JSON rule.
+    strict
+        Promote non-``X`` layer-contract warnings to errors.
     params_path
         Optional vendor parameter file. When provided, the matching
         parameter parser (looked up by ``rule.software_name``) is invoked
@@ -81,22 +88,17 @@ def convert(
         # Drop columns the rule never reads first: explode multiplies the row count ~12x,
         # so carrying all ~60 vendor columns (mostly unused strings) through it is what
         # makes a full report cost many GB.
-        from anndata_proteomics.converters._fragments import explode_fragments
-
         df = df[_columns_needed_for_long(df, rule)]
         df = explode_fragments(df, rule.fragments)
 
     df = _materialize_columns(df, rule)
 
     if rule.input_shape == "long":
-        from anndata_proteomics.converters.long import convert_long
-
         pieces = convert_long(df, rule)
     else:
-        from anndata_proteomics.converters.wide import convert_wide
-
         pieces = convert_wide(df, rule)
 
+    check_layer_occupancy(pieces.layers, x_layer=rule.axis.x_layer, strict=strict)
     adata = to_anndata(pieces, rule)
     if params_path is not None:
         _attach_search_parameters(adata, params_path, rule.software_name)

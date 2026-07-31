@@ -316,8 +316,10 @@ def test_convert_level_materializes_rule_from_params_once(
         rule: ParseRule,
         *,
         params_path: str | Path | None = None,
+        strict: bool = False,
     ) -> AnnData:
         captured["params_path"] = params_path
+        captured["strict"] = strict
         return AnnData(
             X=np.array([[1.0]]),
             obs=pd.DataFrame(index=["run1"]),

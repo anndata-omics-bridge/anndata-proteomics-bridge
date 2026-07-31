@@ -13,6 +13,7 @@ import h5py
 import numpy as np
 from anndata.io import read_elem
 
+from anndata_proteomics._containers import UnsHolder
 from anndata_proteomics._matrix_types import named_layers
 from anndata_proteomics.params.anndata_io import read_search_parameters
 from anndata_proteomics.rules.anndata_io import read_stored_rule
@@ -51,7 +52,13 @@ class _MuDataMetadata:
 
 
 def describe(obj: Any) -> dict[str, Any]:
-    """Return a JSON-compatible view without scanning ``X`` or quantitative layers."""
+    """Return a JSON-compatible view without scanning ``X`` or quantitative layers.
+
+    Structurally typed on purpose: this accepts a real AnnData/MuData *and* the
+    lightweight metadata records :func:`describe_path` reads straight from HDF5. The two
+    families share no base class, and ``AnnData.layers`` is a plain attribute that no
+    read-only protocol can describe, so a union or protocol would exclude one caller.
+    """
     if _is_mudata(obj):
         result = {
             "schema_version": _VIEW_SCHEMA_VERSION,
@@ -217,7 +224,7 @@ def _require_group(parent: h5py.Group, key: str) -> h5py.Group:
     return value
 
 
-def _add_metadata_views(result: dict[str, Any], obj: Any) -> None:
+def _add_metadata_views(result: dict[str, Any], obj: UnsHolder) -> None:
     namespace = obj.uns.get(_NAMESPACE)
     if not isinstance(namespace, Mapping):
         return
@@ -261,7 +268,7 @@ def _annotation_provenance(namespace: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _decode_json_value(value: Any) -> Any:
+def _decode_json_value(value: object) -> Any:
     if value is None:
         return None
     if isinstance(value, bytes):
@@ -271,7 +278,7 @@ def _decode_json_value(value: Any) -> Any:
     return _to_json_compatible(value)
 
 
-def _column_mapping(obj: Any) -> dict[str, Any] | None:
+def _column_mapping(obj: UnsHolder) -> dict[str, Any] | None:
     """Describe where the effective rule placed vendor and computed columns."""
     rule = read_stored_rule(obj)
     if rule is None:
@@ -308,7 +315,7 @@ def _column_group_mapping(group: ColumnGroup) -> dict[str, str]:
     return mapping
 
 
-def _to_json_compatible(value: Any) -> Any:
+def _to_json_compatible(value: object) -> Any:
     """Copy an HDF5-decoded value into ordinary JSON-compatible values."""
     if isinstance(value, Mapping):
         return {str(key): _to_json_compatible(item) for key, item in value.items()}
@@ -323,5 +330,5 @@ def _to_json_compatible(value: Any) -> Any:
     return deepcopy(value)
 
 
-def _is_mudata(obj: Any) -> bool:
+def _is_mudata(obj: object) -> bool:
     return hasattr(obj, "mod")
