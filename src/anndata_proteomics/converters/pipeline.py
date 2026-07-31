@@ -8,22 +8,21 @@ axis. No GUI / marimo / test-data-cache dependency — this is plain library cod
 
 from __future__ import annotations
 
-import logging
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 from anndata import AnnData
+from loguru import logger
 from mudata import MuData
 
 from anndata_proteomics.converters.recognize import matches
 from anndata_proteomics.params.anndata_io import write_search_parameters
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.registry import parse_params
-from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.loader import (
     load_rule,
     load_rule_document,
@@ -31,8 +30,6 @@ from anndata_proteomics.rules.loader import (
 )
 from anndata_proteomics.rules.registry import iter_packaged_rules
 from anndata_proteomics.rules.schema import ParseRule, QuantificationLevel
-
-logger = logging.getLogger(__name__)
 
 # Quantification levels, coarse to fine. Not every vendor exposes every level.
 LEVELS: tuple[QuantificationLevel, ...] = (
@@ -52,24 +49,30 @@ _PREFIX = {
     "protein": "prt:",
 }
 
-ParameterVersionStatus = Literal["present", "missing", "parse_error"]
+ParameterVersionStatus = Literal["present", "missing"]
 RuleSelectionMethod = Literal[
     "software_version",
     "columns",
-    "version_unavailable",
     "rule_config",
 ]
 
 
+class RuleUnavailableError(ValueError):
+    """A requested quantification level is not available for this input."""
+
+
+class NoConvertibleLevelsError(ValueError):
+    """No quantification level is available for a compound conversion."""
+
+
 @dataclass(frozen=True)
 class ParameterResolution:
-    """One parameter parse with version availability kept distinct from parse errors."""
+    """One successful parameter parse with explicit version availability."""
 
     source_path: Path
-    parameters: Parameters | None
+    parameters: Parameters
     version: str | None
     version_status: ParameterVersionStatus
-    error: str | None = None
 
 
 def software_slug(software_name: str) -> str:
@@ -83,8 +86,6 @@ def resolve_rule_version(
 ) -> tuple[str | None, ParameterVersionStatus]:
     """Resolve a parsing-rule version from primary or quantification software metadata."""
     parameters = parameter_resolution.parameters
-    if parameters is None:
-        return None, parameter_resolution.version_status
     candidates = (
         (parameters.software_name, parameters.software_version),
         (
@@ -136,25 +137,16 @@ def recognize_software(headers: Iterable[str]) -> str | None:
 
 
 def param_version(param_path: Path | None, slug: str) -> str | None:
-    """Software version parsed from the param file, or None if absent/unparseable."""
+    """Software version parsed from the parameter file, or ``None`` when absent."""
     if param_path is None:
         return None
     return resolve_parameters(param_path, slug).version
 
 
 def resolve_parameters(param_path: Path | str, slug: str) -> ParameterResolution:
-    """Parse parameters once while distinguishing a missing version from parse failure."""
+    """Parse parameters once and report whether the parsed version is present."""
     source_path = Path(param_path)
-    try:
-        parameters = parse_params(source_path, software=slug)
-    except Exception as exc:  # noqa: BLE001 — retain best-effort conversion policy
-        return ParameterResolution(
-            source_path=source_path,
-            parameters=None,
-            version=None,
-            version_status="parse_error",
-            error=f"{type(exc).__name__}: {exc}",
-        )
+    parameters = parse_params(source_path, software=slug)
     version = parameters.software_version
     return ParameterResolution(
         source_path=source_path,
@@ -222,7 +214,7 @@ def _select_rule(
         if len(candidates) == 1:
             return candidates[0], "columns"
         if not candidates:
-            raise ValueError(
+            raise RuleUnavailableError(
                 f"{slug} {level}: no rule matches the file columns while software "
                 "version is missing"
             )
@@ -238,21 +230,13 @@ def _select_rule(
         search_parameters=search_parameters,
     )
     if rule is None:
-        if status == "parse_error":
-            raise ValueError(
-                f"{slug} {level}: parameter parsing failed and no unversioned/equivalent "
-                "rule can be selected"
-            )
-        raise ValueError(f"{slug} {level}: no rule covers software version {version!r}")
+        raise RuleUnavailableError(f"{slug} {level}: no rule covers software version {version!r}")
     if not _rule_matches_headers(header_set, rule):
-        raise ValueError(
+        raise RuleUnavailableError(
             f"{slug} {level}: file columns don't match the rule for software version "
             f"{version!r} — verify the version / provide the right param file"
         )
-    method: RuleSelectionMethod = (
-        "version_unavailable" if status == "parse_error" else "software_version"
-    )
-    return rule, method
+    return rule, "software_version"
 
 
 def select_rule(
@@ -279,6 +263,35 @@ def select_rule(
     )[0]
 
 
+def _available_rule_selections(
+    slug: str,
+    version: str | None,
+    headers: Iterable[str],
+    *,
+    version_status: ParameterVersionStatus | None = None,
+    search_parameters: Parameters | None = None,
+) -> dict[QuantificationLevel, tuple[ParseRule, RuleSelectionMethod]]:
+    """Resolve all available levels while propagating unexpected rule failures."""
+    header_set = set(headers)
+    selections: dict[
+        QuantificationLevel,
+        tuple[ParseRule, RuleSelectionMethod],
+    ] = {}
+    for level in LEVELS:
+        try:
+            selections[level] = _select_rule(
+                slug,
+                level,
+                version,
+                header_set,
+                version_status=version_status,
+                search_parameters=search_parameters,
+            )
+        except RuleUnavailableError:
+            continue
+    return selections
+
+
 def convertible_levels(
     slug: str,
     version: str | None,
@@ -288,22 +301,15 @@ def convertible_levels(
     search_parameters: Parameters | None = None,
 ) -> list[QuantificationLevel]:
     """Levels whose version-selected rule both exists and matches this file's columns."""
-    header_set = set(headers)
-    out = []
-    for level in LEVELS:
-        try:
-            select_rule(
-                slug,
-                level,
-                version,
-                header_set,
-                version_status=version_status,
-                search_parameters=search_parameters,
-            )
-        except (LookupError, ValueError):
-            continue
-        out.append(level)
-    return out
+    return list(
+        _available_rule_selections(
+            slug,
+            version,
+            headers,
+            version_status=version_status,
+            search_parameters=search_parameters,
+        )
+    )
 
 
 def available_targets(
@@ -341,10 +347,6 @@ def matching_rules(
     return matched
 
 
-def _noop(_msg: str) -> None:
-    pass
-
-
 def convert_level(
     df: pd.DataFrame,
     slug: str,
@@ -353,7 +355,6 @@ def convert_level(
     *,
     params_path: Path | str | None = None,
     parameter_resolution: ParameterResolution | None = None,
-    log: Callable[[str], None] = _noop,
 ) -> AnnData:
     from anndata_proteomics.converters.assemble import convert
 
@@ -389,7 +390,7 @@ def convert_level(
         )
     else:
         set_rule_selection_method(adata, selection_method)
-    log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
+    logger.info(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
     return adata
 
 
@@ -400,7 +401,6 @@ def build_mudata(
     *,
     params_path: Path | str | None = None,
     parameter_resolution: ParameterResolution | None = None,
-    log: Callable[[str], None] = _noop,
 ) -> MuData:
     """Build a MuData over the levels whose version-selected rule fits this file (shared run axis).
 
@@ -416,36 +416,21 @@ def build_mudata(
     search_parameters = (
         parameter_resolution.parameters if parameter_resolution is not None else None
     )
-    resolvable = set(
-        convertible_levels(
-            slug,
-            version,
-            df.columns,
-            version_status=version_status,
-            search_parameters=search_parameters,
-        )
+    selections = _available_rule_selections(
+        slug,
+        version,
+        df.columns,
+        version_status=version_status,
+        search_parameters=search_parameters,
     )
+    resolvable = set(selections)
+    if not resolvable:
+        raise NoConvertibleLevelsError(
+            f"{slug}: no level resolves for software version {version!r}"
+        )
     skipped = [level for level in LEVELS if level not in resolvable]
     if skipped:
-        log(f"skipping levels not provided by software version {version!r}: {skipped}")
-    if not resolvable:
-        raise ValueError(f"{slug}: no level resolves for software version {version!r}")
-
-    selections: dict[
-        QuantificationLevel,
-        tuple[ParseRule, RuleSelectionMethod],
-    ] = {
-        level: _select_rule(
-            slug,
-            level,
-            version,
-            df.columns,
-            version_status=version_status,
-            search_parameters=search_parameters,
-        )
-        for level in LEVELS
-        if level in resolvable
-    }
+        logger.info(f"skipping levels not provided by software version {version!r}: {skipped}")
     rules: dict[QuantificationLevel, ParseRule] = {
         level: selection[0] for level, selection in selections.items()
     }
@@ -457,7 +442,6 @@ def build_mudata(
         parameter_resolution=parameter_resolution,
         rule_selection_method=selection_method,
         software=slug,
-        log=log,
     )
 
 
@@ -469,7 +453,6 @@ def build_mudata_from_rules(
     parameter_resolution: ParameterResolution | None = None,
     rule_selection_method: RuleSelectionMethod | None = None,
     software: str | None = None,
-    log: Callable[[str], None] = _noop,
 ) -> MuData:
     """Build MuData from already selected effective rules."""
     import mudata
@@ -480,7 +463,7 @@ def build_mudata_from_rules(
     for level in LEVELS:
         if level not in rules:
             continue
-        log(f"converting level: {level}")
+        logger.info(f"converting level: {level}")
         from anndata_proteomics.converters.assemble import convert
 
         adata = convert(
@@ -497,7 +480,7 @@ def build_mudata_from_rules(
             )
         elif rule_selection_method is not None:
             set_rule_selection_method(adata, rule_selection_method)
-        log(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
+        logger.info(f"  {level}: {adata.shape[0]} obs × {adata.shape[1]} var")
         adata.var_names = [_PREFIX[level] + str(v) for v in adata.var_names]
         mods[level] = adata
     # Adopt the mudata 0.4 default now (no auto-pull of per-modality obs/var into the global
@@ -516,8 +499,9 @@ def build_mudata_from_rules(
         write_search_parameters(md, params, source_path=str(params_path))
     if rule_selection_method is not None:
         set_rule_selection_method(md, rule_selection_method)
-    store_quantification_summary(md)
-    log(f"  MuData: {md.n_obs} obs × {sum(a.n_vars for a in mods.values())} var, {len(mods)} mods")
+    logger.info(
+        f"  MuData: {md.n_obs} obs × {sum(a.n_vars for a in mods.values())} var, {len(mods)} mods"
+    )
     return md
 
 
@@ -537,24 +521,20 @@ def attach_parameter_resolution(
     selection_method: RuleSelectionMethod | None,
     warn_missing: bool,
 ) -> None:
-    """Attach one already-parsed parameter result and refresh stored summaries."""
+    """Attach one already-parsed parameter result and its selection provenance."""
     target.uns.setdefault("anndata_proteomics", {})
     metadata = target.uns["anndata_proteomics"]
     metadata["search_parameters_version_status"] = resolution.version_status
     metadata["search_parameters_path"] = str(resolution.source_path)
     if selection_method is not None:
         metadata["rule_selection_method"] = selection_method
-    if resolution.parameters is not None:
-        write_search_parameters(
-            target,
-            resolution.parameters,
-            source_path=str(resolution.source_path),
-        )
-    elif resolution.error is not None:
-        metadata["search_parameters_error"] = resolution.error
+    write_search_parameters(
+        target,
+        resolution.parameters,
+        source_path=str(resolution.source_path),
+    )
     if resolution.version_status == "missing" and warn_missing:
         logger.warning(
-            "no software version in search parameters %s; selected rule by columns",
+            "no software version in search parameters {}; selected rule by columns",
             resolution.source_path,
         )
-    store_quantification_summary(target)

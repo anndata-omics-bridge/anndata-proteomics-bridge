@@ -8,16 +8,20 @@ from typing import Annotated, Any, Literal, override
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from anndata_proteomics.modifications import schema as modification_schema
 from anndata_proteomics.params.model import Parameters
+
+ModificationMapEntry = modification_schema.ModificationMapEntry
+Modifications = modification_schema.Modifications
+SiteListModifications = modification_schema.SiteListModifications
+TokenPosition = modification_schema.TokenPosition
+TokenRegexModifications = modification_schema.TokenRegexModifications
+UnknownPolicy = modification_schema.UnknownPolicy
 
 InputShape = Literal["long", "wide"]
 QuantificationLevel = Literal["ion", "peptidoform", "peptide", "protein", "fragment"]
 EncodingMode = Literal["numeric", "factor"]
 DuplicateMode = Literal["error", "aggregate", "keep_first", "keep_all_as_raw_table"]
-TokenPosition = Literal[
-    "before_residue", "after_residue", "n_term", "c_term", "embedded", "unknown"
-]
-UnknownPolicy = Literal["preserve", "drop", "error"]
 ColumnComputeMode = Literal[
     "coalesce",
     "join_nonempty",
@@ -112,7 +116,16 @@ class Columns(_Strict):
 class ColumnRoles(_Strict):
     """Semantic locations needed by downstream canonical-data consumers."""
 
-    protein_accessions: str = Field(min_length=1)
+    protein_assignment: str | None = Field(default=None, min_length=1)
+    fasta_accessions: str | None = Field(default=None, min_length=1)
+
+    def declared(self) -> dict[str, str]:
+        """Return semantic role names mapped to their declared ``var`` columns."""
+        return {
+            name: column
+            for name in ("protein_assignment", "fasta_accessions")
+            if (column := getattr(self, name)) is not None
+        }
 
 
 class Layer(_Strict):
@@ -178,80 +191,6 @@ class SampleNameCleanup(_Strict):
     pattern: str = ""
 
 
-class ModificationMapEntry(_Strict):
-    """User-facing JSON entry: a vendor token plus the Unimod accession.
-
-    ``name``, ``target``, ``position`` and ``mass_delta`` are NOT carried
-    on the entry itself — they are filled at rule-load time from
-    ``modifications/unimod_registry.toml``. This keeps the per-tool rule files
-    free of duplicated canonical data and guarantees that all tools agree
-    on what e.g. ``UNIMOD:35`` means.
-    """
-
-    token: str
-    accession: str
-
-
-class TokenRegexModifications(_Strict):
-    """Extract vendor modification tokens with a regex and map them to Unimod.
-
-    For vendors that write modifications inline in the sequence itself, e.g.
-    ``"PEPM[15.9949]TIDE"`` or ``"_(ac)PEPTIDEM(ox)_"``.
-    """
-
-    parser: Literal["token_regex"]
-    source_column: str
-    token_pattern: str
-    token_position: TokenPosition = "after_residue"
-    case_sensitive: bool = False
-    unknown_policy: UnknownPolicy = "preserve"
-    output_column: str = "proforma_sequence"
-    map: list[ModificationMapEntry] = Field(min_length=1)
-
-    @property
-    def source_columns(self) -> tuple[str, ...]:
-        """Input columns this parser reads."""
-        return (self.source_column,)
-
-
-class SiteListModifications(_Strict):
-    """Read modifications from parallel name and site columns beside a bare sequence.
-
-    The alphabase layout, used by AlphaDIA::
-
-        sequence     mods                            mod_sites
-        TCSSFIAAMER  Oxidation@M;Carbamidomethyl@C   9;2
-
-    ``mods`` and ``mod_sites`` are ``delimiter``-joined and paired **index-wise**,
-    not sorted — above, ``Oxidation@M`` sits at 9 and ``Carbamidomethyl@C`` at 2.
-    Sites are ``site_base``-indexed into the sequence; site ``0`` denotes the
-    N-terminus regardless of ``site_base`` (AlphaDIA writes ``Acetyl@Protein_N-term``
-    that way). Tokens are matched exactly against ``map``, since a name like
-    ``Oxidation@M`` already carries its own target.
-    """
-
-    parser: Literal["site_list"]
-    sequence_column: str
-    modification_column: str
-    site_column: str
-    delimiter: str = ";"
-    site_base: int = Field(default=1, ge=0, le=1)
-    case_sensitive: bool = False
-    unknown_policy: UnknownPolicy = "preserve"
-    output_column: str = "proforma_sequence"
-    map: list[ModificationMapEntry] = Field(min_length=1)
-
-    @property
-    def source_columns(self) -> tuple[str, ...]:
-        """Input columns this parser reads."""
-        return (self.sequence_column, self.modification_column, self.site_column)
-
-
-Modifications = Annotated[
-    TokenRegexModifications | SiteListModifications, Field(discriminator="parser")
-]
-
-
 class PositionalFragments(_Strict):
     """Older DIA-NN exports with no per-fragment label column.
 
@@ -302,7 +241,7 @@ class ParseRule(_Strict):
     quantification_level: QuantificationLevel
     axis: Axis
     columns: Columns
-    column_roles: ColumnRoles | None = None
+    column_roles: ColumnRoles = Field(default_factory=ColumnRoles)
     layers: list[Layer] = Field(min_length=1)
     sample_name_cleanup: SampleNameCleanup | None = None
     modifications: Modifications | None = None
@@ -389,14 +328,12 @@ class ParseRule(_Strict):
 
     @model_validator(mode="after")
     def _column_roles_are_declared(self) -> ParseRule:
-        if (
-            self.column_roles is not None
-            and self.column_roles.protein_accessions not in self.columns.var.names
-        ):
-            raise ValueError(
-                "column_roles.protein_accessions must name a declared var column; "
-                f"got {self.column_roles.protein_accessions!r}"
-            )
+        declared_columns = set(self.columns.var.names)
+        for role, column in self.column_roles.declared().items():
+            if column not in declared_columns:
+                raise ValueError(
+                    f"column_roles.{role} must name a declared var column; got {column!r}"
+                )
         return self
 
     @model_validator(mode="after")
@@ -406,55 +343,8 @@ class ParseRule(_Strict):
         return self
 
     @model_validator(mode="after")
-    def _computed_column_consistency(  # noqa: C901, PLR0912 - schema invariant
-        self,
-    ) -> ParseRule:
-        available_var_columns = set(self.columns.var.select) | set(self.columns.var.optional_select)
-        if self.fragments is not None:
-            # explode_fragments injects this column before materialization, so it is a
-            # legal `from` source even though it is not a selected vendor column.
-            available_var_columns.add(self.fragments.label_output)
-        for column in self.columns.var.compute:
-            missing_sources = [
-                source for source in column.from_ if source not in available_var_columns
-            ]
-            if missing_sources:
-                raise ValueError(
-                    f"computed column {column.name!r} references undeclared "
-                    f"var column(s): {missing_sources}"
-                )
-            expected_name = _PROFORMA_COMPUTE_NAME.get(column.how)
-            if expected_name is not None and column.name != expected_name:
-                raise ValueError(
-                    f"computed column with how={column.how!r} must be named "
-                    f"{expected_name!r}, got {column.name!r}"
-                )
-            if column.how in {"coalesce", "join_nonempty"}:
-                pass
-            elif column.how in {"proforma_sequence", "stripped_sequence"}:
-                if self.modifications is None:
-                    raise ValueError(f"how={column.how!r} requires a [modifications] block.")
-                if len(column.from_) != 1:
-                    raise ValueError(f"how={column.how!r} requires exactly one source column.")
-            elif column.how == "proforma_ion":
-                # At ion level ProForma_ion is the feature key; at fragment level it is an
-                # intermediate used to build ProForma_fragment (not a var key itself).
-                if self.quantification_level not in {"ion", "fragment"}:
-                    raise ValueError("how='proforma_ion' is valid only for ion or fragment rules.")
-                if len(column.from_) != 2:
-                    raise ValueError("how='proforma_ion' requires exactly two source columns.")
-                if self.quantification_level == "ion" and column.name not in self.axis.var_keys:
-                    raise ValueError("computed ProForma ion columns must be used in axis.var_keys.")
-            else:
-                if self.quantification_level != "fragment":
-                    raise ValueError("how='proforma_fragment' is valid only for fragment rules.")
-                if len(column.from_) != 2:
-                    raise ValueError("how='proforma_fragment' requires exactly two source columns.")
-                if column.name not in self.axis.var_keys:
-                    raise ValueError(
-                        "computed ProForma fragment columns must be used in axis.var_keys."
-                    )
-            available_var_columns.add(column.name)
+    def _computed_column_consistency(self) -> ParseRule:
+        _validate_computed_columns(self)
         if self.columns.obs.compute:
             raise ValueError("computed columns are currently supported only for columns.var.")
         return self
@@ -477,6 +367,70 @@ class ParseRule(_Strict):
                 f"columns.var.compute, not select: {sorted(selected)}"
             )
         return self
+
+
+def _validate_computed_columns(rule: ParseRule) -> None:
+    available = set(rule.columns.var.select) | set(rule.columns.var.optional_select)
+    if rule.fragments is not None:
+        # Fragment expansion injects this source before computed columns materialize.
+        available.add(rule.fragments.label_output)
+    for column in rule.columns.var.compute:
+        _validate_computed_column(rule, column, available)
+        available.add(column.name)
+
+
+def _validate_computed_column(
+    rule: ParseRule,
+    column: ColumnCompute,
+    available: set[str],
+) -> None:
+    missing_sources = [source for source in column.from_ if source not in available]
+    if missing_sources:
+        raise ValueError(
+            f"computed column {column.name!r} references undeclared "
+            f"var column(s): {missing_sources}"
+        )
+    expected_name = _PROFORMA_COMPUTE_NAME.get(column.how)
+    if expected_name is not None and column.name != expected_name:
+        raise ValueError(
+            f"computed column with how={column.how!r} must be named "
+            f"{expected_name!r}, got {column.name!r}"
+        )
+    if column.how in {"coalesce", "join_nonempty"}:
+        return
+    if column.how in {"proforma_sequence", "stripped_sequence"}:
+        _validate_sequence_compute(rule, column)
+        return
+    if column.how == "proforma_ion":
+        _validate_ion_compute(rule, column)
+        return
+    _validate_fragment_compute(rule, column)
+
+
+def _validate_sequence_compute(rule: ParseRule, column: ColumnCompute) -> None:
+    if rule.modifications is None:
+        raise ValueError(f"how={column.how!r} requires a [modifications] block.")
+    if len(column.from_) != 1:
+        raise ValueError(f"how={column.how!r} requires exactly one source column.")
+
+
+def _validate_ion_compute(rule: ParseRule, column: ColumnCompute) -> None:
+    # At fragment level ProForma_ion is an intermediate for ProForma_fragment.
+    if rule.quantification_level not in {"ion", "fragment"}:
+        raise ValueError("how='proforma_ion' is valid only for ion or fragment rules.")
+    if len(column.from_) != 2:
+        raise ValueError("how='proforma_ion' requires exactly two source columns.")
+    if rule.quantification_level == "ion" and column.name not in rule.axis.var_keys:
+        raise ValueError("computed ProForma ion columns must be used in axis.var_keys.")
+
+
+def _validate_fragment_compute(rule: ParseRule, column: ColumnCompute) -> None:
+    if rule.quantification_level != "fragment":
+        raise ValueError("how='proforma_fragment' is valid only for fragment rules.")
+    if len(column.from_) != 2:
+        raise ValueError("how='proforma_fragment' requires exactly two source columns.")
+    if column.name not in rule.axis.var_keys:
+        raise ValueError("computed ProForma fragment columns must be used in axis.var_keys.")
 
 
 class PartialAxis(_Strict):

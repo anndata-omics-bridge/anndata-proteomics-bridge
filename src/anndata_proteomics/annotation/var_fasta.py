@@ -21,18 +21,20 @@ CLI ``--cleavage`` flag) overrides that for objects converted without parameters
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from typing import Any
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 from loguru import logger
+from mudata import MuData
 from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.fasta.anndata_io import write_fasta_config
 from anndata_proteomics.fasta.annotation import (
     CleavageRule,
+    FastaAnnotationConfig,
     describe_sources,
     fasta_to_dataframe_with_config,
     materialize_sources,
@@ -40,8 +42,9 @@ from anndata_proteomics.fasta.annotation import (
     uniprot_proteinname,
 )
 from anndata_proteomics.fasta.config import FastaConfig, ResolvedFastaConfig
-from anndata_proteomics.fasta.parser import FastaSource
+from anndata_proteomics.fasta.parser import FastaSources
 from anndata_proteomics.params.anndata_io import read_search_parameters
+from anndata_proteomics.rules.anndata_io import read_stored_column_role
 
 _MAX_REPORTED = 5
 _SCHEMA_VERSION = "0.2"
@@ -49,43 +52,51 @@ _DEFAULT_MIN_LENGTH = 7
 _DEFAULT_MAX_LENGTH = 30
 _VARM_KEY = "fasta"  # the varm slot the annotation DataFrame is stored under
 _JOIN_KEY = "proteinname"  # the FASTA-frame column the var key is matched against
-_PROTEIN_MATCH_FIELDS = (
-    "Protein_Group",
-    "PG_ProteinAccessions",
-    "PG_ProteinGroups",
-    "Leading_Razor_Protein",
-    "Protein_ID",
-    "Accession",
-    "protein_group",
-    "Proteins",
-    "Protein",
-)
 
 
-def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
-    obj: Any,
-    fasta_sources: FastaSource | Iterable[FastaSource],
-    *,
-    match_on: str | None = None,
-    is_uniprot: bool = True,
-    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
-    decoy_pattern: str | None = None,
-    contaminant_pattern: str | None = None,
-    cleavage: str | CleavageRule | None = None,
-    min_length: int | None = None,
-    max_length: int | None = None,
-    include_sequence: bool = False,
-    columns: Iterable[str] | None = None,
-) -> Any:
+@dataclass(frozen=True, slots=True)
+class ProteinFastaAnnotationConfig:
+    """Configuration for attaching FASTA annotation to a protein modality."""
+
+    match_on: str | None = None
+    is_uniprot: bool = True
+    identifiers: FastaConfig = field(default_factory=FastaConfig)
+    cleavage: str | CleavageRule | None = None
+    min_length: int | None = None
+    max_length: int | None = None
+    include_sequence: bool = False
+    columns: tuple[str, ...] | None = None
+
+
+DEFAULT_PROTEIN_FASTA_ANNOTATION_CONFIG = ProteinFastaAnnotationConfig()
+
+
+@dataclass(frozen=True, slots=True)
+class _ProteinAnnotationProvenance:
+    fasta_sources: list[str]
+    fasta_config: ResolvedFastaConfig
+    match_on: str
+    columns: list[str]
+    n_matched: int
+    enzyme: str
+    min_length: int
+    max_length: int
+
+
+def annotate_var_from_fasta(
+    obj: AnnData | MuData,
+    fasta_sources: FastaSources,
+    config: ProteinFastaAnnotationConfig = DEFAULT_PROTEIN_FASTA_ANNOTATION_CONFIG,
+) -> AnnData | MuData:
     """Attach FASTA-derived annotation at the protein layer's ``varm['fasta']``, in place.
 
     *obj* is a protein-level AnnData or a MuData (whose ``protein`` modality is
     annotated). *match_on* names the ``var`` column holding the protein group;
-    ``None`` auto-selects a known protein-ID column and falls back to ``var_names``.
-    ``"index"`` explicitly uses ``var_names``. *cleavage* / *min_length* / *max_length*
-    override the enzyme and peptide-length bounds otherwise read from the stored
-    search parameters. *columns*, if given, restricts which FASTA columns are
-    stored. Returns *obj*.
+    ``None`` uses the protein-accession role from the stored APB conversion rule.
+    Non-APB objects must provide *match_on* explicitly. ``"index"`` explicitly uses
+    ``var_names``. *cleavage* / *min_length* / *max_length* override the enzyme and
+    peptide-length bounds otherwise read from the stored search parameters. *columns*,
+    if given, restricts which FASTA columns are stored. Returns *obj*.
 
     The annotation is written as a var-aligned DataFrame at ``varm['fasta']``
     (rows in ``var`` order; unmatched proteins are NaN). Raises ValueError when
@@ -95,27 +106,25 @@ def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
     """
     target = _resolve_protein_target(obj)
     _ensure_varm_free(target)
-    resolved_match_on = resolve_match_on(target, match_on)
+    resolved_match_on = resolve_match_on(target, config.match_on)
     sources = materialize_sources(fasta_sources)
     source_descriptions = describe_sources(sources)
 
-    rule, enzyme_name, min_len, max_len = _resolve_digestion(
-        target, cleavage, min_length, max_length
-    )
+    rule, enzyme_name, min_len, max_len = _resolve_digestion(target, config)
     ann, resolved_config = fasta_to_dataframe_with_config(
         sources,
-        fasta_config=fasta_config,
-        decoy_pattern=decoy_pattern,
-        contaminant_pattern=contaminant_pattern,
-        is_uniprot=is_uniprot,
-        cleavage=rule,
-        min_length=min_len,
-        max_length=max_len,
-        include_sequence=include_sequence,
+        FastaAnnotationConfig(
+            identifiers=config.identifiers,
+            is_uniprot=config.is_uniprot,
+            cleavage=rule,
+            min_length=min_len,
+            max_length=max_len,
+            include_sequence=config.include_sequence,
+        ),
     )
     ann = _index_by_join_key(ann)
 
-    keys = _var_join_keys(target, resolved_match_on, is_uniprot=is_uniprot)
+    keys = _var_join_keys(target, resolved_match_on, is_uniprot=config.is_uniprot)
     in_table = keys.isin(ann.index)
     n_matched = int(in_table.sum())
     if n_matched == 0:
@@ -126,7 +135,7 @@ def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
             f"first FASTA proteinnames: {list(ann.index[:_MAX_REPORTED])}"
         )
 
-    frame = _build_varm_frame(target, keys, ann, columns)
+    frame = _build_varm_frame(target, keys, ann, config.columns)
     target.varm[_VARM_KEY] = frame
     cols_added = list(frame.columns)
     write_fasta_config(obj, resolved_config)
@@ -134,14 +143,16 @@ def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
     _warn_on_mismatch(keys, in_table, ann)
     _record_provenance(
         target,
-        fasta_sources=source_descriptions,
-        fasta_config=resolved_config,
-        match_on=resolved_match_on,
-        cols_added=cols_added,
-        n_matched=n_matched,
-        enzyme=enzyme_name,
-        min_length=min_len,
-        max_length=max_len,
+        _ProteinAnnotationProvenance(
+            fasta_sources=source_descriptions,
+            fasta_config=resolved_config,
+            match_on=resolved_match_on,
+            columns=cols_added,
+            n_matched=n_matched,
+            enzyme=enzyme_name,
+            min_length=min_len,
+            max_length=max_len,
+        ),
     )
     logger.info(
         f"stored protein annotation in varm[{_VARM_KEY!r}]: "
@@ -151,12 +162,15 @@ def annotate_var_from_fasta(  # noqa: PLR0913 - stable public API
     return obj
 
 
-def _resolve_protein_target(obj: Any) -> Any:
+def _resolve_protein_target(obj: AnnData | MuData) -> AnnData:
     """Return the protein-level AnnData to annotate, or raise if *obj* is not one."""
-    if hasattr(obj, "mod"):  # MuData: annotate the protein modality only
+    if isinstance(obj, MuData):
         if "protein" not in obj.mod:
             raise ValueError(f"MuData has no 'protein' modality; modalities: {list(obj.mod)}")
-        return obj.mod["protein"]
+        target = obj.mod["protein"]
+        if not isinstance(target, AnnData):
+            raise TypeError("MuData 'protein' modality is not an AnnData")
+        return target
     level = (obj.uns.get("anndata_proteomics") or {}).get("quantification_level")
     if level != "protein":
         raise ValueError(
@@ -167,10 +181,8 @@ def _resolve_protein_target(obj: Any) -> Any:
 
 
 def _resolve_digestion(
-    target: Any,
-    cleavage: str | CleavageRule | None,
-    min_length: int | None,
-    max_length: int | None,
+    target: AnnData,
+    config: ProteinFastaAnnotationConfig,
 ) -> tuple[CleavageRule, str, int, int]:
     """Resolve the cleavage rule and peptide-length bounds for the count.
 
@@ -180,19 +192,23 @@ def _resolve_digestion(
     params = read_search_parameters(target)
     enzyme_from_params = params.enzyme if params else None
 
-    if cleavage is None and enzyme_from_params is None:
+    if config.cleavage is None and enzyme_from_params is None:
         logger.warning(
             "no enzyme in search parameters and no cleavage override; "
             "using Trypsin for the peptide count"
         )
-    spec = cleavage if cleavage is not None else enzyme_from_params
+    spec = config.cleavage if config.cleavage is not None else enzyme_from_params
     rule, enzyme_name = resolve_cleavage(spec)
 
     min_len = _first_present(
-        min_length, params.min_peptide_length if params else None, _DEFAULT_MIN_LENGTH
+        config.min_length,
+        params.min_peptide_length if params else None,
+        _DEFAULT_MIN_LENGTH,
     )
     max_len = _first_present(
-        max_length, params.max_peptide_length if params else None, _DEFAULT_MAX_LENGTH
+        config.max_length,
+        params.max_peptide_length if params else None,
+        _DEFAULT_MAX_LENGTH,
     )
     return rule, enzyme_name, min_len, max_len
 
@@ -241,17 +257,24 @@ def _database_priority(fasta_id: str) -> int:
     return 2
 
 
-def resolve_match_on(target: Any, match_on: str | None) -> str:
-    """Resolve an explicit or conventional protein identifier column."""
+def resolve_match_on(target: AnnData, match_on: str | None) -> str:
+    """Resolve an explicit match location or the stored APB protein role."""
     if match_on is not None:
+        if match_on != "index" and match_on not in target.var.columns:
+            raise ValueError(
+                f"match_on {match_on!r} not in var columns: {list(target.var.columns)}"
+            )
         return match_on
-    for candidate in _PROTEIN_MATCH_FIELDS:
-        if candidate in target.var.columns:
-            return candidate
-    return "index"
+    declared = read_stored_column_role(target, "fasta_accessions")
+    if declared is None:
+        raise ValueError(
+            "match_on was not provided and the stored APB rule does not declare "
+            "column_roles.fasta_accessions"
+        )
+    return declared
 
 
-def _var_join_keys(target: Any, match_on: str, *, is_uniprot: bool) -> pd.Index:
+def _var_join_keys(target: AnnData, match_on: str, *, is_uniprot: bool) -> pd.Index:
     """Leading-accession join keys for the protein ``var`` axis (prolfquapp cleanID)."""
     if match_on == "index":
         raw = pd.Index(target.var_names, dtype="object").astype(str)
@@ -283,7 +306,7 @@ def protein_group_accessions(group_value: str, *, is_uniprot: bool) -> tuple[str
     return tuple(uniprot_proteinname(token) if is_uniprot else token for token in tokens if token)
 
 
-def _ensure_varm_free(target: Any) -> None:
+def _ensure_varm_free(target: AnnData) -> None:
     """Raise if ``varm['fasta']`` already exists (don't silently clobber a prior run)."""
     if _VARM_KEY in target.varm:
         raise ValueError(
@@ -293,10 +316,10 @@ def _ensure_varm_free(target: Any) -> None:
 
 
 def _build_varm_frame(
-    target: Any,
+    target: AnnData,
     keys: pd.Index,
     ann: pd.DataFrame,
-    columns: Iterable[str] | None,
+    columns: tuple[str, ...] | None,
 ) -> pd.DataFrame:
     """Var-aligned FASTA annotation DataFrame (rows in ``var`` order; unmatched → NaN)."""
     available = list(ann.columns)
@@ -329,17 +352,9 @@ def _warn_on_mismatch(
         logger.info(f"{len(records_unmatched)} FASTA record(s) matched no var row: {shown}{tail}")
 
 
-def _record_provenance(  # noqa: PLR0913 - explicit provenance fields
-    target: Any,
-    *,
-    fasta_sources: list[str],
-    fasta_config: ResolvedFastaConfig,
-    match_on: str,
-    cols_added: list[str],
-    n_matched: int,
-    enzyme: str,
-    min_length: int,
-    max_length: int,
+def _record_provenance(
+    target: AnnData,
+    provenance: _ProteinAnnotationProvenance,
 ) -> None:
     """Append an entry under ``uns['anndata_proteomics']['var_annotations_json']``.
 
@@ -351,14 +366,14 @@ def _record_provenance(  # noqa: PLR0913 - explicit provenance fields
         "schema_version": _SCHEMA_VERSION,
         "source": "fasta",
         "destination": f"varm[{_VARM_KEY!r}]",
-        "fasta_sources": fasta_sources,
-        "fasta_config": fasta_config.model_dump(mode="json"),
-        "match_on": match_on,
-        "columns": list(cols_added),
-        "n_var_matched": n_matched,
-        "cleavage_enzyme": enzyme,
-        "min_peptide_length": min_length,
-        "max_peptide_length": max_length,
+        "fasta_sources": provenance.fasta_sources,
+        "fasta_config": provenance.fasta_config.model_dump(mode="json"),
+        "match_on": provenance.match_on,
+        "columns": provenance.columns,
+        "n_var_matched": provenance.n_matched,
+        "cleavage_enzyme": provenance.enzyme,
+        "min_peptide_length": provenance.min_length,
+        "max_peptide_length": provenance.max_length,
     }
     namespace = dict(target.uns.get("anndata_proteomics", {}))
     existing = json.loads(namespace.get("var_annotations_json", "[]"))

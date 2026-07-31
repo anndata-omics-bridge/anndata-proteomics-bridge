@@ -18,6 +18,7 @@ from pydantic import (
     model_validator,
 )
 
+from anndata_proteomics.modifications import unimod_registry
 from anndata_proteomics.modifications.model import SearchedModification
 
 
@@ -25,9 +26,8 @@ class ParamsError(Exception):
     """A parameter file could not be parsed for the requested software.
 
     Raised when the file is clearly not the expected format (e.g. a FragPipe workflow handed to the
-    DIA-NN parser) or lacks the markers a parser needs. It is a *clean* signal — callers such as
-    ``convert`` catch it to degrade gracefully (attach no search parameters + record the problem)
-    rather than aborting the whole conversion with a traceback.
+    DIA-NN parser) or lacks the markers a parser needs. It is a clean input-error signal that
+    conversion propagates and interactive callers may translate into a focused diagnostic.
     """
 
 
@@ -85,6 +85,7 @@ _RANGE_RE = re.compile(
     r"(?P<upper>[+-]?\d+(?:\.\d+)?)\s*(?P<unit2>[A-Za-z]*)\s*\]$"
 )
 _ABSOLUTE_RE = re.compile(r"^(?P<value>[+-]?\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]*)$")
+_SEARCH_MOD_RE = re.compile(r"^(?P<target>.*?)\[(?P<identity>[^\[\]]+)\]$")
 
 
 class _Strict(BaseModel):
@@ -153,7 +154,7 @@ class MassTolerance(_Strict):
         return self
 
     @classmethod
-    def parse(cls, value: object) -> MassTolerance | None:  # noqa: C901, PLR0911
+    def parse(cls, value: object) -> MassTolerance | None:
         """Parse vendor tolerance values into a typed tolerance."""
         if _is_missing(value):
             return None
@@ -162,35 +163,45 @@ class MassTolerance(_Strict):
         if isinstance(value, dict):
             return cls.model_validate(value)
         if isinstance(value, int | float):
-            if value == 0:
-                return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
-            raise ValueError("mass tolerance numeric values require an explicit unit")
+            return cls._parse_numeric(value)
         if not isinstance(value, str):
             raise TypeError(f"unsupported mass tolerance value: {value!r}")
+        return cls._parse_text(value)
 
+    @classmethod
+    def _parse_numeric(cls, value: int | float) -> MassTolerance:
+        if value == 0:
+            return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
+        raise ValueError("mass tolerance numeric values require an explicit unit")
+
+    @classmethod
+    def _parse_text(cls, value: str) -> MassTolerance:
         text = value.strip()
         if text.lower() in _AUTO_CALIBRATION_SENTINELS:
             return cls(mode="automatic", label=_AUTO_CALIBRATION_LABEL)
 
         range_match = _RANGE_RE.match(text)
         if range_match:
-            unit = _normalize_unit(range_match.group("unit1") or range_match.group("unit2"))
-            lower = float(range_match.group("lower"))
-            upper = float(range_match.group("upper"))
-            if not math.isclose(lower, -upper, abs_tol=1e-9):
-                raise ValueError(f"asymmetric mass tolerance ranges are not supported: {value!r}")
-            return cls(mode="absolute", value=abs(upper), unit=unit)
+            return cls._parse_range(value, range_match)
 
         absolute_match = _ABSOLUTE_RE.match(text)
         if absolute_match:
-            unit = _normalize_unit(absolute_match.group("unit"))
             return cls(
                 mode="absolute",
                 value=float(absolute_match.group("value")),
-                unit=unit,
+                unit=_normalize_unit(absolute_match.group("unit")),
             )
 
         raise ValueError(f"could not parse mass tolerance: {value!r}")
+
+    @classmethod
+    def _parse_range(cls, value: str, match: re.Match[str]) -> MassTolerance:
+        unit = _normalize_unit(match.group("unit1") or match.group("unit2"))
+        lower = float(match.group("lower"))
+        upper = float(match.group("upper"))
+        if not math.isclose(lower, -upper, abs_tol=1e-9):
+            raise ValueError(f"asymmetric mass tolerance ranges are not supported: {value!r}")
+        return cls(mode="absolute", value=abs(upper), unit=unit)
 
 
 class UnparsedParameter(_Strict):
@@ -488,7 +499,39 @@ def _modification_from_item(item: object) -> SearchedModification:
         return item
     if isinstance(item, dict):
         return SearchedModification.model_validate(item)
-    return SearchedModification(name=str(item), source=str(item))
+    return _modification_from_token(str(item))
+
+
+def _modification_from_token(token: str) -> SearchedModification:
+    """Canonicalize a known identity while preserving the token-shaped API."""
+    match = _SEARCH_MOD_RE.fullmatch(token)
+    identity = match.group("identity") if match is not None else token
+    entry = _find_modification(identity)
+    if entry is None:
+        return SearchedModification(name=token, source=token)
+
+    if match is None:
+        canonical_token = entry.name
+    else:
+        canonical_token = f"{match.group('target')}[{entry.name}]"
+    return SearchedModification(
+        name=canonical_token,
+        accession=entry.accession,
+        mass_delta=entry.mass_delta,
+        source=canonical_token,
+    )
+
+
+def _find_modification(identity: str) -> unimod_registry.UnimodEntry | None:
+    """Resolve a known name/accession/mass without consuming unknown tokens."""
+    entry = unimod_registry.find_by_name(identity)
+    if entry is not None:
+        return entry
+    try:
+        mass_delta = float(identity)
+    except ValueError:
+        return None
+    return unimod_registry.find_by_mass(mass_delta)
 
 
 def _serialize_modifications(value: list[SearchedModification]) -> str | None:

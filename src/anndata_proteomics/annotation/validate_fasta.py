@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 from loguru import logger
+from mudata import MuData
 from prozor.annotate import annotate_peptides_streaming
 from scipy.sparse import csr_matrix
 
@@ -40,7 +41,8 @@ from anndata_proteomics.fasta.config import (
     ResolvedFastaConfig,
     matches_any,
 )
-from anndata_proteomics.fasta.parser import FastaSource, iter_fasta
+from anndata_proteomics.fasta.parser import FastaSource, FastaSources, iter_fasta
+from anndata_proteomics.rules.anndata_io import read_stored_column_role
 
 _SCHEMA_VERSION = "0.2"
 _DEFAULT_SEQUENCE_FIELD = "ProForma_peptide"
@@ -58,17 +60,6 @@ _MATCH_COLUMNS = [
     "is_contaminant",
 ]
 _PEPTIDE_LEVELS = frozenset({"ion", "fragment", "peptidoform", "peptide"})
-_LEADING_PROTEIN_FIELDS = (
-    "Protein_Group",
-    "Leading_Razor_Protein",
-    "PG_ProteinAccessions",
-    "PG_ProteinGroups",
-    "Protein_ID",
-    "Accession",
-    "protein_group",
-    "Proteins",
-    "Protein",
-)
 _MAX_REPORTED = 5
 
 
@@ -110,109 +101,90 @@ class MuLinkStorageStats:
     protein_match_on: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FastaValidationConfig:
+    """Configuration shared by AnnData and MuData FASTA validation."""
+
+    sequence_field: str = _DEFAULT_SEQUENCE_FIELD
+    backend: str = "auto"
+    identifiers: FastaConfig = field(default_factory=FastaConfig)
+    leading_protein_field: str | None = None
+    protein_match_on: str | None = None
+    il_equivalent: bool = False
+    is_uniprot: bool = True
+
+
+DEFAULT_FASTA_VALIDATION_CONFIG = FastaValidationConfig()
+
+
 @dataclass(slots=True)
 class _TargetInput:
     name: str
-    target: Any
+    target: AnnData
     normalized_sequences: pd.Series
     leading_proteins: pd.Series
     leading_protein_field: str | None
 
 
-def validate_peptides_against_fasta(  # noqa: PLR0913 - stable public API
-    obj: Any,
-    fasta_sources: FastaSource | Iterable[FastaSource],
-    *,
-    sequence_field: str = _DEFAULT_SEQUENCE_FIELD,
-    backend: str = "auto",
-    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
-    decoy_pattern: str | None = None,
-    contaminant_pattern: str | None = None,
-    leading_protein_field: str | None = None,
-    protein_match_on: str | None = None,
-    il_equivalent: bool = False,
-    is_uniprot: bool = True,
-    modality: str | None = None,
-    store: bool = True,
+def validate_peptides_against_fasta(
+    adata: AnnData,
+    fasta_sources: FastaSources,
+    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
 ) -> FastaValidationResult:
-    """Validate one peptide-derived AnnData or selected MuData modality.
+    """Validate and annotate one peptide-derived AnnData.
 
-    The unmodified sequence comes from ``sequence_field``.  ``modality`` is only
-    needed when a MuData has several peptide-derived modalities; the unified
-    :func:`validate_peptide_modalities_against_fasta` operation validates all of
-    them in one FASTA scan.
+    Use :func:`validate_peptide_modality_against_fasta` for one MuData modality
+    or :func:`validate_peptide_modalities_against_fasta` for all peptide-derived
+    modalities.
     """
-    name, target = _resolve_feature_target(obj, modality)
+    name = _require_peptide_level(adata)
     results = _validate_targets(
-        obj,
-        {name: target},
+        adata,
+        {name: adata},
         fasta_sources,
-        sequence_field=sequence_field,
-        backend=backend,
-        fasta_config=fasta_config,
-        decoy_pattern=decoy_pattern,
-        contaminant_pattern=contaminant_pattern,
-        leading_protein_field=leading_protein_field,
-        protein_match_on=protein_match_on,
-        il_equivalent=il_equivalent,
-        is_uniprot=is_uniprot,
-        store=store,
+        config,
     )
     return results[name]
 
 
-def validate_peptide_modalities_against_fasta(  # noqa: PLR0913 - stable public API
-    obj: Any,
-    fasta_sources: FastaSource | Iterable[FastaSource],
-    *,
-    sequence_field: str = _DEFAULT_SEQUENCE_FIELD,
-    backend: str = "auto",
-    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
-    decoy_pattern: str | None = None,
-    contaminant_pattern: str | None = None,
-    leading_protein_field: str | None = None,
-    protein_match_on: str | None = None,
-    il_equivalent: bool = False,
-    is_uniprot: bool = True,
-    store: bool = True,
+def validate_peptide_modality_against_fasta(
+    mdata: MuData,
+    modality: str,
+    fasta_sources: FastaSources,
+    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
+) -> FastaValidationResult:
+    """Validate and annotate one explicitly selected MuData modality."""
+    target = _resolve_mudata_target(mdata, modality)
+    results = _validate_targets(
+        mdata,
+        {modality: target},
+        fasta_sources,
+        config,
+    )
+    return results[modality]
+
+
+def validate_peptide_modalities_against_fasta(
+    mdata: MuData,
+    fasta_sources: FastaSources,
+    config: FastaValidationConfig = DEFAULT_FASTA_VALIDATION_CONFIG,
 ) -> dict[str, FastaValidationResult]:
     """Validate every peptide-derived modality using one automaton and FASTA scan."""
-    targets = _resolve_all_feature_targets(obj)
+    targets = _resolve_all_feature_targets(mdata)
     return _validate_targets(
-        obj,
+        mdata,
         targets,
         fasta_sources,
-        sequence_field=sequence_field,
-        backend=backend,
-        fasta_config=fasta_config,
-        decoy_pattern=decoy_pattern,
-        contaminant_pattern=contaminant_pattern,
-        leading_protein_field=leading_protein_field,
-        protein_match_on=protein_match_on,
-        il_equivalent=il_equivalent,
-        is_uniprot=is_uniprot,
-        store=store,
+        config,
     )
 
 
-def _validate_targets(  # noqa: PLR0913 - explicit validation contract
-    owner: Any,
-    targets: dict[str, Any],
-    fasta_sources: FastaSource | Iterable[FastaSource],
-    *,
-    sequence_field: str,
-    backend: str,
-    fasta_config: FastaConfig | ResolvedFastaConfig | None,
-    decoy_pattern: str | None,
-    contaminant_pattern: str | None,
-    leading_protein_field: str | None,
-    protein_match_on: str | None,
-    il_equivalent: bool,
-    is_uniprot: bool,
-    store: bool,
+def _validate_targets(
+    owner: AnnData | MuData,
+    targets: dict[str, AnnData],
+    fasta_sources: FastaSources,
+    config: FastaValidationConfig,
 ) -> dict[str, FastaValidationResult]:
-    if fasta_config is not None and (decoy_pattern is not None or contaminant_pattern is not None):
-        raise ValueError("pass either fasta_config or decoy_pattern/contaminant_pattern, not both")
     if not targets:
         raise ValueError("object has no peptide-derived modality to validate")
 
@@ -222,10 +194,10 @@ def _validate_targets(  # noqa: PLR0913 - explicit validation contract
         name: _prepare_target(
             name,
             target,
-            sequence_field=sequence_field,
-            leading_protein_field=leading_protein_field,
-            il_equivalent=il_equivalent,
-            is_uniprot=is_uniprot,
+            sequence_field=config.sequence_field,
+            leading_protein_field=config.leading_protein_field,
+            il_equivalent=config.il_equivalent,
+            is_uniprot=config.is_uniprot,
         )
         for name, target in targets.items()
     }
@@ -237,25 +209,13 @@ def _validate_targets(  # noqa: PLR0913 - explicit validation contract
             if sequence is not None
         }
     )
-    input_config: FastaConfig | None = None
-    resolved_config: ResolvedFastaConfig | None = None
-    if isinstance(fasta_config, ResolvedFastaConfig):
-        resolved_config = fasta_config
-    elif isinstance(fasta_config, FastaConfig):
-        input_config = fasta_config
-    else:
-        input_config = FastaConfig(
-            decoy_patterns=_single_pattern(decoy_pattern),
-            contaminant_patterns=_single_pattern(contaminant_pattern),
-        )
     matches, fasta_proteins, resolved_config, resolved_backend = _scan_fasta(
         patterns,
         sources,
-        backend=backend,
-        input_config=input_config,
-        resolved_config=resolved_config,
-        il_equivalent=il_equivalent,
-        is_uniprot=is_uniprot,
+        backend=config.backend,
+        fasta_config=config.identifiers,
+        il_equivalent=config.il_equivalent,
+        is_uniprot=config.is_uniprot,
     )
     per_pattern = _per_pattern_stats(matches)
     results: dict[str, FastaValidationResult] = {}
@@ -276,34 +236,33 @@ def _validate_targets(  # noqa: PLR0913 - explicit validation contract
             n_invalid_sequences=int(item.normalized_sequences.isna().sum()),
             n_matched_features=n_matched,
             n_unmatched_features=len(summary) - n_matched,
-            requested_backend=backend,
+            requested_backend=config.backend,
             backend=resolved_backend,
-            sequence_field=sequence_field,
+            sequence_field=config.sequence_field,
             leading_protein_field=item.leading_protein_field,
-            il_equivalent=il_equivalent,
+            il_equivalent=config.il_equivalent,
             fasta_config=resolved_config,
             unmatched_sequences=unmatched_sequences,
         )
 
     mulink_stats = MuLinkStorageStats()
-    if store:
-        write_fasta_config(owner, resolved_config)
-        if hasattr(owner, "mod") and "protein" in owner.mod:
-            mulink_stats = _store_mulink_feature_mapping(
-                owner,
-                prepared,
-                matches,
-                protein_match_on=protein_match_on,
-                is_uniprot=is_uniprot,
-            )
-        for name, item in prepared.items():
-            _store(
-                item.target,
-                summary=results[name].summary,
-                fasta_sources=source_descriptions,
-                result=results[name],
-                mulink_stats=mulink_stats,
-            )
+    write_fasta_config(owner, resolved_config)
+    if isinstance(owner, MuData) and "protein" in owner.mod:
+        mulink_stats = _store_mulink_feature_mapping(
+            owner,
+            prepared,
+            matches,
+            protein_match_on=config.protein_match_on,
+            is_uniprot=config.is_uniprot,
+        )
+    for name, item in prepared.items():
+        _store(
+            item.target,
+            summary=results[name].summary,
+            fasta_sources=source_descriptions,
+            result=results[name],
+            mulink_stats=mulink_stats,
+        )
 
     total_features = sum(result.n_features for result in results.values())
     total_matched = sum(result.n_matched_features for result in results.values())
@@ -321,7 +280,7 @@ def _validate_targets(  # noqa: PLR0913 - explicit validation contract
 
 def _prepare_target(
     name: str,
-    target: Any,
+    target: AnnData,
     *,
     sequence_field: str,
     leading_protein_field: str | None,
@@ -344,48 +303,45 @@ def _prepare_target(
     )
 
 
-def _resolve_feature_target(obj: Any, modality: str | None) -> tuple[str, Any]:
-    if hasattr(obj, "mod"):
-        if modality is not None:
-            if modality not in obj.mod:
-                raise ValueError(
-                    f"modality {modality!r} not in MuData; modalities: {list(obj.mod)}"
-                )
-            target = obj.mod[modality]
-            if _level(target) not in _PEPTIDE_LEVELS:
-                raise ValueError(f"modality {modality!r} is not peptide-derived")
-            return modality, target
-        candidates = _resolve_all_feature_targets(obj)
-        if len(candidates) == 1:
-            return next(iter(candidates.items()))
-        if not candidates:
-            raise ValueError("MuData has no peptide-derived modality")
-        raise ValueError(
-            f"MuData has multiple peptide-derived modalities {list(candidates)}; pass modality="
-        )
-    level = _level(obj)
+def _require_peptide_level(adata: AnnData) -> str:
+    level = _level(adata)
     if level not in _PEPTIDE_LEVELS:
         raise ValueError(
             "FASTA validation applies to peptide-derived layers "
             f"(ion/fragment/peptidoform/peptide), got {level!r}"
         )
-    return level or "features", obj
+    return level
 
 
-def _resolve_all_feature_targets(obj: Any) -> dict[str, Any]:
-    if hasattr(obj, "mod"):
-        return {
-            name: target for name, target in obj.mod.items() if _level(target) in _PEPTIDE_LEVELS
-        }
-    level = _level(obj)
-    return {level or "features": obj} if level in _PEPTIDE_LEVELS else {}
+def _resolve_mudata_target(mdata: MuData, modality: str) -> AnnData:
+    if modality not in mdata.mod:
+        raise ValueError(f"modality {modality!r} not in MuData; modalities: {list(mdata.mod)}")
+    target = mdata.mod[modality]
+    if not isinstance(target, AnnData):
+        raise TypeError(f"modality {modality!r} is not an AnnData")
+    if _level(target) not in _PEPTIDE_LEVELS:
+        raise ValueError(f"modality {modality!r} is not peptide-derived")
+    return target
 
 
-def _level(obj: Any) -> str | None:
-    return (obj.uns.get("anndata_proteomics") or {}).get("quantification_level")
+def _resolve_all_feature_targets(mdata: MuData) -> dict[str, AnnData]:
+    return {
+        name: target
+        for name, target in mdata.mod.items()
+        if isinstance(target, AnnData) and _level(target) in _PEPTIDE_LEVELS
+    }
 
 
-def _feature_sequences(target: Any, sequence_field: str, *, il_equivalent: bool) -> pd.Series:
+def _level(adata: AnnData) -> str | None:
+    return (adata.uns.get("anndata_proteomics") or {}).get("quantification_level")
+
+
+def _feature_sequences(
+    target: AnnData,
+    sequence_field: str,
+    *,
+    il_equivalent: bool,
+) -> pd.Series:
     if sequence_field not in target.var.columns:
         raise ValueError(
             f"sequence_field {sequence_field!r} not in var columns: {list(target.var.columns)}"
@@ -406,7 +362,7 @@ def _normalize_sequence(value: object, *, il_equivalent: bool) -> str | None:
     return sequence.replace("I", "L") if il_equivalent else sequence
 
 
-def _resolve_leading_protein_field(target: Any, requested: str | None) -> str | None:
+def _resolve_leading_protein_field(target: AnnData, requested: str | None) -> str | None:
     if requested is not None:
         if requested not in target.var.columns:
             raise ValueError(
@@ -414,14 +370,11 @@ def _resolve_leading_protein_field(target: Any, requested: str | None) -> str | 
                 f"{list(target.var.columns)}"
             )
         return requested
-    return next(
-        (field for field in _LEADING_PROTEIN_FIELDS if field in target.var.columns),
-        None,
-    )
+    return read_stored_column_role(target, "fasta_accessions")
 
 
 def _feature_leading_proteins(
-    target: Any,
+    target: AnnData,
     field: str | None,
     *,
     is_uniprot: bool,
@@ -438,33 +391,24 @@ def _feature_leading_proteins(
     return pd.Series(proteins, index=index, dtype="object")
 
 
-def _scan_fasta(  # noqa: C901 - single-pass FASTA state machine
+def _scan_fasta(
     patterns: list[str],
     fasta_sources: list[FastaSource],
     *,
     backend: str,
-    input_config: FastaConfig | None,
-    resolved_config: ResolvedFastaConfig | None,
+    fasta_config: FastaConfig,
     il_equivalent: bool,
     is_uniprot: bool,
 ) -> tuple[pd.DataFrame, set[str], ResolvedFastaConfig, str]:
-    accumulator = FastaConfigAccumulator(input_config) if input_config is not None else None
+    accumulator = FastaConfigAccumulator(fasta_config)
     fasta_proteins: set[str] = set()
-
-    def protein_records() -> Iterable[tuple[str, str]]:
-        for source in fasta_sources:
-            for record in iter_fasta(source):
-                fasta_id, _ = parse_header_id(record.header)
-                if accumulator is not None:
-                    accumulator.observe(fasta_id)
-                proteinname = uniprot_proteinname(fasta_id) if is_uniprot else fasta_id
-                fasta_proteins.add(proteinname)
-                sequence = record.sequence.upper()
-                if il_equivalent:
-                    sequence = sequence.replace("I", "L")
-                yield fasta_id, sequence
-
-    records = protein_records()
+    records = _protein_records(
+        fasta_sources,
+        accumulator,
+        fasta_proteins,
+        il_equivalent=il_equivalent,
+        is_uniprot=is_uniprot,
+    )
     if patterns:
         annotations = annotate_peptides_streaming(patterns, records, backend=backend)
     else:
@@ -472,12 +416,7 @@ def _scan_fasta(  # noqa: C901 - single-pass FASTA state machine
             pass
         annotations = annotate_peptides_streaming([], (), backend=backend)
 
-    if resolved_config is None:
-        if accumulator is None:  # pragma: no cover - guarded by _validate_targets
-            raise AssertionError("an input or resolved FASTA configuration is required")
-        effective_config = accumulator.resolve()
-    else:
-        effective_config = resolved_config
+    effective_config = accumulator.resolve()
     rows = [
         (
             annotation.peptide,
@@ -497,6 +436,24 @@ def _scan_fasta(  # noqa: C901 - single-pass FASTA state machine
     for column in ("is_decoy", "is_contaminant"):
         frame[column] = frame[column].astype("bool")
     return frame, fasta_proteins, effective_config, annotations.resolved_backend
+
+
+def _protein_records(
+    fasta_sources: list[FastaSource],
+    accumulator: FastaConfigAccumulator,
+    fasta_proteins: set[str],
+    *,
+    il_equivalent: bool,
+    is_uniprot: bool,
+) -> Iterable[tuple[str, str]]:
+    for source in fasta_sources:
+        for record in iter_fasta(source):
+            fasta_id, _ = parse_header_id(record.header)
+            accumulator.observe(fasta_id)
+            proteinname = uniprot_proteinname(fasta_id) if is_uniprot else fasta_id
+            fasta_proteins.add(proteinname)
+            sequence = record.sequence.upper()
+            yield fasta_id, sequence.replace("I", "L") if il_equivalent else sequence
 
 
 def _per_pattern_stats(
@@ -562,8 +519,8 @@ def _build_summary(
     )
 
 
-def _store_mulink_feature_mapping(  # noqa: C901, PLR0912 - modality topology validation
-    mdata: Any,
+def _store_mulink_feature_mapping(
+    mdata: MuData,
     targets: dict[str, _TargetInput],
     matches: pd.DataFrame,
     *,
@@ -572,100 +529,31 @@ def _store_mulink_feature_mapping(  # noqa: C901, PLR0912 - modality topology va
 ) -> MuLinkStorageStats:
     if not mdata.var_names.is_unique:
         raise ValueError("MuLink feature_mapping requires globally unique MuData var_names")
-    protein = mdata.mod["protein"]
-    resolved_match_on = resolve_match_on(protein, protein_match_on)
-    if resolved_match_on == "index":
-        raw_groups = pd.Series(protein.var_names, index=protein.var_names)
-    else:
-        raw_groups = protein.var[resolved_match_on]
-
-    accession_to_nodes: dict[str, list[str]] = {}
-    for node, raw_group in zip(protein.var_names, raw_groups, strict=True):
-        for accession in protein_group_accessions(
-            str(raw_group),
-            is_uniprot=is_uniprot,
-        ):
-            accession_to_nodes.setdefault(accession, []).append(str(node))
-
+    protein = _protein_modality(mdata)
+    resolved_match_on, accession_to_nodes = _protein_accession_nodes(
+        protein,
+        protein_match_on,
+        is_uniprot=is_uniprot,
+    )
     matched_by_sequence = {
         str(sequence): set(group["proteinname"].astype(str))
         for sequence, group in matches.groupby("sequence", sort=False)
     }
-    global_positions = {str(name): position for position, name in enumerate(mdata.var_names)}
-    missing_feature_names = [
-        str(feature_name)
-        for item in targets.values()
-        for feature_name in item.target.var_names
-        if str(feature_name) not in global_positions
-    ]
-    if missing_feature_names:
-        raise ValueError(
-            "peptide-derived feature names are absent from the MuData global var axis: "
-            f"{missing_feature_names[:_MAX_REPORTED]}"
-        )
-    target_row_mask = np.zeros(mdata.n_vars, dtype=bool)
-    for item in targets.values():
-        target_row_mask[
-            [global_positions[str(feature_name)] for feature_name in item.target.var_names]
-        ] = True
-    rows: list[int] = []
-    columns: list[int] = []
-    represented_accessions: set[str] = set()
+    global_positions, target_row_mask = _target_feature_positions(mdata, targets)
     all_matched_accessions = set(matches["proteinname"].astype(str))
-    for item in targets.values():
-        for feature_name, sequence in item.normalized_sequences.items():
-            if sequence is None:
-                continue
-            for accession in matched_by_sequence.get(sequence, set()):
-                for protein_node in accession_to_nodes.get(accession, []):
-                    rows.append(global_positions[str(feature_name)])
-                    columns.append(global_positions[protein_node])
-                    represented_accessions.add(accession)
-
-    new_mapping = csr_matrix(
-        (
-            np.ones(len(rows), dtype=np.int8),
-            (
-                np.asarray(rows, dtype=np.int64),
-                np.asarray(columns, dtype=np.int64),
-            ),
-        ),
+    new_mapping, represented_accessions = _build_feature_mapping(
+        targets,
+        matched_by_sequence,
+        accession_to_nodes,
+        global_positions,
         shape=(mdata.n_vars, mdata.n_vars),
-        # MuData's update path temporarily writes -1 while reindexing varp;
-        # use a signed type so h5mu round-trips remain valid.
     )
-    new_mapping.sum_duplicates()
-    if new_mapping.nnz:
-        new_mapping.data[:] = 1
-
-    existing = csr_matrix(
-        mdata.varp.get(
-            _FEATURE_MAPPING_KEY,
-            _empty_int8_csr(new_mapping.shape),
-        )
+    existing = _stored_feature_mapping(mdata, _FEATURE_MAPPING_KEY, new_mapping.shape)
+    old_owned = _stored_feature_mapping(
+        mdata,
+        _OWNED_FEATURE_MAPPING_KEY,
+        new_mapping.shape,
     )
-    if existing.shape != new_mapping.shape:
-        raise ValueError(
-            f"existing varp[{_FEATURE_MAPPING_KEY!r}] has shape {existing.shape}, "
-            f"expected {new_mapping.shape}"
-        )
-
-    # ``feature_mapping`` is shared MuLink state.  Keep APB's additive
-    # contribution separately so a later validation can replace only the
-    # edges generated by the previous FASTA, without touching relationships
-    # owned by another producer (including an existing edge at the same
-    # coordinate).
-    old_owned = csr_matrix(
-        mdata.varp.get(
-            _OWNED_FEATURE_MAPPING_KEY,
-            _empty_int8_csr(new_mapping.shape),
-        )
-    )
-    if old_owned.shape != new_mapping.shape:
-        raise ValueError(
-            f"existing varp[{_OWNED_FEATURE_MAPPING_KEY!r}] has shape "
-            f"{old_owned.shape}, expected {new_mapping.shape}"
-        )
     merged, owned = _replace_owned_feature_mapping(
         existing,
         old_owned,
@@ -680,6 +568,109 @@ def _store_mulink_feature_mapping(  # noqa: C901, PLR0912 - modality topology va
         n_unrepresented_fasta_proteins=len(all_matched_accessions - represented_accessions),
         protein_match_on=resolved_match_on,
     )
+
+
+def _protein_modality(mdata: MuData) -> AnnData:
+    protein = mdata.mod["protein"]
+    if not isinstance(protein, AnnData):
+        raise TypeError("MuData 'protein' modality is not an AnnData")
+    return protein
+
+
+def _protein_accession_nodes(
+    protein: AnnData,
+    requested_match_on: str | None,
+    *,
+    is_uniprot: bool,
+) -> tuple[str, dict[str, list[str]]]:
+    resolved_match_on = resolve_match_on(protein, requested_match_on)
+    raw_groups = (
+        pd.Series(protein.var_names, index=protein.var_names)
+        if resolved_match_on == "index"
+        else protein.var[resolved_match_on]
+    )
+    accession_to_nodes: dict[str, list[str]] = {}
+    for node, raw_group in zip(protein.var_names, raw_groups, strict=True):
+        for accession in protein_group_accessions(
+            str(raw_group),
+            is_uniprot=is_uniprot,
+        ):
+            accession_to_nodes.setdefault(accession, []).append(str(node))
+    return resolved_match_on, accession_to_nodes
+
+
+def _target_feature_positions(
+    mdata: MuData,
+    targets: dict[str, _TargetInput],
+) -> tuple[dict[str, int], np.ndarray]:
+    positions = {str(name): position for position, name in enumerate(mdata.var_names)}
+    feature_names = [
+        str(feature_name) for item in targets.values() for feature_name in item.target.var_names
+    ]
+    missing = [name for name in feature_names if name not in positions]
+    if missing:
+        raise ValueError(
+            "peptide-derived feature names are absent from the MuData global var axis: "
+            f"{missing[:_MAX_REPORTED]}"
+        )
+    target_row_mask = np.zeros(mdata.n_vars, dtype=bool)
+    target_row_mask[[positions[name] for name in feature_names]] = True
+    return positions, target_row_mask
+
+
+def _build_feature_mapping(
+    targets: dict[str, _TargetInput],
+    matched_by_sequence: dict[str, set[str]],
+    accession_to_nodes: dict[str, list[str]],
+    global_positions: dict[str, int],
+    *,
+    shape: tuple[int, int],
+) -> tuple[csr_matrix[np.int8], set[str]]:
+    rows: list[int] = []
+    columns: list[int] = []
+    represented_accessions: set[str] = set()
+    for item in targets.values():
+        for feature_name, sequence in item.normalized_sequences.items():
+            if sequence is None:
+                continue
+            for accession in matched_by_sequence.get(sequence, set()):
+                protein_nodes = accession_to_nodes.get(accession, [])
+                rows.extend(global_positions[str(feature_name)] for _node in protein_nodes)
+                columns.extend(global_positions[node] for node in protein_nodes)
+                if protein_nodes:
+                    represented_accessions.add(accession)
+    mapping = csr_matrix(
+        (
+            np.ones(len(rows), dtype=np.int8),
+            (
+                np.asarray(rows, dtype=np.int64),
+                np.asarray(columns, dtype=np.int64),
+            ),
+        ),
+        shape=shape,
+    )
+    mapping.sum_duplicates()
+    if mapping.nnz:
+        mapping.data[:] = 1
+    return mapping, represented_accessions
+
+
+def _stored_feature_mapping(
+    mdata: MuData,
+    key: str,
+    expected_shape: tuple[int, int],
+) -> csr_matrix:
+    mapping = csr_matrix(
+        mdata.varp.get(
+            key,
+            _empty_int8_csr(expected_shape),
+        )
+    )
+    if mapping.shape != expected_shape:
+        raise ValueError(
+            f"existing varp[{key!r}] has shape {mapping.shape}, expected {expected_shape}"
+        )
+    return mapping
 
 
 def _empty_int8_csr(shape: tuple[int, int]) -> csr_matrix[np.int8]:
@@ -750,7 +741,7 @@ def _replace_owned_feature_mapping(
 
 
 def _store(
-    target: Any,
+    target: AnnData,
     *,
     summary: pd.DataFrame,
     fasta_sources: list[str],
@@ -795,9 +786,3 @@ def _store(
     existing.append(entry)
     namespace["var_annotations_json"] = json.dumps(existing)
     target.uns["anndata_proteomics"] = namespace
-
-
-def _single_pattern(pattern: str | None) -> tuple[str, ...] | None:
-    if pattern is None:
-        return None
-    return (pattern,) if pattern else ()

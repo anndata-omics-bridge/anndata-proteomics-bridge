@@ -91,7 +91,7 @@
         }
       },
       "column_roles": {
-        "protein_accessions": "Genes"
+        "protein_assignment": "Genes"
       },
       "layers": [
         {

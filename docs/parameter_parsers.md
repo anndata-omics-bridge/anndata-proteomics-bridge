@@ -17,19 +17,29 @@ params/
 
 ## Contract
 
-Every vendor parser exposes:
+Most vendor implementations expose:
 
 ```python
 extract_params(source) -> Parameters
 ```
 
-`params.registry` dispatches by software name:
+Native parser signatures retain vendor-specific requirements: MetaMorpheus
+accepts its TOML and version-text sources separately, and MaxQuant accepts the
+optional `ms2frac` selector.
+
+`params.registry` adapts those signatures to one typed callable contract. Its
+input is either one source or an explicit tuple of sources:
 
 ```python
 parse_params(path, software)
+parse_params((metamorpheus_toml, metamorpheus_version), "metamorpheus")
 get_parser("DIA-NN")
 available_software()
 ```
+
+Passing only one MetaMorpheus source raises `ParamsError`; APB does not guess a
+neighbouring file. Parser-specific configuration remains on the native parser,
+for example `params.parsers.maxquant.extract_params(path, ms2frac="ITMS")`.
 
 Registered parsers:
 
@@ -114,12 +124,11 @@ same model normalization. The literal acquisition value `"unknown"` is
 field-specific data and is preserved even though that token means “missing”
 for older free-text parameter fields.
 
-Current focused coverage: `57` parameter tests.
-
 ## Adding A Parser
 
-1. Add `params/parsers/<vendor>.py` with
-   `extract_params(source) -> Parameters`.
+1. Add `params/parsers/<vendor>.py` with an honest native `extract_params(...)`
+   signature.
 2. Register it in `params/registry.py`.
-3. Add input and expected CSV fixtures under `tests/params/`.
-4. Add or extend `tests/test_params_<vendor>.py`.
+3. Adapt its native inputs to the registry's single `ParameterInput` argument.
+4. Add input and expected CSV fixtures under `tests/params/`.
+5. Add or extend `tests/test_params_<vendor>.py`.

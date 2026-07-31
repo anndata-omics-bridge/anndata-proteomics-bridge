@@ -92,7 +92,8 @@
         }
       },
       "column_roles": {
-        "protein_accessions": "Protein_Group"
+        "protein_assignment": "Protein_Group",
+        "fasta_accessions": "Protein_Group"
       },
       "layers": [
         {

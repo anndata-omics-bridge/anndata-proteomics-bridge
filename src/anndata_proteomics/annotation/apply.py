@@ -12,7 +12,6 @@ from numpy.typing import NDArray
 
 from anndata_proteomics.annotation._sanitize import sanitize_columns
 from anndata_proteomics.annotation.loader import AnnotationTable
-from anndata_proteomics.readers.summary import store_annotation_summary
 
 _MAX_REPORTED = 5
 
@@ -61,11 +60,6 @@ def annotate_obs(obj: Any, annotation: AnnotationTable) -> Any:
         cols_added,
         n_matched,
         matched_key_field=matched_key_field,
-    )
-    store_annotation_summary(
-        obj,
-        fields=cols_added,
-        n_annotated_runs=n_matched,
     )
     logger.info(
         f"annotated obs: +{len(cols_added)} column(s) {cols_added}, "

@@ -139,6 +139,12 @@ accession; `nr_peptides` is the **theoretical** in-silico digest count using the
 stored search enzyme (override with `--cleavage`, `--min-length`,
 `--max-length`).
 
+The conversion rule declares `column_roles.fasta_accessions`; `apb fasta` uses
+that exact output column and never guesses from vendor-looking names.
+`--match-on` and `--leading-protein-field` are explicit overrides. Rules that
+have only a non-accession protein assignment can still validate peptide
+membership, but omit accession-dependent diagnostics.
+
 Validation is enabled by default for every ion, fragment, peptidoform, or
 peptide modality. `varm['fasta_validation']` reports whether the peptide occurs,
 the total number of occurrence sites, the number and IDs of distinct matching
@@ -167,12 +173,16 @@ must already have been joined by `apb annotate`; it does not infer sample
 identity from vendor run names or parsing rules. `apb fasta` is optional and
 may run independently.
 
+ProteoBench reads the independent `column_roles.protein_assignment` role. It
+does not fall back to the FASTA-accession role.
+
 For a standalone AnnData, the module level must match the object. For MuData,
 only that modality is scored. Feature-aligned means, standard deviations, CVs,
 observation counts, species assignments, epsilon, and precision values are
 stored in `varm['proteobench']`. Compatible JSON field names and threshold
-layout are retained in `uns['proteobench']['scores']`; resolved canonical roles and
-compact protein-mapper provenance live beside it in `column_roles` and
+layout are retained in
+`uns['anndata_proteomics']['proteobench']['scores']`; resolved canonical roles
+and compact protein-mapper provenance live beside it in `column_roles` and
 `protein_mapping`.
 
 The managed test-data registry currently advertises golden-verified settings

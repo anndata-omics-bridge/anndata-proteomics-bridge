@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-import mudata
 import numpy as np
 import pytest
-from scipy.sparse import csr_matrix
 
 from anndata_proteomics.params.registry import get_parser
 from anndata_proteomics.readers import summary
@@ -251,32 +248,7 @@ def test_rule_locator_rejects_ambiguous_non_equivalent_documents(
     assert loader.resolve_rule_locator("synthetic", "ion", None) is None
 
 
-def test_summary_path_errors_and_mudata_missing_modality(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with pytest.raises(ValueError, match="only to MuData"):
-        summary.describe_path(tmp_path / "input.h5ad", modality="ion")
-    with pytest.raises(ValueError, match="unsupported"):
-        summary.describe_path(tmp_path / "input.txt")
-
-    closed: list[bool] = []
-    fake = SimpleNamespace(
-        mod={},
-        file=SimpleNamespace(close=lambda: closed.append(True)),
-    )
-    monkeypatch.setattr(mudata, "read_h5mu", lambda *_args, **_kwargs: fake)
-    with pytest.raises(ValueError, match="not in MuData"):
-        summary.describe_path(tmp_path / "input.h5mu", modality="missing")
-    assert closed == [True]
-
-
-def test_summary_matrix_and_json_compatibility_helpers() -> None:
-    class _Backed:
-        def to_memory(self) -> csr_matrix:
-            return csr_matrix([[1.0]])
-
-    assert summary._matrix_values(_Backed()).tolist() == [[1.0]]
+def test_summary_json_compatibility_helper() -> None:
     converted = summary._to_json_compatible(
         {
             "array": np.asarray([np.int64(1)]),
@@ -289,73 +261,3 @@ def test_summary_matrix_and_json_compatibility_helpers() -> None:
         "tuple": [2.0],
         "bytes": "text",
     }
-
-
-def test_summary_payload_input_shapes_and_upgrade_noops() -> None:
-    owner = SimpleNamespace(uns={"anndata_proteomics": {}})
-    legacy_owner = SimpleNamespace(uns={"anndata_proteomics": "legacy"})
-    assert summary._stored_rule(legacy_owner) is None
-    payload = {
-        "schema_version": "5",
-        "container_type": "anndata",
-    }
-    owner.uns["anndata_proteomics"]["descriptive_summary"] = json.dumps(payload).encode()
-    assert summary._read_payload(owner) == payload
-
-    owner.uns["anndata_proteomics"]["descriptive_summary"] = payload
-    assert summary._read_payload(owner) == payload
-    owner.uns["anndata_proteomics"]["descriptive_summary"] = 1
-    with pytest.raises(ValueError, match="invalid stored"):
-        summary._read_payload(owner)
-    owner.uns["anndata_proteomics"]["descriptive_summary"] = json.dumps(
-        {"schema_version": "unknown"}
-    )
-    with pytest.raises(ValueError, match="unsupported"):
-        summary._read_payload(owner)
-
-    v1 = {
-        "schema_version": "1",
-        "quantification": {
-            "n_runs": "unknown",
-            "layers": {"x": {"missingness_histogram": {"0": 1}}},
-        },
-    }
-    assert summary._upgrade_v1_payload(v1)["schema_version"] == "2"
-    v1_listless = {
-        "schema_version": "1",
-        "quantification": {
-            "n_runs": 1,
-            "layers": {"x": {"missingness_histogram": {"0": 1}}},
-        },
-    }
-    assert summary._upgrade_v1_payload(v1_listless)["schema_version"] == "2"
-    assert (
-        summary._upgrade_v2_payload(
-            {"schema_version": "2", "quantification": {"layers": {"x": {}}}}
-        )["schema_version"]
-        == "3"
-    )
-    assert (
-        summary._upgrade_v3_payload(
-            {"schema_version": "3", "quantification": {"layers": {"x": {}}}}
-        )["schema_version"]
-        == "4"
-    )
-    assert (
-        summary._upgrade_v4_payload(
-            {"schema_version": "4", "quantification": {"layers": {"x": {}}}}
-        )["schema_version"]
-        == "5"
-    )
-
-
-def test_close_mudata_falls_back_to_modality_files() -> None:
-    closed: list[str] = []
-    fake = SimpleNamespace(
-        mod={
-            "one": SimpleNamespace(file=SimpleNamespace(close=lambda: closed.append("one"))),
-            "two": SimpleNamespace(file=SimpleNamespace(close=lambda: closed.append("two"))),
-        }
-    )
-    summary._close_mudata(fake)
-    assert closed == ["one", "two"]

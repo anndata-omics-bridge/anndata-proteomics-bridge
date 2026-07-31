@@ -436,37 +436,9 @@ def test_annotations_remove_invalid_temporary_file(
     assert not list(annotation_dir.glob(".*.download.toml"))
 
 
-def test_build_database_and_main(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "plain.txt").write_text("skip", encoding="utf-8")
-    without_main = tmp_path / "without_main"
-    without_main.mkdir()
-    module = tmp_path / "module"
-    json_dir = module / "module-main"
-    json_dir.mkdir(parents=True)
-    missing_json = module / "missing-json"
-    missing_json.mkdir()
-    missing_input = module / "missing-input"
-    missing_input.mkdir()
-    ok = module / "ok"
-    ok.mkdir()
-    (json_dir / "missing-input.json").write_text(
-        '{"software_name":"Tool","software_version":"1"}',
-        encoding="utf-8",
-    )
-    (json_dir / "ok.json").write_text(
-        '{"software_name":"Tool","software_version":"2"}',
-        encoding="utf-8",
-    )
-    (ok / "input_file.txt").write_text("data", encoding="utf-8")
-    result = rawdb.build_database(tmp_path).set_index("intermediate_hash")
-    assert result.loc["missing-json", "status"] == "json_missing"
-    assert result.loc["missing-input", "status"] == "input_file_missing"
-    assert result.loc["ok", "status"] == "ok"
-
+def test_main_configures_logging_and_runs_app(monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[bool] = []
+    monkeypatch.setattr(rawdb, "configure_default_sink", lambda: called.append(True))
     monkeypatch.setattr(rawdb, "app", lambda: called.append(True))
     rawdb.main()
-    assert called == [True]
+    assert called == [True, True]

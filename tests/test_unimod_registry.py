@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from anndata_proteomics.modifications.pipeline import _to_runtime_rule
 from anndata_proteomics.modifications.unimod_registry import (
     UnimodRegistry,
+    find_by_mass,
+    find_by_name,
     load_registry,
     resolve,
 )
@@ -64,7 +66,7 @@ def test_resolve_returns_canonical_record():
     assert entry.name == "Oxidation"
     assert entry.target == ["M"]
     assert entry.position == "Anywhere"
-    assert entry.mass_delta == pytest.approx(15.9949)
+    assert entry.mass_delta == pytest.approx(15.994915)
 
 
 def test_resolve_phospho_targets_s_t_y():
@@ -76,7 +78,57 @@ def test_resolve_phospho_targets_s_t_y():
 def test_resolve_glygly_on_lysine():
     entry = resolve("UNIMOD:121")
     assert entry.target == ["K"]
-    assert entry.mass_delta == pytest.approx(114.04293)
+    assert entry.mass_delta == pytest.approx(114.042927)
+
+
+@pytest.mark.parametrize(
+    ("name", "accession"),
+    [
+        ("Acetyl", "UNIMOD:1"),
+        ("acetyl", "UNIMOD:1"),
+        ("Acetylation", "UNIMOD:1"),
+        ("Carbamidomethylation", "UNIMOD:4"),
+        ("UniMod:35", "UNIMOD:35"),
+    ],
+)
+def test_find_by_name_resolves_canonical_names_and_declared_synonyms(
+    name: str,
+    accession: str,
+) -> None:
+    entry = find_by_name(name)
+
+    assert entry is not None
+    assert entry.accession == accession
+
+
+def test_find_by_name_preserves_unknown_vendor_vocabulary() -> None:
+    assert find_by_name("Vendor-specific label") is None
+
+
+@pytest.mark.parametrize(
+    ("mass_delta", "accession"),
+    [
+        (42.010565, "UNIMOD:1"),
+        (57.021464, "UNIMOD:4"),
+        (79.966331, "UNIMOD:21"),
+        (-18.010565, "UNIMOD:27"),
+        (-17.026549, "UNIMOD:28"),
+        (15.994915, "UNIMOD:35"),
+        (114.042927, "UNIMOD:121"),
+    ],
+)
+def test_find_by_mass_uses_registry_monoisotopic_constants(
+    mass_delta: float,
+    accession: str,
+) -> None:
+    entry = find_by_mass(mass_delta)
+
+    assert entry is not None
+    assert entry.accession == accession
+
+
+def test_find_by_mass_returns_none_for_unknown_mass() -> None:
+    assert find_by_mass(12.345678) is None
 
 
 def test_resolve_unknown_accession_raises():
@@ -151,7 +203,7 @@ def test_runtime_rule_resolves_canonical_fields_from_accession():
     assert runtime.entries[0].name == "Oxidation"
     assert runtime.entries[0].target == ["M"]
     assert runtime.entries[0].position == "Anywhere"
-    assert runtime.entries[0].mass_delta == pytest.approx(15.9949)
+    assert runtime.entries[0].mass_delta == pytest.approx(15.994915)
 
 
 def test_runtime_rule_errors_on_unknown_accession():

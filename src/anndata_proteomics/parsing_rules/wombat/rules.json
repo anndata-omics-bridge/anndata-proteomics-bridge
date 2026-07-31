@@ -43,7 +43,8 @@
       }
     },
     "column_roles": {
-      "protein_accessions": "protein_group"
+      "protein_assignment": "protein_group",
+      "fasta_accessions": "protein_group"
     },
     "modifications": {
       "source_column": "modified_peptide",

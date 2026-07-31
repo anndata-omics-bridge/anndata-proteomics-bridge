@@ -5,7 +5,7 @@ from __future__ import annotations
 from anndata_proteomics.modifications.model import ModificationOccurrence
 
 
-def render_proforma(  # noqa: C901 - ordered ProForma rendering grammar
+def render_proforma(
     stripped: str,
     occurrences: list[ModificationOccurrence],
     unknown_tokens: dict[int, str] | None = None,
@@ -31,27 +31,14 @@ def render_proforma(  # noqa: C901 - ordered ProForma rendering grammar
     Preferred label per occurrence: accession when present
     (``[UNIMOD:35]``), else name (``[Oxidation]``).
     """
-    unknown_tokens = unknown_tokens or {}
-    nterm: list[str] = []
-    cterm: list[str] = []
-    by_residue: dict[int, list[str]] = {}
-
-    for occ in occurrences:
-        tag = occ.accession or occ.name
-        if occ.position == "N-term":
-            nterm.append(tag)
-        elif occ.position == "C-term":
-            cterm.append(tag)
-        elif occ.sequence_index is not None:
-            by_residue.setdefault(occ.sequence_index, []).append(tag)
-
-    for idx, token in unknown_tokens.items():
-        if idx == -1:
-            nterm.append(token)
-        elif idx == len(stripped):
-            cterm.append(token)
-        else:
-            by_residue.setdefault(idx, []).append(token)
+    nterm, cterm, by_residue = _group_occurrences(occurrences)
+    _add_unknown_tokens(
+        unknown_tokens or {},
+        sequence_length=len(stripped),
+        nterm=nterm,
+        cterm=cterm,
+        by_residue=by_residue,
+    )
 
     out: list[str] = []
     if nterm:
@@ -63,3 +50,37 @@ def render_proforma(  # noqa: C901 - ordered ProForma rendering grammar
     if cterm:
         out.append("-[" + "][".join(cterm) + "]")
     return "".join(out)
+
+
+def _group_occurrences(
+    occurrences: list[ModificationOccurrence],
+) -> tuple[list[str], list[str], dict[int, list[str]]]:
+    nterm: list[str] = []
+    cterm: list[str] = []
+    by_residue: dict[int, list[str]] = {}
+    for occurrence in occurrences:
+        tag = occurrence.accession or occurrence.name
+        if occurrence.position == "N-term":
+            nterm.append(tag)
+        elif occurrence.position == "C-term":
+            cterm.append(tag)
+        elif occurrence.sequence_index is not None:
+            by_residue.setdefault(occurrence.sequence_index, []).append(tag)
+    return nterm, cterm, by_residue
+
+
+def _add_unknown_tokens(
+    unknown_tokens: dict[int, str],
+    *,
+    sequence_length: int,
+    nterm: list[str],
+    cterm: list[str],
+    by_residue: dict[int, list[str]],
+) -> None:
+    for index, token in unknown_tokens.items():
+        if index == -1:
+            nterm.append(token)
+        elif index == sequence_length:
+            cterm.append(token)
+        else:
+            by_residue.setdefault(index, []).append(token)

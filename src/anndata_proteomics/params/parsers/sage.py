@@ -6,19 +6,13 @@ import json
 from pathlib import Path
 from typing import IO
 
+from anndata_proteomics.modifications import unimod_registry
 from anndata_proteomics.params.model import Parameters
 from anndata_proteomics.params.parsers._common import (
     format_tolerance_range,
-    lookup_mass_mod,
     read_text,
 )
 
-# Mass shift (Da) -> human-readable modification name, matched within MASS_TOLERANCE.
-MASS_TO_MOD_MAPPING = {
-    57.021464: "Carbamidomethyl",
-    15.9949: "Oxidation",
-    42.0106: "Acetyl",
-}
 MASS_TOLERANCE = 0.001
 
 # Sage uses "[" for N-terminal and "]" for C-terminal modifications.
@@ -27,7 +21,8 @@ RESIDUE_MAP = {"[": "Protein N-term", "]": "Protein C-term", "^": "N-term", "$":
 
 def _lookup_mod_name(mass: float) -> str:
     """Return a modification name for a mass shift within tolerance, else the raw mass."""
-    return lookup_mass_mod(mass, MASS_TO_MOD_MAPPING, tol=MASS_TOLERANCE) or str(mass)
+    canonical = unimod_registry.find_by_mass(mass, tolerance=MASS_TOLERANCE)
+    return canonical.name if canonical is not None else str(mass)
 
 
 def _parse_static_mods(mods: dict[str, float]) -> str:

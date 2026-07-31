@@ -101,7 +101,8 @@
         }
       },
       "column_roles": {
-        "protein_accessions": "Protein_Ids"
+        "protein_assignment": "Protein_Ids",
+        "fasta_accessions": "Protein_Ids"
       },
       "layers": [
         {
@@ -151,7 +152,8 @@
         }
       },
       "column_roles": {
-        "protein_accessions": "Protein_Ids"
+        "protein_assignment": "Protein_Ids",
+        "fasta_accessions": "Protein_Ids"
       },
       "layers": [
         {

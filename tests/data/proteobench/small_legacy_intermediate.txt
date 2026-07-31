@@ -1,0 +1,4 @@
+,precursor ion,log_Intensity_mean_A,log_Intensity_mean_B,log_Intensity_std_A,log_Intensity_std_B,Intensity_mean_A,Intensity_mean_B,Intensity_std_A,Intensity_std_B,CV_A,CV_B,log2_A_vs_B,run_A1,run_A2,run_B1,run_B2,nr_observed,YEAST,ECOLI,HUMAN,unique,species,log2_expectedRatio,epsilon,log2_empirical_median,log2_empirical_mean,epsilon_precision_median,epsilon_precision_mean
+0,E/2,2.321928024291992,4.321928024291992,0.0,0.0,5.0,20.0,0.0,0.0,0.0,0.0,-2.0,5.0,5.0,20.0,20.0,4,False,True,False,1,ECOLI,-2.0,0.0,-2.0,-2.0,0.0,0.0
+1,H/2,3.321928024291992,3.321928024291992,0.0,0.0,10.0,10.0,0.0,0.0,0.0,0.0,0.0,10.0,10.0,10.0,10.0,4,False,False,True,1,HUMAN,0.0,0.0,0.0,0.0,0.0,0.0
+3,Y/2,4.321928024291992,3.321928024291992,0.0,0.0,20.0,10.0,0.0,0.0,0.0,0.0,1.0,20.0,20.0,10.0,10.0,4,True,False,False,1,YEAST,1.0,0.0,1.0,1.0,0.0,0.0

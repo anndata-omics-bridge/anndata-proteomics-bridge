@@ -20,8 +20,10 @@ from anndata_proteomics.rules.registry import (
     iter_packaged_rules,
     packaged_rules_root,
 )
+from anndata_proteomics.rules.schema import ParseRule, ParseRuleDocument
 
-SCHEMA_PATH = packaged_rules_root() / "_schema" / "parse_rule.schema.json"
+SCHEMA_ROOT = packaged_rules_root() / "_schema"
+SCHEMA_PATH = SCHEMA_ROOT / "parse_rule.schema.json"
 
 
 _VALID_LONG = {
@@ -56,6 +58,22 @@ def _locator_id(locator: RuleLocator) -> str:
 def test_exported_schema_is_valid_draft_2020_12() -> None:
     """The generated parse_rule.schema.json must itself be a well-formed JSON Schema."""
     jsonschema.Draft202012Validator.check_schema(_load_schema())
+
+
+@pytest.mark.parametrize(
+    ("filename", "model"),
+    [
+        ("parse_rule.schema.json", ParseRule),
+        ("parse_rule_document.schema.json", ParseRuleDocument),
+    ],
+)
+def test_packaged_json_schema_matches_models(
+    filename: str,
+    model: type[ParseRule] | type[ParseRuleDocument],
+) -> None:
+    """The packaged schemas are exact semantic exports of their Pydantic models."""
+    expected = json.loads((SCHEMA_ROOT / filename).read_text(encoding="utf-8"))
+    assert model.model_json_schema() == expected
 
 
 @pytest.mark.parametrize(

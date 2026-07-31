@@ -9,6 +9,7 @@ from typing import IO, NamedTuple
 
 import pandas as pd
 
+from anndata_proteomics.modifications import unimod_registry
 from anndata_proteomics.params.model import MassTolerance, Parameters
 from anndata_proteomics.params.parsers._common import lookup_mass_mod, read_text
 
@@ -31,15 +32,8 @@ _DIANN_QUANT = {
     4: "Robust LC (high precision)",
 }
 
-# Common mass shifts mapped to modification names (ProForma notation).
-_MASS_TO_MOD = {
-    57.02146: "Carbamidomethyl",
-    15.9949: "Oxidation",
-    42.0106: "Acetyl",
-    79.96633: "Phospho",
-    114.04293: "GG",
-    -17.0265: "Pyro-glu",
-    -18.0106: "Pyro-glu",
+# FragPipe-specific labels that are outside APB's small canonical registry.
+_VENDOR_MASS_TO_MOD = {
     4.025107: "Label:2H(4)",
     6.020129: "Label:13C(6)",
     8.014199: "Label:13C(6)15N(2)",
@@ -50,7 +44,10 @@ _MASS_TOLERANCE = 0.001
 
 def _lookup_mod_name(mass: float) -> str | None:
     """Look up a modification name by mass shift within tolerance."""
-    return lookup_mass_mod(mass, _MASS_TO_MOD, tol=_MASS_TOLERANCE)
+    canonical = unimod_registry.find_by_mass(mass, tolerance=_MASS_TOLERANCE)
+    if canonical is not None:
+        return canonical.name
+    return lookup_mass_mod(mass, _VENDOR_MASS_TO_MOD, tol=_MASS_TOLERANCE)
 
 
 def _parse_fixed_mods(raw: str) -> str:

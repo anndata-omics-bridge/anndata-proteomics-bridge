@@ -1,238 +1,279 @@
-"""Stage-owned descriptive summaries for converted AnnData and MuData objects."""
+"""Lightweight presentation views over converted AnnData and MuData containers."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
+from anndata.io import read_elem
 
-from anndata_proteomics._matrix_types import is_sparse_matrix, named_layers
+from anndata_proteomics._matrix_types import named_layers
 from anndata_proteomics.params.anndata_io import read_search_parameters
-from anndata_proteomics.rules.schema import ColumnGroup, ParseRule
+from anndata_proteomics.rules.anndata_io import read_stored_rule
+from anndata_proteomics.rules.schema import ColumnGroup
 
 _NAMESPACE = "anndata_proteomics"
-_SUMMARY_KEY = "descriptive_summary"
-_SCHEMA_VERSION = "5"
-_FASTA_ANNOTATION_KEY = "fasta"
-_FASTA_VALIDATION_KEY = "fasta_validation"
-_FASTA_MATCHED_KEY = "peptide_in_fasta"
-_FASTA_PROTEIN_COUNT = "fasta_matching_protein_count"
+_VIEW_SCHEMA_VERSION = "1"
+_CONVERSION_FIELDS = (
+    "schema_version",
+    "quantification_level",
+    "software_name",
+    "rule_selection_method",
+    "search_parameters_path",
+    "search_parameters_version_status",
+)
 
 
-def store_quantification_summary(obj: Any) -> None:
-    """Compute and store the conversion-owned summary component.
+@dataclass(frozen=True)
+class _AnnDataMetadata:
+    """The AnnData fields needed by :func:`describe`, without quantitative values."""
 
-    AnnData quantification metrics are computed from its final layers. For MuData,
-    modalities that do not already carry that component are summarized and the
-    container-level shape and modality index are stored on the MuData object.
-    """
-    if _is_mudata(obj):
-        for modality in obj.mod.values():
-            payload = _read_payload(modality)
-            if "quantification" not in payload:
-                _store_quantification_summary_anndata(modality)
-        payload = _read_payload(obj)
-        payload.update(
-            {
-                "schema_version": _SCHEMA_VERSION,
-                "container_type": "mudata",
-                "quantification": {
-                    "n_runs": int(obj.n_obs),
-                    "n_features": int(obj.n_vars),
-                    "modalities": list(obj.mod),
-                },
-            }
-        )
-        _write_payload(obj, payload)
-        return
-    _store_quantification_summary_anndata(obj)
+    n_obs: int
+    n_vars: int
+    layers: dict[str, None]
+    uns: dict[str, Any]
 
 
-def store_annotation_summary(
-    obj: Any,
-    *,
-    fields: Sequence[str],
-    n_annotated_runs: int,
-) -> None:
-    """Merge a compact sample-annotation component without recomputing conversion metrics."""
-    targets = (obj, *obj.mod.values()) if _is_mudata(obj) else (obj,)
-    for target in targets:
-        payload = _read_payload(target)
-        payload.setdefault("schema_version", _SCHEMA_VERSION)
-        payload.setdefault(
-            "container_type",
-            "mudata" if _is_mudata(target) else "anndata",
-        )
-        payload["annotation"] = {
-            "annotated_run_count": int(n_annotated_runs),
-            "fields": list(fields),
-            "group_counts": {
-                field: int(target.obs[field].nunique(dropna=True)) for field in fields
-            },
-        }
-        _write_payload(target, payload)
+@dataclass(frozen=True)
+class _MuDataMetadata:
+    """The MuData fields needed by :func:`describe`, without quantitative values."""
 
-
-def store_fasta_summary(obj: Any) -> None:
-    """Merge a small level-specific FASTA component into each applicable modality."""
-    targets = obj.mod.values() if _is_mudata(obj) else (obj,)
-    for target in targets:
-        fasta_summary = _fasta_summary(target)
-        if fasta_summary is None:
-            continue
-        payload = _read_payload(target)
-        payload.setdefault("schema_version", _SCHEMA_VERSION)
-        payload.setdefault("container_type", "anndata")
-        payload["fasta"] = fasta_summary
-        _write_payload(target, payload)
-
-
-def _fasta_summary(target: Any) -> dict[str, int] | None:
-    validation = target.varm.get(_FASTA_VALIDATION_KEY)
-    if validation is not None and _FASTA_PROTEIN_COUNT in validation.columns:
-        protein_counts = np.asarray(validation[_FASTA_PROTEIN_COUNT])
-        matched = (
-            np.asarray(validation[_FASTA_MATCHED_KEY])
-            if _FASTA_MATCHED_KEY in validation.columns
-            else protein_counts > 0
-        )
-        return {
-            "feature_count": int(target.n_vars),
-            "matched_feature_count": int(np.count_nonzero(matched)),
-            "proteotypic_feature_count": int(np.count_nonzero(protein_counts == 1)),
-        }
-
-    annotation = target.varm.get(_FASTA_ANNOTATION_KEY)
-    if annotation is None:
-        return None
-    annotated = np.asarray(annotation.notna().any(axis=1))
-    return {
-        "feature_count": int(target.n_vars),
-        "annotated_feature_count": int(np.count_nonzero(annotated)),
-    }
+    n_obs: int
+    n_vars: int
+    mod: dict[str, _AnnDataMetadata]
+    uns: dict[str, Any]
 
 
 def describe(obj: Any) -> dict[str, Any]:
-    """Return the descriptive summary for an in-memory AnnData or MuData.
-
-    Newly converted objects use their stored stage-owned components. For legacy
-    AnnData objects without a stored quantification component, that component is
-    computed from the layers in memory without mutating the object.
-    """
+    """Return a JSON-compatible view without scanning ``X`` or quantitative layers."""
     if _is_mudata(obj):
-        payload = _read_payload(obj)
-        payload.setdefault("schema_version", _SCHEMA_VERSION)
-        payload.setdefault("container_type", "mudata")
-        payload.setdefault(
-            "quantification",
-            {
+        result = {
+            "schema_version": _VIEW_SCHEMA_VERSION,
+            "container_type": "mudata",
+            "quantification": {
                 "n_runs": int(obj.n_obs),
                 "n_features": int(obj.n_vars),
                 "modalities": list(obj.mod),
             },
-        )
-        payload["modalities"] = {name: describe(modality) for name, modality in obj.mod.items()}
-        return payload
+            "modalities": {name: describe(modality) for name, modality in obj.mod.items()},
+        }
+        _add_metadata_views(result, obj)
+        return result
 
-    payload = _read_payload(obj)
-    payload.setdefault("schema_version", _SCHEMA_VERSION)
-    payload.setdefault("container_type", "anndata")
-    if "quantification" not in payload:
-        payload["quantification"] = _quantification_summary(obj)
-    if "column_mapping" not in payload:
-        column_mapping = _column_mapping(obj)
-        if column_mapping is not None:
-            payload["column_mapping"] = column_mapping
-    proteobench = obj.uns.get("proteobench")
-    if isinstance(proteobench, Mapping) and "scores" in proteobench:
-        payload["proteobench"] = _to_json_compatible(proteobench)
-    return payload
+    metadata = obj.uns.get(_NAMESPACE) or {}
+    params = read_search_parameters(obj)
+    result = {
+        "schema_version": _VIEW_SCHEMA_VERSION,
+        "container_type": "anndata",
+        "quantification": {
+            "n_runs": int(obj.n_obs),
+            "n_features": int(obj.n_vars),
+            "level": metadata.get("quantification_level"),
+            "software_name": metadata.get("software_name"),
+            "software_version": params.software_version if params is not None else None,
+            "layers": [str(name) for name in named_layers(obj)],
+        },
+    }
+    column_mapping = _column_mapping(obj)
+    if column_mapping is not None:
+        result["column_mapping"] = column_mapping
+    _add_metadata_views(result, obj)
+    return result
 
 
 def describe_path(path: Path | str, modality: str | None = None) -> dict[str, Any]:
-    """Read and describe one converted container or one MuData modality.
-
-    Args:
-        path: Path to an APB ``.h5ad`` or ``.h5mu`` container.
-        modality: Optional modality name. Valid only for MuData inputs.
-
-    Returns:
-        A JSON-compatible descriptive-summary dictionary.
-
-    Raises:
-        ValueError: The suffix is unsupported or a modality target is invalid.
-    """
+    """Describe one HDF5 container without loading ``X`` or layer datasets."""
     result_path = Path(path).expanduser()
     if result_path.suffix == ".h5ad":
         if modality is not None:
             raise ValueError("--modality applies only to MuData (.h5mu) inputs")
-        import anndata as ad
-
-        obj = ad.read_h5ad(result_path, backed="r")
-        try:
-            return describe(obj)
-        finally:
-            obj.file.close()
+        with h5py.File(result_path, "r") as store:
+            return describe(_read_anndata_metadata(store))
 
     if result_path.suffix == ".h5mu":
-        import mudata
-
-        with mudata.set_options(pull_on_update=False):
-            obj = mudata.read_h5mu(result_path, backed="r")
-            try:
-                if modality is None:
-                    return describe(obj)
-                if modality not in obj.mod:
-                    raise ValueError(
-                        f"modality {modality!r} not in MuData; modalities: {list(obj.mod)}"
-                    )
-                return describe(obj.mod[modality])
-            finally:
-                _close_mudata(obj)
+        with h5py.File(result_path, "r") as store:
+            obj = _read_mudata_metadata(store)
+            if modality is None:
+                return describe(obj)
+            if modality not in obj.mod:
+                raise ValueError(
+                    f"modality {modality!r} not in MuData; modalities: {list(obj.mod)}"
+                )
+            return describe(obj.mod[modality])
 
     raise ValueError(f"unsupported converted result type: {result_path}")
 
 
-def _store_quantification_summary_anndata(obj: Any) -> None:
-    payload = _read_payload(obj)
-    payload.update(
-        {
-            "schema_version": _SCHEMA_VERSION,
-            "container_type": "anndata",
-            "quantification": _quantification_summary(obj),
-        }
+def _read_anndata_metadata(store: h5py.Group | h5py.File) -> _AnnDataMetadata:
+    """Read only shape, layer names, and APB-owned ``uns`` metadata."""
+    shape = _matrix_shape(store.get("X"))
+    if shape is None:
+        shape = (_frame_length(store, "obs"), _frame_length(store, "var"))
+    layers = store.get("layers")
+    layer_names = list(layers) if isinstance(layers, h5py.Group) else []
+    return _AnnDataMetadata(
+        n_obs=shape[0],
+        n_vars=shape[1],
+        layers={str(name): None for name in layer_names},
+        uns=_read_apb_namespace(store),
     )
-    column_mapping = _column_mapping(obj)
-    if column_mapping is None:
-        payload.pop("column_mapping", None)
-    else:
-        payload["column_mapping"] = column_mapping
-    _write_payload(obj, payload)
 
 
-def _quantification_summary(obj: Any) -> dict[str, Any]:
-    metadata = obj.uns.get(_NAMESPACE) or {}
-    params = read_search_parameters(obj)
-    return {
-        "n_runs": int(obj.n_obs),
-        "n_features": int(obj.n_vars),
-        "level": metadata.get("quantification_level"),
-        "software_name": metadata.get("software_name"),
-        "software_version": params.software_version if params is not None else None,
-        "layers": {
-            str(name): _layer_summary(layer, n_obs=obj.n_obs)
-            for name, layer in named_layers(obj).items()
-        },
+def _read_mudata_metadata(store: h5py.File) -> _MuDataMetadata:
+    """Read the root and modality metadata needed for a MuData view."""
+    modalities = store.get("mod")
+    if not isinstance(modalities, h5py.Group):
+        raise ValueError("invalid MuData container: missing 'mod' group")
+    order = _modality_order(modalities)
+    mod = {name: _read_anndata_metadata(_require_group(modalities, name)) for name in order}
+    return _MuDataMetadata(
+        n_obs=_frame_length(store, "obs"),
+        n_vars=_frame_length(store, "var"),
+        mod=mod,
+        uns=_read_apb_namespace(store),
+    )
+
+
+def _matrix_shape(element: h5py.Group | h5py.Dataset | Any | None) -> tuple[int, int] | None:
+    """Return an encoded dense/sparse matrix shape without reading its values."""
+    if isinstance(element, h5py.Dataset):
+        if len(element.shape) != 2:
+            raise ValueError(f"invalid AnnData X shape: {element.shape}")
+        return int(element.shape[0]), int(element.shape[1])
+    if isinstance(element, h5py.Group):
+        shape = element.attrs.get("shape")
+        if shape is not None and len(shape) == 2:
+            return int(shape[0]), int(shape[1])
+    return None
+
+
+def _frame_length(store: h5py.Group | h5py.File, axis: str) -> int:
+    """Read an encoded dataframe's row count from index dataset shapes."""
+    frame = store.get(axis)
+    if not isinstance(frame, h5py.Group):
+        raise ValueError(f"invalid container: missing {axis!r} dataframe")
+    raw_index = frame.attrs.get("_index")
+    if isinstance(raw_index, bytes):
+        raw_index = raw_index.decode("utf-8")
+    if not isinstance(raw_index, str):
+        raise ValueError(f"invalid container: {axis!r} dataframe has no string index key")
+    index = frame.get(raw_index)
+    length = _encoded_vector_length(index)
+    if length is None:
+        raise ValueError(f"invalid container: cannot determine {axis!r} dataframe length")
+    return length
+
+
+def _encoded_vector_length(element: h5py.Group | h5py.Dataset | Any | None) -> int | None:
+    """Return a one-dimensional encoded element's length from HDF5 metadata."""
+    if isinstance(element, h5py.Dataset):
+        return int(element.shape[0]) if element.shape else None
+    if isinstance(element, h5py.Group):
+        for key in ("values", "codes", "mask"):
+            child = element.get(key)
+            length = _encoded_vector_length(child)
+            if length is not None:
+                return length
+    return None
+
+
+def _read_apb_namespace(store: h5py.Group | h5py.File) -> dict[str, Any]:
+    """Decode only APB's ``uns`` namespace, never another HDF5 slot."""
+    uns = store.get("uns")
+    if not isinstance(uns, h5py.Group):
+        return {}
+    namespace = uns.get(_NAMESPACE)
+    if namespace is None:
+        return {}
+    if not isinstance(namespace, (h5py.Group, h5py.Dataset)):
+        raise ValueError(f"invalid uns[{_NAMESPACE!r}] HDF5 element: {type(namespace).__name__}")
+    decoded = read_elem(namespace)
+    if not isinstance(decoded, Mapping):
+        raise ValueError(
+            f"invalid uns[{_NAMESPACE!r}] value: expected mapping, got {type(decoded).__name__}"
+        )
+    return {_NAMESPACE: dict(decoded)}
+
+
+def _modality_order(modalities: h5py.Group) -> list[str]:
+    """Return stored MuData modality order, with group order as a fallback."""
+    raw = modalities.attrs.get("mod-order")
+    if raw is None:
+        return list(modalities)
+    values = raw.tolist() if isinstance(raw, np.ndarray) else list(raw)
+    return [value.decode("utf-8") if isinstance(value, bytes) else str(value) for value in values]
+
+
+def _require_group(parent: h5py.Group, key: str) -> h5py.Group:
+    value = parent.get(key)
+    if not isinstance(value, h5py.Group):
+        raise ValueError(f"invalid MuData container: modality {key!r} is not a group")
+    return value
+
+
+def _add_metadata_views(result: dict[str, Any], obj: Any) -> None:
+    namespace = obj.uns.get(_NAMESPACE)
+    if not isinstance(namespace, Mapping):
+        return
+
+    conversion = {
+        field: _to_json_compatible(namespace[field])
+        for field in _CONVERSION_FIELDS
+        if field in namespace
     }
+    if conversion:
+        result["conversion"] = conversion
+
+    params = read_search_parameters(obj)
+    if params is not None:
+        result["search_parameters"] = params.model_dump(mode="json")
+
+    annotations = _annotation_provenance(namespace)
+    if annotations:
+        result["annotations"] = annotations
+
+    qc = _decode_json_value(namespace.get("qc"))
+    if qc is not None:
+        result["qc"] = qc
+
+    proteobench = namespace.get("proteobench")
+    if isinstance(proteobench, Mapping) and "scores" in proteobench:
+        result["proteobench"] = _to_json_compatible(proteobench)
+
+
+def _annotation_provenance(namespace: Mapping[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    obs = _decode_json_value(namespace.get("obs_annotations_json"))
+    if obs:
+        result["obs"] = obs
+    var = _decode_json_value(namespace.get("var_annotations_json"))
+    if var:
+        result["var"] = var
+    fasta_config = _decode_json_value(namespace.get("fasta_config"))
+    if fasta_config is not None:
+        result["fasta_config"] = fasta_config
+    return result
+
+
+def _decode_json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        return _to_json_compatible(json.loads(value))
+    return _to_json_compatible(value)
 
 
 def _column_mapping(obj: Any) -> dict[str, Any] | None:
     """Describe where the effective rule placed vendor and computed columns."""
-    rule = _stored_rule(obj)
+    rule = read_stored_rule(obj)
     if rule is None:
         return None
 
@@ -260,24 +301,6 @@ def _column_mapping(obj: Any) -> dict[str, Any] | None:
     }
 
 
-def _stored_rule(obj: Any) -> ParseRule | None:
-    """Return a valid stored effective rule, or ``None`` for legacy metadata."""
-    namespace = obj.uns.get(_NAMESPACE)
-    if not isinstance(namespace, Mapping):
-        return None
-    raw = namespace.get("rule_json")
-    try:
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        if isinstance(raw, str):
-            return ParseRule.model_validate_json(raw)
-        if isinstance(raw, Mapping):
-            return ParseRule.model_validate(dict(raw))
-    except (TypeError, UnicodeDecodeError, ValueError):
-        return None
-    return None
-
-
 def _column_group_mapping(group: ColumnGroup) -> dict[str, str]:
     """Map output column names to their vendor source or compute operation."""
     mapping = dict(group.select)
@@ -285,58 +308,8 @@ def _column_group_mapping(group: ColumnGroup) -> dict[str, str]:
     return mapping
 
 
-def _layer_summary(layer: Any, *, n_obs: int) -> dict[str, Any]:
-    values = _matrix_values(layer)
-    finite = np.isfinite(values)
-    present_per_feature = np.count_nonzero(finite, axis=0)
-    missing_per_feature = n_obs - present_per_feature
-    histogram = np.bincount(missing_per_feature, minlength=n_obs + 1)
-    observed = values[finite]
-    return {
-        "missingness_histogram": {
-            str(missing_runs): int(feature_count)
-            for missing_runs, feature_count in enumerate(histogram)
-        },
-        "summary": _numeric_summary(observed),
-    }
-
-
-def _numeric_summary(values: np.ndarray) -> dict[str, float | None]:
-    """Return the six statistics produced by R's summary() for numeric values."""
-    if not values.size:
-        return {
-            "min": None,
-            "first_quartile": None,
-            "median": None,
-            "mean": None,
-            "third_quartile": None,
-            "max": None,
-        }
-    first_quartile, median, third_quartile = np.quantile(
-        values,
-        (0.25, 0.5, 0.75),
-        method="linear",
-    )
-    return {
-        "min": float(np.min(values)),
-        "first_quartile": float(first_quartile),
-        "median": float(median),
-        "mean": float(np.mean(values)),
-        "third_quartile": float(third_quartile),
-        "max": float(np.max(values)),
-    }
-
-
-def _matrix_values(layer: Any) -> np.ndarray:
-    if hasattr(layer, "to_memory"):
-        layer = layer.to_memory()
-    if is_sparse_matrix(layer):
-        return layer.toarray()
-    return np.asarray(layer)
-
-
 def _to_json_compatible(value: Any) -> Any:
-    """Copy an HDF5-decoded mapping into ordinary JSON-compatible values."""
+    """Copy an HDF5-decoded value into ordinary JSON-compatible values."""
     if isinstance(value, Mapping):
         return {str(key): _to_json_compatible(item) for key, item in value.items()}
     if isinstance(value, np.ndarray):
@@ -350,111 +323,5 @@ def _to_json_compatible(value: Any) -> Any:
     return deepcopy(value)
 
 
-def _read_payload(obj: Any) -> dict[str, Any]:
-    namespace = obj.uns.get(_NAMESPACE) or {}
-    raw = namespace.get(_SUMMARY_KEY)
-    if raw is None:
-        return {}
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    if isinstance(raw, str):
-        payload = json.loads(raw)
-    elif isinstance(raw, Mapping):
-        payload = deepcopy(dict(raw))
-    else:
-        raise ValueError(f"invalid stored descriptive summary: {type(raw).__name__}")
-    version = payload.get("schema_version")
-    if version == "1":
-        payload = _upgrade_v1_payload(payload)
-        version = payload["schema_version"]
-    if version == "2":
-        payload = _upgrade_v2_payload(payload)
-        version = payload["schema_version"]
-    if version == "3":
-        payload = _upgrade_v3_payload(payload)
-        version = payload["schema_version"]
-    if version == "4":
-        payload = _upgrade_v4_payload(payload)
-        version = payload["schema_version"]
-    if version != _SCHEMA_VERSION:
-        raise ValueError(f"unsupported descriptive-summary schema version: {version!r}")
-    return payload
-
-
-def _upgrade_v1_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Convert present-run histogram lists into missing-run count mappings."""
-    quantification = payload.get("quantification") or {}
-    n_runs = quantification.get("n_runs")
-    if isinstance(n_runs, int):
-        for layer in (quantification.get("layers") or {}).values():
-            histogram = layer.get("missingness_histogram")
-            if isinstance(histogram, list):
-                layer["missingness_histogram"] = {
-                    str(missing_runs): int(histogram[n_runs - missing_runs])
-                    for missing_runs in range(n_runs + 1)
-                }
-    payload["schema_version"] = "2"
-    return payload
-
-
-def _upgrade_v2_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Rename generic numeric statistics and reserve unavailable legacy hinges."""
-    quantification = payload.get("quantification") or {}
-    for layer in (quantification.get("layers") or {}).values():
-        intensity = layer.pop("intensity", None)
-        if isinstance(intensity, Mapping):
-            layer["fivenum"] = {
-                "min": intensity.get("min"),
-                "lower_hinge": None,
-                "median": intensity.get("median"),
-                "upper_hinge": None,
-                "max": intensity.get("max"),
-            }
-    payload["schema_version"] = "3"
-    return payload
-
-
-def _upgrade_v3_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Rename five-number statistics and reserve unavailable summary values."""
-    quantification = payload.get("quantification") or {}
-    for layer in (quantification.get("layers") or {}).values():
-        fivenum = layer.pop("fivenum", None)
-        if isinstance(fivenum, Mapping):
-            layer["summary"] = {
-                "min": fivenum.get("min"),
-                "first_quartile": None,
-                "median": fivenum.get("median"),
-                "mean": None,
-                "third_quartile": None,
-                "max": fivenum.get("max"),
-            }
-    payload["schema_version"] = "4"
-    return payload
-
-
-def _upgrade_v4_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Advance legacy summaries; column mapping is unavailable without the object."""
-    payload["schema_version"] = _SCHEMA_VERSION
-    return payload
-
-
-def _write_payload(obj: Any, payload: dict[str, Any]) -> None:
-    obj.uns.setdefault(_NAMESPACE, {})
-    obj.uns[_NAMESPACE][_SUMMARY_KEY] = json.dumps(
-        payload,
-        allow_nan=False,
-        sort_keys=True,
-    )
-
-
 def _is_mudata(obj: Any) -> bool:
     return hasattr(obj, "mod")
-
-
-def _close_mudata(obj: Any) -> None:
-    file_manager = getattr(obj, "file", None)
-    if file_manager is not None:
-        file_manager.close()
-        return
-    for modality in obj.mod.values():
-        modality.file.close()

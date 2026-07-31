@@ -121,9 +121,29 @@ def test_long_example_validates():
 
 def test_column_role_must_name_a_declared_var_column() -> None:
     invalid = copy.deepcopy(LONG_EXAMPLE)
-    invalid["column_roles"] = {"protein_accessions": "Missing_Proteins"}
+    invalid["column_roles"] = {"fasta_accessions": "Missing_Proteins"}
     with pytest.raises(ValidationError, match="must name a declared var column"):
         _parse(invalid)
+
+
+def test_column_roles_distinguish_assignment_from_fasta_accessions() -> None:
+    document = copy.deepcopy(LONG_EXAMPLE)
+    document["column_roles"] = {
+        "protein_assignment": "Genes",
+        "fasta_accessions": "Protein_Ids",
+    }
+
+    roles = _parse(document).column_roles
+
+    assert roles is not None
+    assert roles.protein_assignment == "Genes"
+    assert roles.fasta_accessions == "Protein_Ids"
+
+
+def test_effective_rule_normalizes_missing_column_roles_to_empty_capabilities() -> None:
+    roles = _parse(LONG_EXAMPLE).column_roles
+
+    assert roles.declared() == {}
 
 
 def test_wide_example_validates():

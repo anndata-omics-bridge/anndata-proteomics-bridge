@@ -21,7 +21,9 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from cyclopts import App
+from loguru import logger
 
+from anndata_proteomics._logging import configure_default_sink
 from anndata_proteomics.annotation.loader import load_annotation
 from anndata_proteomics.proteobench.config import load_module_settings
 from anndata_proteomics.test_data import TEST_DATA_DIR
@@ -195,12 +197,15 @@ def get_raw_data(
     for folder in matching_folders:
         extract_dir = f"{output_directory}/{folder}"
         if os.path.exists(extract_dir) and os.listdir(extract_dir):
-            print(f"Folder already exists and is not empty, skipping download: {extract_dir}")
+            logger.info(
+                "folder already exists and is not empty; skipping download: {}",
+                extract_dir,
+            )
             hash_vis_dir[folder] = extract_dir
             continue
 
         folder_url = f"{base_url}{folder}/"
-        print(f"Processing folder: {folder_url}")
+        logger.info("processing folder: {}", folder_url)
 
         folder_response = requests.get(folder_url)
         folder_response.raise_for_status()
@@ -209,7 +214,7 @@ def get_raw_data(
 
         for zip_file in zip_files:
             zip_url = f"{folder_url}{zip_file}"
-            print(f"Downloading: {zip_url}")
+            logger.info("downloading: {}", zip_url)
 
             zip_response = requests.get(zip_url, stream=True)
             zip_response.raise_for_status()
@@ -222,7 +227,7 @@ def get_raw_data(
             os.makedirs(extract_dir, exist_ok=True)
             with zipfile.ZipFile(zip_filename, "r") as zip_ref:
                 _extract_zip(zip_ref, Path(extract_dir))
-                print(f"Extracted contents to: {extract_dir}")
+                logger.info("extracted contents to: {}", extract_dir)
 
             os.remove(zip_filename)
             hash_vis_dir[folder] = extract_dir
@@ -258,10 +263,9 @@ def _download_module_jsons(repo_url: str, json_dir_root: Path) -> Path:
             target_json_dir.replace(previous_json_dir)
         try:
             extracted_dir.replace(target_json_dir)
-        except BaseException:
+        finally:
             if previous_json_dir.exists() and not target_json_dir.exists():
                 previous_json_dir.replace(target_json_dir)
-            raise
 
     if not target_json_dir.is_dir():
         raise RuntimeError(f"Expected extracted folder not found: {target_json_dir}")
@@ -286,18 +290,23 @@ def catalog(
     for module_key in CONFIGS:
         repo_url = CONFIGS[module_key]["repo_url"]
         repo_name = repo_url.split("/")[-5]
-        print(f"[{module_key}] downloading {repo_url}")
+        logger.info("[{}] downloading {}", module_key, repo_url)
         metadata_dir = _download_module_jsons(repo_url, cache_dir)
 
         json_files = sorted(metadata_dir.glob("*.json"))
-        print(f"[{module_key}] read {len(json_files)} JSON file(s) from {metadata_dir}")
+        logger.info(
+            "[{}] read {} JSON file(s) from {}",
+            module_key,
+            len(json_files),
+            metadata_dir,
+        )
 
         for jf in json_files:
             try:
                 with open(jf, encoding="utf-8") as f:
                     data = json.load(f)
             except json.JSONDecodeError as e:
-                print(f"  skip {jf.name}: {e}")
+                logger.warning("skipping invalid metadata {}: {}", jf.name, e)
                 continue
 
             rows.append(
@@ -316,18 +325,19 @@ def catalog(
     df = pd.DataFrame(rows)
     df.to_csv(catalog_csv, index=False)
 
-    print(f"\nTotal rows: {len(df)}")
-    print("\nRows per module:")
-    print(df["module"].value_counts().to_string())
-    print("\nUnique (software_name, software_version) per module:")
+    logger.info("total rows: {}", len(df))
+    logger.info("rows per module:\n{}", df["module"].value_counts().to_string())
     unique_counts = (
         df[["module", "software_name", "software_version"]]
         .drop_duplicates()
         .groupby("module")
         .size()
     )
-    print(unique_counts.to_string())
-    print(f"\nWritten to {catalog_csv}")
+    logger.info(
+        "unique (software_name, software_version) per module:\n{}",
+        unique_counts.to_string(),
+    )
+    logger.info("written to {}", catalog_csv)
 
 
 @app.command
@@ -353,27 +363,28 @@ def select(
     df = pd.read_csv(catalog_csv)
     n_input = len(df)
 
-    print("Available catalog rows per module:")
-    print(df["module"].value_counts().to_string())
+    logger.info("available catalog rows per module:\n{}", df["module"].value_counts().to_string())
 
     if module is not None:
         df = df[df["module"] == module]
 
     n_considered = len(df)
     selected, n_missing, rule = _select_rows(df, strategy)
-    print(f"\nSelection rule: {rule}")
+    logger.info("selection rule: {}", rule)
     if module is not None:
-        print(f"Module filter:   {module}")
+        logger.info("module filter: {}", module)
 
     selected.to_csv(selection_csv, index=False)
 
-    print(f"Catalog rows:         {n_input}")
-    print(f"Rows considered:      {n_considered}")
-    print(f"Dropped (nr_feature NA): {n_missing}")
-    print(f"Selected rows:        {len(selected)}")
-    print("\nSelected rows per module:")
-    print(selected["module"].value_counts().to_string())
-    print(f"\nWritten to {selection_csv}")
+    logger.info("catalog rows: {}", n_input)
+    logger.info("rows considered: {}", n_considered)
+    logger.info("dropped (nr_feature NA): {}", n_missing)
+    logger.info("selected rows: {}", len(selected))
+    logger.info(
+        "selected rows per module:\n{}",
+        selected["module"].value_counts().to_string(),
+    )
+    logger.info("written to {}", selection_csv)
 
 
 def _select_rows(
@@ -465,14 +476,20 @@ def download(
         hash_to_dir.update(already_present)
 
         if len(df_to_download) > 0:
-            print(
-                f"[{repo_name}] downloading {len(df_to_download)} dataset(s) "
-                f"(already present: {len(already_present)})"
+            logger.info(
+                "[{}] downloading {} dataset(s) (already present: {})",
+                repo_name,
+                len(df_to_download),
+                len(already_present),
             )
             new_dirs = get_raw_data(df_to_download, output_directory=str(module_output_dir))
             hash_to_dir.update(new_dirs)
         else:
-            print(f"[{repo_name}] all {len(group)} dataset(s) already present — skipping")
+            logger.info(
+                "[{}] all {} dataset(s) already present; skipping",
+                repo_name,
+                len(group),
+            )
 
     out_rows = []
     for row in df.to_dict(orient="records"):
@@ -498,10 +515,9 @@ def download(
     out_df = pd.DataFrame(out_rows)
     out_df.to_csv(manifest_csv, index=False)
 
-    print(f"\nTotal rows:         {len(out_df)}")
-    print("\nStatus breakdown:")
-    print(out_df["status"].value_counts().to_string())
-    print(f"\nWritten to {manifest_csv}")
+    logger.info("total rows: {}", len(out_df))
+    logger.info("status breakdown:\n{}", out_df["status"].value_counts().to_string())
+    logger.info("written to {}", manifest_csv)
 
 
 @app.command
@@ -514,7 +530,7 @@ def fasta(*, fasta_dir: Path = TEST_DATA_DIR / "fasta") -> None:
     fasta_dir = fasta_dir.resolve()
     fasta_dir.mkdir(parents=True, exist_ok=True)
     for url in FASTA_URLS:
-        print(f"Downloading {url}")
+        logger.info("downloading {}", url)
         response = requests.get(url)
         response.raise_for_status()
         with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
@@ -522,7 +538,7 @@ def fasta(*, fasta_dir: Path = TEST_DATA_DIR / "fasta") -> None:
     macos_metadata = fasta_dir / "__MACOSX"
     if macos_metadata.exists():
         shutil.rmtree(macos_metadata)
-    print(f"Extracted FASTAs to {fasta_dir}")
+    logger.info("extracted FASTAs to {}", fasta_dir)
 
 
 @app.command
@@ -534,7 +550,7 @@ def annotations(
     annotation_dir = annotation_dir.resolve()
     annotation_dir.mkdir(parents=True, exist_ok=True)
     for module, url in ANNOTATION_URLS.items():
-        print(f"Downloading {module}: {url}")
+        logger.info("downloading {}: {}", module, url)
         response = requests.get(url)
         response.raise_for_status()
         destination = annotation_dir / f"{module}.toml"
@@ -546,7 +562,11 @@ def annotations(
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)
-    print(f"Downloaded {len(ANNOTATION_URLS)} module annotations to {annotation_dir}")
+    logger.info(
+        "downloaded {} module annotations to {}",
+        len(ANNOTATION_URLS),
+        annotation_dir,
+    )
 
 
 @app.command
@@ -557,9 +577,9 @@ def clean(*, data_dir: Path = TEST_DATA_DIR) -> None:
         data_dir: Root containing the generated cache, FASTAs, catalogs, and manifests.
     """
     removed = clean_generated_data(data_dir.resolve())
-    print(f"Removed {len(removed)} generated path(s).")
+    logger.info("removed {} generated path(s)", len(removed))
     for path in removed:
-        print(f"  {path}")
+        logger.info("removed {}", path)
 
 
 def clean_generated_data(test_data_dir: Path) -> list[Path]:
@@ -584,75 +604,9 @@ def clean_generated_data(test_data_dir: Path) -> list[Path]:
     return removed
 
 
-def build_database(results_dir: Path) -> pd.DataFrame:
-    """Legacy: walk `results_dir` for locally-present module/hash folders and pair
-    each intermediate_hash with its input_file.txt. Kept for the future `download`
-    subcommand — not used by `catalog`.
-    """
-    rows = []
-
-    for mod_dir in sorted(results_dir.iterdir()):
-        if not mod_dir.is_dir():
-            continue
-        module = mod_dir.name
-
-        main_dirs = list(mod_dir.glob("*-main"))
-        if not main_dirs:
-            continue
-        json_dir = main_dirs[0]
-
-        for hash_dir in sorted(mod_dir.iterdir()):
-            if not hash_dir.is_dir() or hash_dir.name.endswith("-main"):
-                continue
-
-            intermediate_hash = hash_dir.name
-            inp = hash_dir / "input_file.txt"
-            jp = json_dir / f"{intermediate_hash}.json"
-
-            if not jp.exists():
-                rows.append(
-                    {
-                        "module": module,
-                        "intermediate_hash": intermediate_hash,
-                        "software_name": "",
-                        "software_version": "",
-                        "input_file_path": "",
-                        "input_file_size_bytes": None,
-                        "status": "json_missing",
-                    }
-                )
-                continue
-
-            meta = json.load(open(jp))
-            software = meta.get("software_name", "")
-            version = meta.get("software_version", "")
-
-            if inp.exists():
-                rel_path = inp.relative_to(results_dir)
-                size = inp.stat().st_size
-                status = "ok"
-            else:
-                rel_path = ""
-                size = None
-                status = "input_file_missing"
-
-            rows.append(
-                {
-                    "module": module,
-                    "intermediate_hash": intermediate_hash,
-                    "software_name": software,
-                    "software_version": version,
-                    "input_file_path": str(rel_path),
-                    "input_file_size_bytes": size,
-                    "status": status,
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
 def main() -> None:
     """Run the test-data command-line application."""
+    configure_default_sink()
     app()
 
 

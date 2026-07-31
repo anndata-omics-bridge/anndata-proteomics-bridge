@@ -15,8 +15,9 @@ Two distinct "parsing" concerns to keep separate:
 
 ## Module Dependency Overview
 
-Arrows mean **"imports / depends on"**. `rules` and `readers` are leaves; `converters` is the
-orchestrator that pulls everything together.
+Arrows mean **"imports / depends on"**. `modifications` and `readers` are leaves;
+`converters` is the orchestrator that pulls everything together. The parsing-model layers
+have the tested order `rules → params → modifications`; lower layers never import higher ones.
 
 **Figure:** the package dependency map. `converters` coordinates readers, rules,
 modifications, and optional parameters; the lower packages remain reusable.
@@ -27,19 +28,20 @@ flowchart TD
     converters --> modifications
     converters --> rules
     converters --> readers
+    rules --> params
+    rules --> modifications
     params --> modifications
-    modifications --> rules
     modifications --> unimod[(unimod_registry.toml)]
 
     classDef leaf fill:#eef2ff,stroke:#9aa7d8;
-    class rules,readers leaf;
+    class modifications,readers leaf;
 ```
 
 | Module | One-line role |
 |---|---|
 | `params/` | Vendor parameter-file → typed `Parameters`. |
-| `modifications/` | Vendor modified-sequence → ProForma + modification models. |
-| `rules/` | The JSON parsing-rule schema (`ParseRule`) + its loader/registry. |
+| `modifications/` | Parsing-rule modification models + vendor modified-sequence → ProForma. |
+| `rules/` | Compose the JSON parsing-rule schema (`ParseRule`) + its loader/registry. |
 | `readers/` | Read a tabular quant file → `DataFrame`. |
 | `converters/` | `DataFrame` + `ParseRule` → `AnnData`. |
 
@@ -119,7 +121,10 @@ classDiagram
 - **ProForma normalization:** `apply_rules.apply_rule(seq, rule)` turns a vendor
   modified-sequence string (e.g. `PEPM(ox)TIDE`, `_[ac]PEP…`) into a canonical ProForma string
   plus localized `ModificationOccurrence`s. `pipeline.py` builds the `ModificationRule` from a
-  rules `Modifications` section, resolving each `MapEntry` against the bundled `unimod_registry`.
+  validated `schema.Modifications` section, resolving each `MapEntry` against the bundled
+  `unimod_registry`.
+- **Parsing-rule models:** `schema.py` owns the discriminated `Modifications` rule family:
+  `TokenRegexModifications`, `SiteListModifications`, and their `ModificationMapEntry`s.
 - **Searched modifications:** `SearchedModification` models fixed/variable mods from parameter
   files, for SDRF export (`sdrf.py`).
 - **Rendering:** `proforma.py` renders the ProForma string.
@@ -180,18 +185,20 @@ classDiagram
     SearchedModification --> ModType
     ModifiedSequence *-- "*" ModificationOccurrence : occurrences
     ModificationRule *-- "*" MapEntry : entries
-    note for ModificationRule "apply_rule(seq, rule) returns a ModifiedSequence. pipeline._to_runtime_rule builds the rule from a rules Modifications section, filling each MapEntry from the UnimodEntry registry."
+    note for ModificationRule "apply_rule(seq, rule) returns a ModifiedSequence. pipeline._to_runtime_rule builds the runtime rule from modifications.schema, filling each MapEntry from the UnimodEntry registry."
 ```
 
 ---
 
 ## `rules/` — JSON Parsing-Rule Schema
 
-**Defines and loads the JSON parsing-rule schema** that tells the converters how to turn a
-vendor table into AnnData. A leaf subpackage (imports no other subpackage).
+**Composes and loads the JSON parsing-rule schema** that tells the converters how to turn a
+vendor table into AnnData. It imports the lower `params` and `modifications` model layers;
+neither imports `rules`.
 
 - `schema.py` — Pydantic `ParseRuleDocument` source documents and merged `ParseRule`
-  effective rules, with cross-field validation.
+  effective rules, with cross-field validation. Modification fields use the models owned by
+  `modifications/schema.py`.
 - `loader.py` — parse one self-contained software-version document, merge its base
   with a selected level, and validate every effective rule.
 - `registry.py` — find packaged document-level locators by `(software, level, version)`.
@@ -233,6 +240,7 @@ classDiagram
         +dict categories
     }
     class TokenRegexModifications {
+        <<from modifications/>>
         +str source_column
         +str parser
         +str output_column
@@ -253,6 +261,7 @@ classDiagram
         +str label_column
     }
     class ModificationMapEntry {
+        <<from modifications/>>
         +str token
         +str accession
     }
@@ -349,9 +358,10 @@ sequenceDiagram
     participant Common as params.parsers._common
     participant Model as params.model.Parameters
 
-    Caller->>Reg: parse_params(path, software)
-    Reg->>V: get_parser(software) then extract_params(source)
-    V->>Common: read_text / read_lines(source)
+    Caller->>Reg: parse_params(source or source tuple, software)
+    Reg->>Reg: validate vendor source count
+    Reg->>V: adapt to native extract_params(...) signature
+    V->>Common: read_text / read_lines(each source)
     Common-->>V: text / lines
     V->>V: vendor parse (regex, yaml, json, toml, xml)
     V->>Model: build Parameters from fields

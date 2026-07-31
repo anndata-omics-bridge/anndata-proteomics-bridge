@@ -155,9 +155,7 @@ def test_export_schema_writes_file() -> None:
     assert document_schema.exists()
 
 
-def test_convert_with_explicit_rule_config_writes_h5ad(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_convert_with_explicit_rule_config_writes_h5ad(tmp_path: Path) -> None:
     # Synthesise a tiny long DataFrame matching a stripped-down rule.
     import pandas as pd
 
@@ -180,27 +178,21 @@ def test_convert_with_explicit_rule_config_writes_h5ad(
     stale.write_text("stale")
     params_path = tmp_path / "params.txt"
     params_path.write_text("unregistered tool parameters")
-    rc = convert(
-        data_path,
-        "ion",
-        params=params_path,
-        rule_config=rule_path,
-        output=output_base,
-    )
-    err = capsys.readouterr().err
-    assert rc == 0
-    assert output.exists()
-    assert not stale.exists()
-    assert "wrote" in err
-    import anndata as ad
-
-    metadata = ad.read_h5ad(output).uns["anndata_proteomics"]
-    assert "descriptive_summary" in metadata
-    assert metadata["rule_selection_method"] == "rule_config"
-    assert metadata["search_parameters_version_status"] == "parse_error"
+    with pytest.raises(KeyError, match="no parameter parser"):
+        convert(
+            data_path,
+            "ion",
+            params=params_path,
+            rule_config=rule_path,
+            output=output_base,
+        )
+    assert not output.exists()
+    assert stale.exists()
 
     without_params = tmp_path / "without_params"
     assert convert(data_path, "ion", rule_config=rule_path, output=without_params) == 0
+    import anndata as ad
+
     no_params_metadata = ad.read_h5ad(without_params.with_suffix(".h5ad")).uns["anndata_proteomics"]
     assert no_params_metadata["rule_selection_method"] == "rule_config"
     assert "search_parameters_version_status" not in no_params_metadata

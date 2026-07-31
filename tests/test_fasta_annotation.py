@@ -1,7 +1,5 @@
 """Tests for the FASTA → protein-annotation DataFrame builder."""
 
-# ruff: noqa: E501 - FASTA fixture headers are intentionally stored verbatim.
-
 from __future__ import annotations
 
 from io import StringIO
@@ -10,10 +8,12 @@ import numpy as np
 import pytest
 
 from anndata_proteomics.fasta.annotation import (
+    FastaAnnotationConfig,
     count_peptides,
     extract_gene_name,
     fasta_to_dataframe,
 )
+from anndata_proteomics.fasta.config import FastaConfig
 from anndata_proteomics.fasta.parser import iter_fasta
 
 # Fixture string lifted from prolfquapp's get_annot_from_FASTA.R (.getSequences()).
@@ -21,13 +21,15 @@ from anndata_proteomics.fasta.parser import iter_fasta
 PROLFQUAPP_FIXTURE = """\
 >sp|A0A385XJL2|YGDT_ECOLI Protein YgdT OS=Escherichia coli (strain K12) OX=83333 GN=ygdT PE=4 SV=1
 MLSTESWDNCEKPPLLFPFTALTCDETPVFSGSVLNLVAHSVDKYGIG
->sp|A5A615|YNCL_ECOLI Uncharacterized protein YncL OS=Escherichia coli (strain K12) OX=83333 GN=yncL PE=1 SV=1
+>sp|A5A615|YNCL_ECOLI Uncharacterized protein YncL OS=Escherichia coli \
+(strain K12) OX=83333 GN=yncL PE=1 SV=1
 MNVSSRTVVLINFFAAVGLFTLISMRFGWFI
 >sp|P03018|UVRD_ECOLI DNA helicase II OS=Escherichia coli (strain K12) OX=83333 GN=uvrD PE=1 SV=1
 MDVSYLLDSLNDKQREAVAAPRSNLLVLAGAGSGKTRVLVHRIAWLMSVENCSPYSIMAV
 >sp|P04982|RBSD_ECOLI D-ribose pyranase OS=Escherichia coli (strain K12) OX=83333 GN=rbsD PE=1 SV=3
 MKKGTVLNSDISSVISRLGHTDTLVVCDAGLPIPKSTTRIDMALTQGVPSFMQVLGVVTN
->sp|P04994|EX7L_ECOLI Exodeoxyribonuclease 7 large subunit OS=Escherichia coli (strain K12) OX=83333 GN=xseA PE=1 SV=2
+>sp|P04994|EX7L_ECOLI Exodeoxyribonuclease 7 large subunit OS=Escherichia \
+coli (strain K12) OX=83333 GN=xseA PE=1 SV=2
 MLPSQSPAIFTVSRLNQTVRLLLEHEMGQVWISGEISNFTQPASGHWYFTLKDDTAQVRC
 >zz|Y-FGCZCont00001|  zz_FGCZCont0000_P61626_LYSC_HUMAN blastpHomologue_5.0e-107
 MKALIVLGLVLLSVTVQGKVFERCELARTLKRLGMDGYRGISLANWMCLAKWESGYNTRA
@@ -35,11 +37,14 @@ MKALIVLGLVLLSVTVQGKVFERCELARTLKRLGMDGYRGISLANWMCLAKWESGYNTRA
 SFNFCLPNLSFRSSCSSRPCVPSSCCGTTLPGACNIPANVGSCNWFCEGSFDGNEKETMQ
 >REV_sp|Q13515|BFSP2_HUMAN Phakinin OS=Homo sapiens OX=9606 GN=BFSP2 PE=1 SV=1
 GSEERDLLAHYSAVDKQLQCKRALLHAREQQQQEAEARIERLEAELRGVVAGLNQLEMDH
->REV_sp|Q14183|DOC2A_HUMAN Double C2-like domain-containing protein alpha OS=Homo sapiens OX=9606 GN=DOC2A PE=1 SV=5
+>REV_sp|Q14183|DOC2A_HUMAN Double C2-like domain-containing protein alpha \
+OS=Homo sapiens OX=9606 GN=DOC2A PE=1 SV=5
 ASSLAGAAPPLESTLTHWRELAADPQQLCDSWHKRAEGRAGPGLSVGGIFDNSKGIDYDW
->REV_tr|A0A075B6W8|A0A075B6W8_HUMAN T cell receptor alpha joining 17 (Fragment) OS=Homo sapiens OX=9606 GN=TRAJ17 PE=4 SV=1
+>REV_tr|A0A075B6W8|A0A075B6W8_HUMAN T cell receptor alpha joining 17 \
+(Fragment) OS=Homo sapiens OX=9606 GN=TRAJ17 PE=4 SV=1
 PKVLVRTGGGFTLKNGAAKIX
->REV_sp|A0A385XJL2|YGDT_ECOLI Protein YgdT OS=Escherichia coli (strain K12) OX=83333 GN=ygdT PE=4 SV=1
+>REV_sp|A0A385XJL2|YGDT_ECOLI Protein YgdT OS=Escherichia coli (strain K12) \
+OX=83333 GN=ygdT PE=4 SV=1
 GIGYKDVSHAVLNLVSGSFVPTEDCTLATFPFLLPPKECNDWSETSLM
 """
 
@@ -103,7 +108,12 @@ def test_fasta_to_dataframe_retains_and_classifies_all_records():
 
 
 def test_empty_decoy_pattern_disables_classification_without_filtering():
-    df = fasta_to_dataframe(PROLFQUAPP_FIXTURE, decoy_pattern="")
+    df = fasta_to_dataframe(
+        PROLFQUAPP_FIXTURE,
+        FastaAnnotationConfig(
+            identifiers=FastaConfig.from_single_patterns("", None),
+        ),
+    )
     assert len(df) == 11
     assert not df["is_decoy"].any()
 
@@ -114,7 +124,10 @@ def test_decoy_prefix_is_preserved_in_clean_accession():
 
 
 def test_fasta_to_dataframe_non_uniprot_proteinname_equals_id():
-    df = fasta_to_dataframe(PROLFQUAPP_FIXTURE, is_uniprot=False)
+    df = fasta_to_dataframe(
+        PROLFQUAPP_FIXTURE,
+        FastaAnnotationConfig(is_uniprot=False),
+    )
     assert (df["proteinname"] == df["fasta.id"]).all()
 
 
@@ -127,7 +140,10 @@ def test_fasta_to_dataframe_gene_name_gated_on_match_count():
 
 
 def test_fasta_to_dataframe_include_sequence():
-    df = fasta_to_dataframe(PROLFQUAPP_FIXTURE, include_sequence=True)
+    df = fasta_to_dataframe(
+        PROLFQUAPP_FIXTURE,
+        FastaAnnotationConfig(include_sequence=True),
+    )
     assert "sequence" in df.columns
     assert df.iloc[0]["sequence"].startswith("MLSTESW")
 
@@ -139,7 +155,10 @@ def test_fasta_to_dataframe_retains_duplicate_fasta_ids():
         ">sp|P2|B second OS=x GN=b PE=1 SV=1\nCCCC\n"
         ">sp|P1|A third OS=x GN=c PE=1 SV=1\nDDDD\n"
     )
-    df = fasta_to_dataframe(text, include_sequence=True)
+    df = fasta_to_dataframe(
+        text,
+        FastaAnnotationConfig(include_sequence=True),
+    )
     assert len(df) == 3
     assert df.loc[df["fasta.id"] == "sp|P1|A", "sequence"].tolist() == ["AAAA", "DDDD"]
 
@@ -147,8 +166,8 @@ def test_fasta_to_dataframe_retains_duplicate_fasta_ids():
 def test_fasta_to_dataframe_min_length_excludes_short_peptides():
     # Same record, two cutoffs → strictly fewer peptides for the higher floor.
     text = ">sp|P|X test GN=x PE=1 SV=1\nMKGLPRAKSHGSTGWGKRKRNKPK\n"
-    df_lo = fasta_to_dataframe(text, min_length=2)
-    df_hi = fasta_to_dataframe(text, min_length=5)
+    df_lo = fasta_to_dataframe(text, FastaAnnotationConfig(min_length=2))
+    df_hi = fasta_to_dataframe(text, FastaAnnotationConfig(min_length=5))
     low_count = df_lo["nr_peptides"].iat[0]
     high_count = df_hi["nr_peptides"].iat[0]
     assert isinstance(low_count, int | np.integer)

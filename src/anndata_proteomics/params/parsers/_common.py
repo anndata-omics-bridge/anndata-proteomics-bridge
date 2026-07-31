@@ -21,7 +21,7 @@ def read_text(source: Source, *, errors: str = "strict") -> str:
 
     try:
         source.seek(0)
-    except Exception:
+    except (OSError, ValueError):
         pass
     raw = source.read()
     if isinstance(raw, bytes):

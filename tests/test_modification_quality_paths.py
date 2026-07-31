@@ -18,11 +18,11 @@ from anndata_proteomics.modifications.model import (
 )
 from anndata_proteomics.modifications.pipeline import apply_modifications
 from anndata_proteomics.modifications.proforma import render_proforma
-from anndata_proteomics.modifications.sdrf import from_sdrf_value, to_sdrf_value
-from anndata_proteomics.rules.schema import (
+from anndata_proteomics.modifications.schema import (
     ModificationMapEntry,
     TokenRegexModifications,
 )
+from anndata_proteomics.modifications.sdrf import from_sdrf_value, to_sdrf_value
 
 
 def test_target_matching_and_numeric_entry_without_mass() -> None:

@@ -21,6 +21,7 @@ class FastaRecord:
 
 
 FastaSource = str | Path | IO[str]
+FastaSources = FastaSource | Iterable[FastaSource]
 
 
 def iter_fasta(source: FastaSource) -> Iterator[FastaRecord]:

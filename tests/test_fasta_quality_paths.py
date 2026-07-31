@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import anndata as ad
+import mudata
 import numpy as np
 import pandas as pd
 import pytest
@@ -61,17 +62,10 @@ def test_fasta_parser_path_blank_lines_and_headerless_input(tmp_path: Path) -> N
     assert list(iter_fasta(StringIO("SEQUENCE\n"))) == []
 
 
-def test_fasta_annotation_empty_conflict_stream_and_before_cleavage() -> None:
-    with pytest.raises(ValueError, match="pass either"):
-        annotation.fasta_to_dataframe_with_config(
-            ">P1\nPEP\n",
-            fasta_config=FastaConfig(),
-            decoy_pattern="REV_",
-        )
-
+def test_fasta_annotation_empty_stream_and_before_cleavage() -> None:
     frame, _resolved = annotation.fasta_to_dataframe_with_config(
         StringIO(""),
-        include_sequence=True,
+        annotation.FastaAnnotationConfig(include_sequence=True),
     )
     assert frame.empty
     assert "sequence" in frame.columns
@@ -124,52 +118,28 @@ def test_validation_empty_fraction_contract_and_target_guards() -> None:
     )
     assert result.fraction_unmatched == 0
 
-    with pytest.raises(ValueError, match="pass either"):
-        validate_fasta._validate_targets(
-            SimpleNamespace(uns={}),
-            {"ion": object()},
-            ">P1\nPEP\n",
-            sequence_field="ProForma_peptide",
-            backend="auto",
-            fasta_config=FastaConfig(),
-            decoy_pattern="REV_",
-            contaminant_pattern=None,
-            leading_protein_field=None,
-            protein_match_on=None,
-            il_equivalent=False,
-            is_uniprot=True,
-            store=False,
-        )
     with pytest.raises(ValueError, match="no peptide-derived"):
         validate_fasta._validate_targets(
-            SimpleNamespace(uns={}),
+            _adata(level="ion", names=[]),
             {},
             ">P1\nPEP\n",
-            sequence_field="ProForma_peptide",
-            backend="auto",
-            fasta_config=None,
-            decoy_pattern=None,
-            contaminant_pattern=None,
-            leading_protein_field=None,
-            protein_match_on=None,
-            il_equivalent=False,
-            is_uniprot=True,
-            store=False,
+            validate_fasta.DEFAULT_FASTA_VALIDATION_CONFIG,
         )
 
 
 def test_feature_target_and_leading_protein_guards() -> None:
     ion = _adata(level="ion", names=["ion"])
     protein = _adata(level="protein", names=["protein"])
-    container = SimpleNamespace(mod={"ion": ion})
+    with mudata.set_options(pull_on_update=False):
+        container = mudata.MuData({"ion": ion})
     with pytest.raises(ValueError, match="not in MuData"):
-        validate_fasta._resolve_feature_target(container, "missing")
+        validate_fasta._resolve_mudata_target(container, "missing")
 
-    protein_container = SimpleNamespace(mod={"protein": protein})
+    with mudata.set_options(pull_on_update=False):
+        protein_container = mudata.MuData({"protein": protein})
     with pytest.raises(ValueError, match="not peptide-derived"):
-        validate_fasta._resolve_feature_target(protein_container, "protein")
-    with pytest.raises(ValueError, match="no peptide-derived"):
-        validate_fasta._resolve_feature_target(protein_container, None)
+        validate_fasta._resolve_mudata_target(protein_container, "protein")
+    assert validate_fasta._resolve_all_feature_targets(protein_container) == {}
 
     with pytest.raises(ValueError, match="leading_protein_field"):
         validate_fasta._resolve_leading_protein_field(ion, "missing")
@@ -218,7 +188,7 @@ def test_mulink_topology_and_existing_shape_guards() -> None:
             owner,
             targets,
             matches,
-            protein_match_on=None,
+            protein_match_on="Protein_Group",
             is_uniprot=True,
         )
 
@@ -228,7 +198,7 @@ def test_mulink_topology_and_existing_shape_guards() -> None:
             owner,
             targets,
             matches,
-            protein_match_on=None,
+            protein_match_on="Protein_Group",
             is_uniprot=True,
         )
 
@@ -240,7 +210,7 @@ def test_mulink_topology_and_existing_shape_guards() -> None:
         owner,
         targets,
         matches,
-        protein_match_on=None,
+        protein_match_on="Protein_Group",
         is_uniprot=True,
     )
     assert stats.n_fasta_edges == 0
@@ -255,7 +225,7 @@ def test_mulink_topology_and_existing_shape_guards() -> None:
             owner,
             targets,
             matches,
-            protein_match_on=None,
+            protein_match_on="Protein_Group",
             is_uniprot=True,
         )
 
@@ -269,11 +239,11 @@ def test_mulink_topology_and_existing_shape_guards() -> None:
             owner,
             targets,
             matches,
-            protein_match_on=None,
+            protein_match_on="Protein_Group",
             is_uniprot=True,
         )
 
 
 def test_single_pattern_distinguishes_none_from_disabled() -> None:
-    assert validate_fasta._single_pattern(None) is None
-    assert validate_fasta._single_pattern("") == ()
+    assert FastaConfig.from_single_patterns(None, None).decoy_patterns is None
+    assert FastaConfig.from_single_patterns("", None).decoy_patterns == ()

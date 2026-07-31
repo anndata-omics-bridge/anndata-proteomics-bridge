@@ -18,7 +18,10 @@ from scipy import sparse
 
 from anndata_proteomics.annotation.apply import annotate_obs
 from anndata_proteomics.annotation.loader import AnnotationTable
-from anndata_proteomics.annotation.validate_fasta import validate_peptides_against_fasta
+from anndata_proteomics.annotation.validate_fasta import (
+    FastaValidationConfig,
+    validate_peptides_against_fasta,
+)
 from anndata_proteomics.proteobench import intermediate, mapping, metrics, resolve
 from anndata_proteomics.proteobench.config import (
     ExpectedRatio,
@@ -37,6 +40,11 @@ from anndata_proteomics.proteobench.resolve import resolve_roles
 from anndata_proteomics.readers.summary import describe
 from anndata_proteomics.rules.schema import ParseRule
 from anndata_proteomics.scripts.cli import proteobench as proteobench_cmd
+
+GOLDEN_LEGACY_INTERMEDIATE = (
+    Path(__file__).parent / "data" / "proteobench" / "small_legacy_intermediate.txt"
+)
+GOLDEN_LEGACY_INTERMEDIATE_HASH = "9077847f733c12b1297a4928a0b4c509e50e4ed9"
 
 
 def _module_settings() -> ModuleSettings:
@@ -75,7 +83,10 @@ def _rule() -> ParseRule:
                 "obs": {"select": {"Run": "Run"}},
                 "var": {"select": {"Protein_Ids": "Protein.Ids"}},
             },
-            "column_roles": {"protein_accessions": "Protein_Ids"},
+            "column_roles": {
+                "protein_assignment": "Protein_Ids",
+                "fasta_accessions": "Protein_Ids",
+            },
             "layers": [{"name": "Precursor_Normalised", "source": "Precursor.Normalised"}],
         }
     )
@@ -154,6 +165,14 @@ def test_matrix_intermediate_matches_hand_computed_values() -> None:
     assert result.legacy.index.tolist() == [0, 1, 3]
 
 
+def test_complete_legacy_intermediate_and_hash_match_golden() -> None:
+    result = _intermediate(_adata())
+    expected = pd.read_csv(GOLDEN_LEGACY_INTERMEDIATE, index_col=0)
+
+    pd.testing.assert_frame_equal(result.legacy, expected, check_dtype=False)
+    assert result.intermediate_hash == GOLDEN_LEGACY_INTERMEDIATE_HASH
+
+
 def test_dense_and_sparse_intermediates_are_equal() -> None:
     dense = _intermediate(_adata())
     sparse_result = _intermediate(_adata(sparse_x=True))
@@ -225,27 +244,30 @@ def test_pipeline_stores_nested_scores_and_preserves_other_enrichments(
     returned = score_quantification(adata, _module_settings())
     assert returned is adata
     assert "proteobench" in adata.varm
-    assert adata.uns["proteobench"]["column_roles"]["Proteins"] == "var:Protein_Ids"
-    assert adata.uns["proteobench"]["protein_mapping"]["species_mapper"] == {
+    assert "proteobench" not in adata.uns
+    proteobench = adata.uns["anndata_proteomics"]["proteobench"]
+    assert proteobench["column_roles"]["Proteins"] == "var:Protein_Ids"
+    assert proteobench["protein_mapping"]["species_mapper"] == {
         "_YEAST": "YEAST",
         "_ECOLI": "ECOLI",
         "_HUMAN": "HUMAN",
     }
-    accession_mapping = adata.uns["proteobench"]["protein_mapping"]["accession_mapper"]
+    accession_mapping = proteobench["protein_mapping"]["accession_mapper"]
     assert accession_mapping["entries"] > 30_000
     assert accession_mapping["sha256"] == (
         "032034e2f9bea3fc41290c7461417280b1d37cec41ee8ef9a44c250781a4b997"
     )
-    assert adata.uns["proteobench"]["scores"]["nr_feature"] == 3
+    assert proteobench["scores"]["nr_feature"] == 3
     assert "fasta" in adata.varm
     assert adata.obs["condition"].tolist() == ["A", "A", "B", "B"]
 
     path = tmp_path / "scored.h5ad"
     adata.write_h5ad(path)
     restored = ad.read_h5ad(path)
-    assert restored.uns["proteobench"]["scores"]["results"]["1"]["nr_feature"] == 3
+    restored_namespace = restored.uns["anndata_proteomics"]["proteobench"]
+    assert restored_namespace["scores"]["results"]["1"]["nr_feature"] == 3
     assert (
-        restored.uns["proteobench"]["protein_mapping"]["accession_mapper"]["sha256"]
+        restored_namespace["protein_mapping"]["accession_mapper"]["sha256"]
         == accession_mapping["sha256"]
     )
     restored_proteobench = restored.varm["proteobench"]
@@ -283,16 +305,20 @@ def test_scoring_requires_annotation_while_fasta_remains_independent() -> None:
 
     annotate_obs(unannotated, annotation)
     score_quantification(unannotated, _module_settings())
-    validate_peptides_against_fasta(unannotated, fasta, backend="ahocorapy")
+    validate_peptides_against_fasta(
+        unannotated,
+        fasta,
+        FastaValidationConfig(backend="ahocorapy"),
+    )
 
-    assert unannotated.uns["proteobench"]["scores"]["nr_feature"] == 3
+    assert unannotated.uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
     assert "fasta_validation" in unannotated.varm
 
 
 def test_role_resolution_reports_missing_canonical_protein_column() -> None:
     adata = _adata()
     rule_document = _rule().model_dump(mode="json", by_alias=True)
-    rule_document["column_roles"]["protein_accessions"] = "Missing_Proteins"
+    rule_document["column_roles"]["protein_assignment"] = "Missing_Proteins"
     rule_document["columns"]["var"]["select"]["Missing_Proteins"] = "Missing.Proteins"
     adata.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
     with pytest.raises(ValueError, match="missing var column"):
@@ -326,7 +352,7 @@ def test_cli_scores_annotated_h5ad_and_describe_exposes_scores(
 
     assert result == 0
     restored = ad.read_h5ad(output_path)
-    assert restored.uns["proteobench"]["scores"]["nr_feature"] == 3
+    assert restored.uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
     assert describe(restored)["proteobench"]["scores"]["nr_feature"] == 3
     assert "proteobench" not in ad.read_h5ad(input_path).uns
 
@@ -370,7 +396,9 @@ def test_cli_scores_every_modality_in_mudata(tmp_path: Path) -> None:
         restored = mudata.read_h5mu(output_path)
     # Scores are per level: every modality keeps its own, and the container itself stays untouched.
     for name in ("ion", "protein"):
-        assert restored.mod[name].uns["proteobench"]["scores"]["nr_feature"] == 3
+        assert (
+            restored.mod[name].uns["anndata_proteomics"]["proteobench"]["scores"]["nr_feature"] == 3
+        )
         assert "proteobench" in restored.mod[name].varm
     assert "proteobench" not in restored.uns
 
@@ -472,10 +500,17 @@ def test_role_target_and_optional_role_validation() -> None:
 
     no_roles = _adata()
     rule_document = _rule().model_dump(mode="json", by_alias=True)
-    rule_document["column_roles"] = None
+    rule_document["column_roles"] = {}
     no_roles.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
-    with pytest.raises(ValueError, match="no column_roles"):
+    with pytest.raises(ValueError, match="protein_assignment"):
         resolve_roles(no_roles)
+
+    no_assignment = _adata()
+    rule_document = _rule().model_dump(mode="json", by_alias=True)
+    rule_document["column_roles"] = {"fasta_accessions": "Protein_Ids"}
+    no_assignment.uns["anndata_proteomics"]["rule_json"] = json.dumps(rule_document)
+    with pytest.raises(ValueError, match="protein_assignment"):
+        resolve_roles(no_assignment)
 
 
 def test_alignment_and_intermediate_identity_guards() -> None:
@@ -577,6 +612,6 @@ def test_metric_and_pipeline_edge_paths() -> None:
     ]
 
     collision = _adata()
-    collision.uns["proteobench"] = {"scores": {}}
+    collision.uns["anndata_proteomics"]["proteobench"] = {"scores": {}}
     with pytest.raises(ValueError, match=r"\['scores'\]"):
         score_quantification(collision, _module_settings())

@@ -52,7 +52,7 @@ flowchart TD
     moduletoml[/ProteoBench module TOML/] --> pbscore[proteobench.score_quantification]
     annobs --> pbscore
     pbscore --> pbvarm[varm proteobench: feature statistics]
-    pbscore --> pbuns[uns proteobench: roles, mapping provenance, scores]
+    pbscore --> pbuns[uns anndata_proteomics/proteobench: roles, mapping provenance, scores]
 
     classDef io fill:#eef2ff,stroke:#9aa7d8;
     class config,data,paramfile,fastafile,moduletoml io;
@@ -65,17 +65,23 @@ Search-parameter parser details are in [parameter_parsers.md](parameter_parsers.
 
 | Area | Current role |
 |---|---|
-| `rules/` | Pydantic source/effective schemas, document merge loader, registry, validator, and JSON Schema export. |
+| `rules/` | Pydantic source/effective rule composition, document merge loader, registry, validator, and JSON Schema export. |
 | `parsing_rules/` | Packaged JSON rules under `src/anndata_proteomics/parsing_rules/`. |
 | `readers/` | File-extension dispatch to CSV, TSV/TXT, and Parquet readers. |
 | `converters/` | Rule-driven long/wide conversion into AnnData; multi-level CLI conversion can assemble MuData. |
-| `modifications/` | Vendor modified-sequence normalization to ProForma and searched-modification models. |
+| `modifications/` | Parsing-rule modification schemas, vendor sequence normalization to ProForma, and searched-modification models. |
 | `params/` | Typed search-parameter model, parser registry, AnnData storage helpers, and vendor parsers under `params/parsers/`. |
 | `annotation/` | `obs` annotation, FASTA-derived protein `varm['fasta']`, peptide `varm['fasta_validation']`, and MuLink-compatible `varp['feature_mapping']`. |
 | `fasta/` | FASTA parsing, typed decoy/contaminant configuration, protein metadata, and enzyme-aware theoretical peptide counts. |
 | `proteobench/` | Typed module TOMLs, canonical role resolution, matrix-native HYE intermediates, compatible metrics, and storage orchestration. |
 | `prozor` dependency | Backend-neutral Aho--Corasick matching and reusable protein-inference primitives; APB owns FASTA parsing and AnnData/MuData storage. |
 | `scripts/` | The installed `apb` CLI. |
+
+The core parsing packages follow one tested dependency order:
+`rules → params → modifications`. `rules` also imports `modifications` directly when composing
+`ParseRule`; `params` reuses canonical modification identities; `modifications` never imports
+either higher layer. Empty package initializers keep these edges visible to static package
+analysis.
 
 ## Packaged Rules
 
@@ -117,8 +123,8 @@ The CLI subcommands are:
 | `apb export-schema` | Regenerate the source-document and effective-rule schemas. |
 | `apb convert <data> [level] --params <param-file>` | Convert vendor data to `.h5mu` or a selected `.h5ad` level. |
 | `apb annotate <data> <annotations.toml/csv/tsv>` | Join external sample metadata onto `obs`. |
-| `apb fasta <data> <proteome.fasta>` | Annotate proteins and, by default, validate every peptide-derived modality against FASTA. |
-| `apb proteobench <data> <module.toml>` | Score every annotated quantification level a container holds, each into its own `uns`/`varm`; requires `sample_name` and `condition`, while FASTA remains optional. |
+| `apb fasta <data> <proteome.fasta>` | Annotate proteins and, by default, validate every peptide-derived modality against FASTA; accession-dependent work uses only `column_roles.fasta_accessions` or an explicit override. |
+| `apb proteobench <data> <module.toml>` | Score every annotated quantification level a container holds, each into its own `uns`/`varm`; requires `sample_name`, `condition`, and `column_roles.protein_assignment`, while FASTA remains optional. |
 
 ## Search Parameters
 
@@ -133,8 +139,11 @@ params/
 ```
 
 Vendor-specific parser implementations live only under `params/parsers/`.
-Every parser exposes `extract_params(source) -> Parameters`; `params.registry`
-dispatches by software name.
+Their native `extract_params(...)` signatures may express vendor-specific
+inputs or options. `params.registry` dispatches by software name through a
+uniform callable that accepts either one source or an explicit source tuple.
+MetaMorpheus, for example, receives its TOML and version-text files as a
+two-source tuple; the registry never guesses a related filename.
 
 ## Current Limits
 

@@ -101,13 +101,6 @@ def test_compound_parameters_resolve_rule_version_from_quantification_software()
 
 
 def test_effective_rule_version_decision_table() -> None:
-    parse_error = ui.ParameterResolution(
-        source_path=Path("broken.params"),
-        parameters=None,
-        version=None,
-        version_status="parse_error",
-        error="broken",
-    )
     mismatch = ui.ParameterResolution(
         source_path=Path("fragpipe.workflow"),
         parameters=Parameters(
@@ -118,12 +111,7 @@ def test_effective_rule_version_decision_table() -> None:
         version_status="present",
     )
 
-    assert ui.resolve_rule_version(parse_error, "diann") == (None, "parse_error")
     assert ui._effective_rule_version("diann", None, None) == (None, None)
-    assert ui._effective_rule_version("diann", None, parse_error) == (
-        None,
-        "parse_error",
-    )
     assert ui._effective_rule_version("diann", "1.9.2", mismatch) == (
         "1.9.2",
         "present",
@@ -204,19 +192,6 @@ def test_missing_version_enumerates_multiple_matching_packaged_locators(
         ui.select_rule("peaks", "ion", None, [], version_status="missing")
 
 
-def test_parse_error_does_not_gain_missing_version_variant_fallback() -> None:
-    headers = _headers_for(load_packaged_rule("diann", "protein", _V19))
-
-    with pytest.raises(ValueError, match="parameter parsing failed"):
-        ui.select_rule(
-            "diann",
-            "protein",
-            None,
-            headers,
-            version_status="parse_error",
-        )
-
-
 def test_resolve_flat_vendor_and_unknown() -> None:
     maxquant = resolve_rule_locator("maxquant", "ion", None)
     assert maxquant is not None
@@ -253,6 +228,39 @@ def test_convertible_levels_by_version() -> None:
         "protein",
     ]
     assert "mudata" in ui.available_targets("diann", _V23, _diann_headers(_V23))
+
+
+def test_convertible_levels_filters_only_expected_rule_unavailability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ion = load_packaged_rule("diann", "ion", _V19)
+
+    def select(
+        _slug: str,
+        level: QuantificationLevel,
+        _version: str | None,
+        _headers: Iterable[str],
+        **_kwargs: object,
+    ) -> tuple[ParseRule, ui.RuleSelectionMethod]:
+        if level == "ion":
+            return ion, "software_version"
+        raise ui.RuleUnavailableError(f"{level} is unavailable")
+
+    monkeypatch.setattr(ui, "_select_rule", select)
+
+    assert ui.convertible_levels("diann", _V19, _diann_headers(_V19)) == ["ion"]
+
+
+def test_convertible_levels_propagates_unexpected_rule_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("malformed packaged rule")
+
+    monkeypatch.setattr(ui, "resolve_rule_for_version", fail)
+
+    with pytest.raises(ValueError, match="malformed packaged rule"):
+        ui.convertible_levels("diann", _V19, _diann_headers(_V19))
 
 
 def test_pipeline_rule_selection_applies_search_parameter_override() -> None:

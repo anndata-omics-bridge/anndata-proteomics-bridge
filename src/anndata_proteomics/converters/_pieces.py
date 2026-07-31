@@ -16,4 +16,3 @@ class ConversionPieces:
     obs: pd.DataFrame
     var: pd.DataFrame
     layers: dict[str, np.ndarray] = field(default_factory=dict)
-    uns: dict[str, object] = field(default_factory=dict)

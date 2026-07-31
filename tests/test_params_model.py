@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from anndata_proteomics.modifications.model import SearchedModification
 from anndata_proteomics.params.model import MassTolerance, Parameters, Probability
 
 
@@ -63,6 +64,38 @@ def test_from_series_treats_literal_none_string_as_none():
     s = pd.Series({"software_name": "Sage", "ident_fdr_psm": "None"})
     p = Parameters.from_series(s)
     assert p.ident_fdr_psm is None
+
+
+def test_known_search_modification_uses_canonical_registry_identity() -> None:
+    params = Parameters.model_validate(
+        {"variable_mods": "Protein N-term[Acetylation], M[Oxidation]"}
+    )
+
+    assert params.variable_mods == [
+        SearchedModification(
+            name="Protein N-term[Acetyl]",
+            accession="UNIMOD:1",
+            mass_delta=42.010565,
+            source="Protein N-term[Acetyl]",
+        ),
+        SearchedModification(
+            name="M[Oxidation]",
+            accession="UNIMOD:35",
+            mass_delta=15.994915,
+            source="M[Oxidation]",
+        ),
+    ]
+    assert params.to_series()["variable_mods"] == "Protein N-term[Acetyl],M[Oxidation]"
+
+
+def test_unknown_search_modification_passes_through_unchanged() -> None:
+    token = "K[Vendor-specific isotope label]"
+    params = Parameters.model_validate({"variable_mods": token})
+
+    assert params.variable_mods == [
+        SearchedModification(name=token, source=token),
+    ]
+    assert params.to_series()["variable_mods"] == token
 
 
 @pytest.mark.parametrize("value", ["DDA", "DIA", "unknown"])

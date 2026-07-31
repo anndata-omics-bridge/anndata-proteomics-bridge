@@ -15,7 +15,7 @@ allowed_miscleavages,1
 min_peptide_length,5
 max_peptide_length,50
 fixed_mods,C[Carbamidomethyl]
-variable_mods,"C-term[49.2], C-term[22.9], ^Q[-17.026548], Protein N-term[42.0], Protein C-term[111.0], ^E[-18.010565], M[Oxidation]"
+variable_mods,"C-term[49.2], C-term[22.9], ^Q[Gln->pyro-Glu], Protein N-term[42.0], Protein C-term[111.0], ^E[Glu->pyro-Glu], M[Oxidation]"
 max_mods,1
 min_precursor_charge,2
 max_precursor_charge,4

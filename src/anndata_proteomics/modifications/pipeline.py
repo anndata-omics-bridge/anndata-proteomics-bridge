@@ -11,12 +11,12 @@ from anndata_proteomics.modifications.apply_rules import (
     apply_rule,
     apply_site_list,
 )
-from anndata_proteomics.modifications.unimod_registry import resolve
-from anndata_proteomics.rules.schema import (
+from anndata_proteomics.modifications.schema import (
     Modifications,
     SiteListModifications,
     TokenRegexModifications,
 )
+from anndata_proteomics.modifications.unimod_registry import resolve
 
 
 def _map_entries(mods: Modifications) -> tuple[MapEntry, ...]:
@@ -82,7 +82,7 @@ def apply_modifications(df: pd.DataFrame, mods: Modifications) -> pd.DataFrame:
     - ``"unknown_mod_tokens"``: list of unresolved vendor tokens per row
 
     The source columns are left untouched. Dispatches on ``mods.parser``; see
-    ``rules.schema`` for the two parsers and ``apply_rules`` for their runtimes.
+    ``modifications.schema`` for the two parsers and ``apply_rules`` for their runtimes.
     """
     _require_columns(df, mods)
 

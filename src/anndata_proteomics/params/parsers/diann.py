@@ -148,7 +148,7 @@ def _version_below(software_version: str, threshold: str) -> bool:
         return False
 
 
-def _parse_cmdline(  # noqa: C901 - vendor command-line grammar
+def _parse_cmdline(
     cmd: str,
     software_version: str,
 ) -> dict[str, _SettingValue]:
@@ -162,16 +162,9 @@ def _parse_cmdline(  # noqa: C901 - vendor command-line grammar
             continue
         key, values = parts[0], parts[1:]
         if key.startswith("unimod"):
-            if len(parts) != 1:
-                raise ValueError(f"invalid `unimod` format: {parts}")
-            if below_1_8:
-                if key == "unimod4":
-                    fixed_mods.append("Carbamidomethyl (C)")
-                elif key == "unimod35":
-                    var_mods.append("Oxidation (M)")
-            else:
-                fixed_mods.append(key)
-        elif len(parts) == 1:
+            _append_unimod(key, parts, below_1_8, fixed_mods, var_mods)
+            continue
+        if len(parts) == 1:
             settings[key] = True
         elif key == "var-mod":
             var_mods.append("".join(values).replace(",", "/"))
@@ -182,6 +175,25 @@ def _parse_cmdline(  # noqa: C901 - vendor command-line grammar
     if "mod" not in settings:
         settings["mod"] = fixed_mods
     return settings
+
+
+def _append_unimod(
+    key: str,
+    parts: list[str],
+    below_1_8: bool,
+    fixed_mods: list[str],
+    variable_mods: list[str],
+) -> None:
+    """Apply DIA-NN's version-specific command-line UniMod shorthand."""
+    if len(parts) != 1:
+        raise ValueError(f"invalid `unimod` format: {parts}")
+    if not below_1_8:
+        fixed_mods.append(key)
+        return
+    if key == "unimod4":
+        fixed_mods.append("Carbamidomethyl (C)")
+    elif key == "unimod35":
+        variable_mods.append("Oxidation (M)")
 
 
 def _coerce(setting_name: str, values: list[str]) -> float | int | str:

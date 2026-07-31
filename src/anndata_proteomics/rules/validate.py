@@ -27,7 +27,7 @@ def validate_file(path: Path | str) -> ValidationResult:
     source = Path(path)
     try:
         document = load_rule_document(source)
-    except Exception as exc:  # noqa: BLE001 - validation results carry all config failures
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         notes = getattr(exc, "__notes__", [])
         message = "; ".join([str(exc), *notes]) if notes else str(exc)
         return ValidationResult(path=source, ok=False, error=message)

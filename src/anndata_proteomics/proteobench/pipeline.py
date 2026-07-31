@@ -45,12 +45,14 @@ def _score_target(
     module_settings: ModuleSettings,
 ) -> None:
     """Compute and store one level's intermediates and scores in place."""
-    namespace = target.uns.get("proteobench") or {}
+    apb_namespace = dict(target.uns.get("anndata_proteomics") or {})
+    namespace = dict(apb_namespace.get("proteobench") or {})
     if "proteobench" in target.varm:
         raise ValueError("varm['proteobench'] already exists; refusing to overwrite scores")
     if "scores" in namespace:
         raise ValueError(
-            "uns['proteobench']['scores'] already exists; refusing to overwrite scores"
+            "uns['anndata_proteomics']['proteobench']['scores'] already exists; "
+            "refusing to overwrite scores"
         )
 
     rule, roles = resolve_roles(target)
@@ -70,20 +72,15 @@ def _score_target(
     )
 
     target.varm["proteobench"] = intermediate.varm
-    namespace = dict(namespace)
     namespace.update(
         {
+            "schema_version": _STORAGE_SCHEMA_VERSION,
+            "compatibility_version": PROTEOBENCH_COMPATIBILITY_VERSION,
+            "source_revision": PROTEOBENCH_SOURCE_REVISION,
             "column_roles": roles.as_dict(),
             "protein_mapping": intermediate.protein_mapping,
             "scores": scores,
         }
     )
-    target.uns["proteobench"] = namespace
-
-    apb_namespace = dict(target.uns.get("anndata_proteomics") or {})
-    apb_namespace["proteobench"] = {
-        "schema_version": _STORAGE_SCHEMA_VERSION,
-        "compatibility_version": PROTEOBENCH_COMPATIBILITY_VERSION,
-        "source_revision": PROTEOBENCH_SOURCE_REVISION,
-    }
+    apb_namespace["proteobench"] = namespace
     target.uns["anndata_proteomics"] = apb_namespace

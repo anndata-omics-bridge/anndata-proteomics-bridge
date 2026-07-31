@@ -46,7 +46,8 @@
       }
     },
     "column_roles": {
-      "protein_accessions": "Proteins"
+      "protein_assignment": "Proteins",
+      "fasta_accessions": "Proteins"
     },
     "layers": [
       {

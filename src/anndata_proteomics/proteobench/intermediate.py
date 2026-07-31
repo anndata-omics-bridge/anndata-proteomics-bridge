@@ -8,9 +8,10 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 
 from anndata_proteomics._matrix_types import is_sparse_matrix
-from anndata_proteomics.proteobench.config import ModuleSettings
+from anndata_proteomics.proteobench.config import ExpectedRatio, ModuleSettings
 from anndata_proteomics.proteobench.mapping import (
     map_reported_proteins,
     render_proteobench_features,
@@ -18,6 +19,13 @@ from anndata_proteomics.proteobench.mapping import (
 from anndata_proteomics.proteobench.resolve import ResolvedRoles
 
 _CHUNK_SIZE = 50_000
+_CONDITION_METRICS = (
+    "log_Intensity_mean",
+    "log_Intensity_std",
+    "Intensity_mean",
+    "Intensity_std",
+    "CV",
+)
 # ProteoBench's own intermediate names its feature column after the module level; levels it has no
 # module for keep the plain level name.
 _LEGACY_FEATURE_COLUMN = {"ion": "precursor ion", "peptidoform": "peptidoform"}
@@ -42,26 +50,68 @@ class IntermediateResult:
     protein_mapping: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _SpeciesStatistics:
+    """Species-dependent statistics shared by both output identities."""
+
+    species: np.ndarray
+    expected: np.ndarray
+    epsilon: np.ndarray
+    empirical_median: np.ndarray
+    empirical_mean: np.ndarray
+
+
+@dataclass(frozen=True)
+class _LegacyComputation:
+    target: AnnData
+    feature_ids: np.ndarray
+    species_flags: dict[str, np.ndarray]
+    contaminants: np.ndarray
+    decoys: np.ndarray
+    module_settings: ModuleSettings
+    design: RunDesign
+    source_dtype: type[np.floating[Any]]
+    conditions: list[str]
+    level: str
+
+
+@dataclass(frozen=True)
+class _LegacyAssembly:
+    derived: pd.DataFrame
+    matrix: Any
+    feature_ids: np.ndarray
+    pre_unique: np.ndarray
+    included: np.ndarray
+    design: RunDesign
+    level: str
+    source_dtype: type[np.floating[Any]]
+    species: list[str]
+    conditions: list[str]
+
+
 def align_runs(
-    target: Any,
+    target: AnnData,
     module_settings: ModuleSettings,
 ) -> RunDesign:
     """Validate and align the sample design added by ``apb annotate``."""
+    obs = target.obs
+    if not isinstance(obs, pd.DataFrame):
+        raise TypeError("ProteoBench scoring requires an in-memory obs DataFrame")
     required = ("sample_name", "condition")
-    missing = [column for column in required if column not in target.obs.columns]
+    missing = [column for column in required if column not in obs.columns]
     if missing:
         raise ValueError(
             "ProteoBench scoring requires prior sample annotation; "
             f"missing obs columns: {missing}. Run 'apb annotate' first."
         )
-    if target.obs.loc[:, list(required)].isna().any(axis=None):
+    if obs.loc[:, list(required)].isna().any(axis=None):
         raise ValueError(
             "ProteoBench scoring requires complete sample annotation; "
             "obs['sample_name'] and obs['condition'] must not contain missing values"
         )
 
-    observed_names = target.obs["sample_name"].astype(str).tolist()
-    observed_conditions = target.obs["condition"].astype(str).tolist()
+    observed_names = obs["sample_name"].astype(str).tolist()
+    observed_conditions = obs["condition"].astype(str).tolist()
     by_sample_name = {sample.sample_name: sample for sample in module_settings.samples}
 
     matched = []
@@ -97,8 +147,8 @@ def align_runs(
     return RunDesign(conditions=conditions, raw_files=raw_files, sample_names=sample_names)
 
 
-def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestration
-    target: Any,
+def compute_intermediate(
+    target: AnnData,
     module_settings: ModuleSettings,
     roles: ResolvedRoles,
     design: RunDesign,
@@ -129,69 +179,47 @@ def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestratio
     matrix = target.X
     source_dtype = np.float32 if _is_float32_backed(matrix) else np.float64
     conditions = sorted(set(design.conditions.tolist()))
-    stats: dict[str, np.ndarray] = {}
-    condition_counts: dict[str, np.ndarray] = {}
-    for condition in conditions:
-        rows = np.flatnonzero(design.conditions == condition)
-        values = _condition_statistics(matrix, rows, source_dtype)
-        condition_counts[condition] = values.pop("count")
-        for metric, metric_values in values.items():
-            stats[f"{metric}_{condition}"] = metric_values
-
-    nr_observed = np.zeros(target.n_vars, dtype=np.int64)
-    for counts in condition_counts.values():
-        nr_observed += counts
-    stats["log2_A_vs_B"] = stats["log_Intensity_mean_A"] - stats["log_Intensity_mean_B"]
+    stats, nr_observed = _derive_condition_statistics(
+        matrix,
+        design,
+        conditions,
+        source_dtype,
+    )
 
     multi_species = unique > module_settings.general.min_count_multispec
     pre_unique = (nr_observed > 0) & ~contaminants & ~decoys & ~multi_species
     included = pre_unique & (unique == 1)
 
-    species_values = np.full(target.n_vars, "", dtype=object)
-    expected = np.full(target.n_vars, np.nan, dtype=np.float64)
-    for species, ratio in module_settings.species_expected_ratio.items():
-        selected = included & species_flags[species]
-        species_values[selected] = species
-        expected[selected] = np.log2(ratio.a_vs_b)
-
-    epsilon = stats["log2_A_vs_B"] - expected
-    centers = _empirical_centers(stats["log2_A_vs_B"], species_values, included)
-
-    varm = pd.DataFrame(index=target.var_names.copy())
-    for metric in (
-        "log_Intensity_mean",
-        "log_Intensity_std",
-        "Intensity_mean",
-        "Intensity_std",
-        "CV",
-    ):
-        for condition in conditions:
-            varm[f"{metric}_{condition}"] = stats[f"{metric}_{condition}"]
-    varm["log2_A_vs_B"] = stats["log2_A_vs_B"]
-    varm["nr_observed"] = nr_observed
-    for species, flags in species_flags.items():
-        varm[species] = flags
-    varm["unique"] = unique
-    varm["species"] = species_values
-    varm["log2_expectedRatio"] = expected
-    varm["epsilon"] = epsilon
-    varm["log2_empirical_median"] = centers["median"]
-    varm["log2_empirical_mean"] = centers["mean"]
-    varm["epsilon_precision_median"] = stats["log2_A_vs_B"] - centers["median"]
-    varm["epsilon_precision_mean"] = stats["log2_A_vs_B"] - centers["mean"]
+    species_stats = _derive_species_statistics(
+        stats["log2_A_vs_B"],
+        species_flags,
+        included,
+        module_settings.species_expected_ratio,
+    )
+    varm = _assemble_feature_statistics(
+        target.var_names.copy(),
+        stats,
+        nr_observed,
+        species_flags,
+        unique,
+        species_stats,
+        conditions,
+    )
     varm["included"] = included
 
     legacy = _compute_legacy_intermediate(
-        target,
-        feature_ids=compatibility_feature_ids,
-        species_flags=species_flags,
-        contaminants=contaminants,
-        decoys=decoys,
-        module_settings=module_settings,
-        design=design,
-        source_dtype=source_dtype,
-        conditions=conditions,
-        level=level,
+        _LegacyComputation(
+            target=target,
+            feature_ids=compatibility_feature_ids,
+            species_flags=species_flags,
+            contaminants=contaminants,
+            decoys=decoys,
+            module_settings=module_settings,
+            design=design,
+            source_dtype=source_dtype,
+            conditions=conditions,
+            level=level,
+        )
     )
     digest = hashlib.sha1(legacy.to_string().encode("utf-8")).hexdigest()
     return IntermediateResult(
@@ -211,148 +239,109 @@ def compute_intermediate(  # noqa: C901, PLR0915 - scoring pipeline orchestratio
     )
 
 
-def _compute_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
-    target: Any,
-    *,
-    feature_ids: np.ndarray,
-    species_flags: dict[str, np.ndarray],
-    contaminants: np.ndarray,
-    decoys: np.ndarray,
-    module_settings: ModuleSettings,
-    design: RunDesign,
-    source_dtype: type[np.floating[Any]],
-    conditions: list[str],
-    level: str,
-) -> pd.DataFrame:
+def _compute_legacy_intermediate(inputs: _LegacyComputation) -> pd.DataFrame:
     """Reproduce ProteoBench's legacy feature grouping and intermediate."""
-    unique_features, group_codes = np.unique(feature_ids, return_inverse=True)
-    canonical_unique = np.sum(np.vstack(list(species_flags.values())), axis=0, dtype=np.int64)
+    unique_features, group_codes = np.unique(inputs.feature_ids, return_inverse=True)
+    canonical_unique = np.sum(
+        np.vstack(list(inputs.species_flags.values())),
+        axis=0,
+        dtype=np.int64,
+    )
     eligible = (
-        ~contaminants & ~decoys & (canonical_unique <= module_settings.general.min_count_multispec)
+        ~inputs.contaminants
+        & ~inputs.decoys
+        & (canonical_unique <= inputs.module_settings.general.min_count_multispec)
     )
     matrix = _collapse_positive_matrix(
-        target.X,
+        inputs.target.X,
         group_codes,
         len(unique_features),
         eligible,
-        source_dtype,
+        inputs.source_dtype,
     )
 
     grouped_flags: dict[str, np.ndarray] = {}
-    for species_name, flags in species_flags.items():
+    for species_name, flags in inputs.species_flags.items():
         grouped = np.zeros(len(unique_features), dtype=bool)
         np.logical_or.at(grouped, group_codes[eligible], flags[eligible])
         grouped_flags[species_name] = grouped
     unique = np.sum(np.vstack(list(grouped_flags.values())), axis=0, dtype=np.int64)
 
-    stats: dict[str, np.ndarray] = {}
-    condition_counts: dict[str, np.ndarray] = {}
-    for condition in conditions:
-        rows = np.flatnonzero(design.conditions == condition)
-        values = _condition_statistics(matrix, rows, source_dtype)
-        condition_counts[condition] = values.pop("count")
-        for metric, metric_values in values.items():
-            stats[f"{metric}_{condition}"] = metric_values
-    nr_observed = np.zeros(len(unique_features), dtype=np.int64)
-    for counts in condition_counts.values():
-        nr_observed += counts
-    stats["log2_A_vs_B"] = stats["log_Intensity_mean_A"] - stats["log_Intensity_mean_B"]
+    stats, nr_observed = _derive_condition_statistics(
+        matrix,
+        inputs.design,
+        inputs.conditions,
+        inputs.source_dtype,
+    )
 
     pre_unique = nr_observed > 0
     included = pre_unique & (unique == 1)
-    species_values = np.full(len(unique_features), "", dtype=object)
-    expected = np.full(len(unique_features), np.nan, dtype=np.float64)
-    for species_name, ratio in module_settings.species_expected_ratio.items():
-        selected = included & grouped_flags[species_name]
-        species_values[selected] = species_name
-        expected[selected] = np.log2(ratio.a_vs_b)
-    epsilon = stats["log2_A_vs_B"] - expected
-    centers = _empirical_centers(stats["log2_A_vs_B"], species_values, included)
+    species_stats = _derive_species_statistics(
+        stats["log2_A_vs_B"],
+        grouped_flags,
+        included,
+        inputs.module_settings.species_expected_ratio,
+    )
+    derived = _assemble_feature_statistics(
+        pd.Index(unique_features),
+        stats,
+        nr_observed,
+        grouped_flags,
+        unique,
+        species_stats,
+        inputs.conditions,
+    )
 
-    derived = pd.DataFrame(index=pd.Index(unique_features))
-    for metric in (
-        "log_Intensity_mean",
-        "log_Intensity_std",
-        "Intensity_mean",
-        "Intensity_std",
-        "CV",
-    ):
-        for condition in conditions:
-            derived[f"{metric}_{condition}"] = stats[f"{metric}_{condition}"]
-    derived["log2_A_vs_B"] = stats["log2_A_vs_B"]
-    derived["nr_observed"] = nr_observed
-    for species_name, flags in grouped_flags.items():
-        derived[species_name] = flags
-    derived["unique"] = unique
-    derived["species"] = species_values
-    derived["log2_expectedRatio"] = expected
-    derived["epsilon"] = epsilon
-    derived["log2_empirical_median"] = centers["median"]
-    derived["log2_empirical_mean"] = centers["mean"]
-    derived["epsilon_precision_median"] = stats["log2_A_vs_B"] - centers["median"]
-    derived["epsilon_precision_mean"] = stats["log2_A_vs_B"] - centers["mean"]
-
-    return assemble_legacy_intermediate(
-        derived,
-        matrix,
-        feature_ids=unique_features,
-        pre_unique=pre_unique,
-        included=included,
-        design=design,
-        level=level,
-        source_dtype=source_dtype,
-        species=list(module_settings.species_expected_ratio),
-        conditions=conditions,
+    return _assemble_legacy_intermediate(
+        _LegacyAssembly(
+            derived=derived,
+            matrix=matrix,
+            feature_ids=unique_features,
+            pre_unique=pre_unique,
+            included=included,
+            design=inputs.design,
+            level=inputs.level,
+            source_dtype=inputs.source_dtype,
+            species=list(inputs.module_settings.species_expected_ratio),
+            conditions=inputs.conditions,
+        )
     )
 
 
-def assemble_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
-    derived: pd.DataFrame,
-    matrix: Any,
-    *,
-    feature_ids: np.ndarray,
-    pre_unique: np.ndarray,
-    included: np.ndarray,
-    design: RunDesign,
-    level: str,
-    source_dtype: type[np.floating[Any]],
-    species: list[str],
-    conditions: list[str],
-) -> pd.DataFrame:
+def _assemble_legacy_intermediate(inputs: _LegacyAssembly) -> pd.DataFrame:
     """Reconstruct ProteoBench's ``result_performance.csv`` representation."""
-    candidate_order = np.flatnonzero(pre_unique)
-    candidate_order = candidate_order[np.argsort(feature_ids[candidate_order], kind="stable")]
+    candidate_order = np.flatnonzero(inputs.pre_unique)
+    candidate_order = candidate_order[
+        np.argsort(inputs.feature_ids[candidate_order], kind="stable")
+    ]
     legacy_index = {
         feature_index: position for position, feature_index in enumerate(candidate_order)
     }
 
-    selected = np.flatnonzero(included)
-    selected = selected[np.argsort(feature_ids[selected], kind="stable")]
+    selected = np.flatnonzero(inputs.included)
+    selected = selected[np.argsort(inputs.feature_ids[selected], kind="stable")]
     index = [legacy_index[feature_index] for feature_index in selected]
     legacy = pd.DataFrame(index=index)
-    legacy[_LEGACY_FEATURE_COLUMN.get(level, level)] = feature_ids[selected]
+    legacy[_LEGACY_FEATURE_COLUMN.get(inputs.level, inputs.level)] = inputs.feature_ids[selected]
 
-    for metric in (
-        "log_Intensity_mean",
-        "log_Intensity_std",
-        "Intensity_mean",
-        "Intensity_std",
-        "CV",
-    ):
-        for condition in conditions:
+    for metric in _CONDITION_METRICS:
+        for condition in inputs.conditions:
             column = f"{metric}_{condition}"
-            legacy[column] = derived[column].to_numpy()[selected]
-    legacy["log2_A_vs_B"] = derived["log2_A_vs_B"].to_numpy()[selected]
+            legacy[column] = inputs.derived[column].to_numpy()[selected]
+    legacy["log2_A_vs_B"] = inputs.derived["log2_A_vs_B"].to_numpy()[selected]
 
-    raw_order = sorted(range(len(design.raw_files)), key=lambda row: design.raw_files[row])
+    raw_order = sorted(
+        range(len(inputs.design.raw_files)),
+        key=lambda row: inputs.design.raw_files[row],
+    )
     for row in raw_order:
-        values = _matrix_row(matrix, row, source_dtype)
+        values = _matrix_row(inputs.matrix, row, inputs.source_dtype)
         values[~np.isfinite(values) | (values <= 0)] = np.nan
-        legacy[design.raw_files[row]] = values[selected]
+        legacy[inputs.design.raw_files[row]] = values[selected]
 
-    legacy["nr_observed"] = derived["nr_observed"].to_numpy()[selected]
-    for species_name in species:
-        legacy[species_name] = derived[species_name].to_numpy()[selected]
+    legacy["nr_observed"] = inputs.derived["nr_observed"].to_numpy()[selected]
+    for species_name in inputs.species:
+        legacy[species_name] = inputs.derived[species_name].to_numpy()[selected]
     for column in (
         "unique",
         "species",
@@ -363,8 +352,88 @@ def assemble_legacy_intermediate(  # noqa: PLR0913 - legacy scoring contract
         "epsilon_precision_median",
         "epsilon_precision_mean",
     ):
-        legacy[column] = derived[column].to_numpy()[selected]
+        legacy[column] = inputs.derived[column].to_numpy()[selected]
     return legacy
+
+
+def _derive_condition_statistics(
+    matrix: Any,
+    design: RunDesign,
+    conditions: list[str],
+    source_dtype: type[np.floating[Any]],
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Derive per-condition statistics without imposing a feature identity."""
+    statistics: dict[str, np.ndarray] = {}
+    condition_counts: dict[str, np.ndarray] = {}
+    for condition in conditions:
+        rows = np.flatnonzero(design.conditions == condition)
+        values = _condition_statistics(matrix, rows, source_dtype)
+        condition_counts[condition] = values.pop("count")
+        for metric, metric_values in values.items():
+            statistics[f"{metric}_{condition}"] = metric_values
+
+    nr_observed = np.zeros(matrix.shape[1], dtype=np.int64)
+    for counts in condition_counts.values():
+        nr_observed += counts
+    statistics["log2_A_vs_B"] = (
+        statistics["log_Intensity_mean_A"] - statistics["log_Intensity_mean_B"]
+    )
+    return statistics, nr_observed
+
+
+def _derive_species_statistics(
+    fold_change: np.ndarray,
+    species_flags: dict[str, np.ndarray],
+    included: np.ndarray,
+    expected_ratios: dict[str, ExpectedRatio],
+) -> _SpeciesStatistics:
+    """Derive species statistics after the caller applies its identity-specific mask."""
+    species_values = np.full(len(fold_change), "", dtype=object)
+    expected = np.full(len(fold_change), np.nan, dtype=np.float64)
+    for species_name, ratio in expected_ratios.items():
+        selected = included & species_flags[species_name]
+        species_values[selected] = species_name
+        expected[selected] = np.log2(ratio.a_vs_b)
+
+    centers = _empirical_centers(fold_change, species_values, included)
+    return _SpeciesStatistics(
+        species=species_values,
+        expected=expected,
+        epsilon=fold_change - expected,
+        empirical_median=centers["median"],
+        empirical_mean=centers["mean"],
+    )
+
+
+def _assemble_feature_statistics(
+    index: pd.Index,
+    condition_statistics: dict[str, np.ndarray],
+    nr_observed: np.ndarray,
+    species_flags: dict[str, np.ndarray],
+    unique: np.ndarray,
+    species_statistics: _SpeciesStatistics,
+    conditions: list[str],
+) -> pd.DataFrame:
+    """Assemble statistics common to canonical and compatibility feature identities."""
+    frame = pd.DataFrame(index=index)
+    for metric in _CONDITION_METRICS:
+        for condition in conditions:
+            column = f"{metric}_{condition}"
+            frame[column] = condition_statistics[column]
+    fold_change = condition_statistics["log2_A_vs_B"]
+    frame["log2_A_vs_B"] = fold_change
+    frame["nr_observed"] = nr_observed
+    for species_name, flags in species_flags.items():
+        frame[species_name] = flags
+    frame["unique"] = unique
+    frame["species"] = species_statistics.species
+    frame["log2_expectedRatio"] = species_statistics.expected
+    frame["epsilon"] = species_statistics.epsilon
+    frame["log2_empirical_median"] = species_statistics.empirical_median
+    frame["log2_empirical_mean"] = species_statistics.empirical_mean
+    frame["epsilon_precision_median"] = fold_change - species_statistics.empirical_median
+    frame["epsilon_precision_mean"] = fold_change - species_statistics.empirical_mean
+    return frame
 
 
 def _collapse_positive_matrix(

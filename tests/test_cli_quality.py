@@ -338,7 +338,7 @@ def test_fasta_rejects_no_sources_or_irrelevant_input(
         cli.fasta(
             tmp_path / "data.h5ad",
             tmp_path / "db.fasta",
-            validate=False,
+            options=cli.FastaCliOptions(validate=False),
         )
         == 1
     )

@@ -66,16 +66,30 @@ def _value_regex(lines: list[str], pattern: str) -> str | None:
     return None
 
 
-def _extract_tolerances(  # noqa: C901, PLR0912 - nested vendor block grammar
+def _extract_tolerances(
     lines: list[str],
     system: str,
 ) -> tuple[str | None, str | None]:
+    system_lines = _tolerance_system_lines(lines, system)
+    calibration, main_search_lines = _main_search_block(system_lines)
+    if calibration == "Dynamic":
+        return "Dynamic", "Dynamic"
+    patterns = _tolerance_patterns(calibration)
+    if patterns is None:
+        return None, None
+    unit, ms1_pattern, ms2_pattern = patterns
+    ms1 = _first_regex_value(main_search_lines, ms1_pattern)
+    ms2 = _first_regex_value(main_search_lines, ms2_pattern)
+    if ms1 is None or ms2 is None:
+        return None, None
+    return f"[-{ms1} {unit}, {ms1} {unit}]", f"[-{ms2} {unit}, {ms2} {unit}]"
+
+
+def _tolerance_system_lines(lines: list[str], system: str) -> list[str]:
+    """Return lines following the requested system in Spectronaut's tolerance block."""
     in_tolerance_block = False
     in_system_block = False
-    calibration: str | None = None
-    ms1: str | None = None
-    ms2: str | None = None
-
+    result: list[str] = []
     for line in lines:
         if line.startswith("Pulsar Search\\Tolerances"):
             in_tolerance_block = True
@@ -85,32 +99,34 @@ def _extract_tolerances(  # noqa: C901, PLR0912 - nested vendor block grammar
         if line.startswith(system):
             in_system_block = True
             continue
-        if not in_system_block:
-            continue
-        if calibration is None:
-            match = _MAIN_SEARCH.search(line)
-            if match:
-                calibration = match.group(1).strip()
-        if calibration == "Dynamic":
-            return "Dynamic", "Dynamic"
-        if calibration in ("Static", "Relative"):
-            unit = "Th" if calibration == "Static" else "ppm"
-            ms1_pat, ms2_pat = (
-                (_MS1_STATIC, _MS2_STATIC)
-                if calibration == "Static"
-                else (_MS1_RELATIVE, _MS2_RELATIVE)
-            )
-            if ms1 is None:
-                hit = ms1_pat.search(line)
-                if hit:
-                    ms1 = hit.group(1)
-            if ms2 is None:
-                hit = ms2_pat.search(line)
-                if hit:
-                    ms2 = hit.group(1)
-            if ms1 is not None and ms2 is not None:
-                return f"[-{ms1} {unit}, {ms1} {unit}]", f"[-{ms2} {unit}, {ms2} {unit}]"
-    return None, None
+        if in_system_block:
+            result.append(line)
+    return result
+
+
+def _first_regex_value(lines: list[str], pattern: re.Pattern[str]) -> str | None:
+    for line in lines:
+        if match := pattern.search(line):
+            return match.group(1).strip()
+    return None
+
+
+def _main_search_block(lines: list[str]) -> tuple[str | None, list[str]]:
+    """Return the calibration mode and settings below ``Main Search``."""
+    for index, line in enumerate(lines):
+        if match := _MAIN_SEARCH.search(line):
+            return match.group(1).strip(), lines[index + 1 :]
+    return None, []
+
+
+def _tolerance_patterns(
+    calibration: str | None,
+) -> tuple[str, re.Pattern[str], re.Pattern[str]] | None:
+    if calibration == "Static":
+        return "Th", _MS1_STATIC, _MS2_STATIC
+    if calibration == "Relative":
+        return "ppm", _MS1_RELATIVE, _MS2_RELATIVE
+    return None
 
 
 def extract_params(source: _Source) -> Parameters:

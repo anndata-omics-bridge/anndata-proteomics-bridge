@@ -13,7 +13,7 @@ from mudata import MuData
 
 from anndata_proteomics.annotation.apply import annotate_obs
 from anndata_proteomics.annotation.loader import AnnotationTable, load_annotation
-from anndata_proteomics.readers.summary import describe, store_quantification_summary
+from anndata_proteomics.readers.summary import describe
 
 RUNS = ["runA1", "runA2", "runB1", "runB2"]
 
@@ -153,7 +153,7 @@ def test_obs_join_does_not_fall_back_to_sample_name(tmp_path: Path) -> None:
         annotate_obs(adata, _annotation_from(tmp_path))
 
 
-def test_annotation_preserves_quantification_summary(tmp_path: Path) -> None:
+def test_annotation_preserves_quantification_view_and_adds_provenance(tmp_path: Path) -> None:
     adata = _adata()
     matrix = adata.X
     assert isinstance(matrix, np.ndarray)
@@ -162,18 +162,22 @@ def test_annotation_preserves_quantification_summary(tmp_path: Path) -> None:
         "quantification_level": "ion",
         "software_name": "Synthetic",
     }
-    store_quantification_summary(adata)
     before = describe(adata)["quantification"]
 
     annotate_obs(adata, _annotation_from(tmp_path))
 
     result = describe(adata)
     assert result["quantification"] == before
-    assert result["annotation"] == {
-        "annotated_run_count": 4,
-        "fields": ["sample_name", "condition"],
-        "group_counts": {"sample_name": 4, "condition": 2},
-    }
+    assert result["annotations"]["obs"] == [
+        {
+            "source": str(tmp_path / "annotation.toml"),
+            "source_format": "toml",
+            "match_on": "index",
+            "key_field": "raw_file",
+            "obs_columns_added": ["sample_name", "condition"],
+            "n_obs_matched": 4,
+        }
+    ]
 
 
 def test_join_respects_obs_order(tmp_path: Path) -> None:
@@ -231,10 +235,9 @@ def test_anndata_roundtrip_records_provenance(tmp_path: Path) -> None:
     roundtrip = ad.read_h5ad(output)
     assert list(roundtrip.obs["condition"]) == ["A", "A", "B", "B"]
     assert "obs_annotations_json" in roundtrip.uns["anndata_proteomics"]
-    assert describe(roundtrip)["annotation"]["group_counts"] == {
-        "sample_name": 4,
-        "condition": 2,
-    }
+    provenance = describe(roundtrip)["annotations"]["obs"]
+    assert provenance[0]["obs_columns_added"] == ["sample_name", "condition"]
+    assert provenance[0]["n_obs_matched"] == 4
 
 
 def test_obs_column_names_sanitised(tmp_path: Path) -> None:

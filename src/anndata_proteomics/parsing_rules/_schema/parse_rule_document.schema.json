@@ -92,15 +92,33 @@
       "additionalProperties": false,
       "description": "Semantic locations needed by downstream canonical-data consumers.",
       "properties": {
-        "protein_accessions": {
-          "minLength": 1,
-          "title": "Protein Accessions",
-          "type": "string"
+        "protein_assignment": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protein Assignment"
+        },
+        "fasta_accessions": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fasta Accessions"
         }
       },
-      "required": [
-        "protein_accessions"
-      ],
       "title": "ColumnRoles",
       "type": "object"
     },

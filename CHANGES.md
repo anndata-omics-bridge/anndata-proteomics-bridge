@@ -89,10 +89,11 @@
   module-level assertions are gone, a MuData scores each modality into its own
   `uns`/`varm` instead of one selected modality, and the legacy intermediate
   names its feature column after the scored level.
-- 2026-07-30: Declare `column_roles.protein_accessions` on the DIA-NN fragment
-  and protein levels and the Spectronaut fragment and protein levels; scoring
-  resolves species through that role, so those levels need re-conversion before
-  they can be scored.
+- 2026-07-30: Split the overloaded protein role into
+  `column_roles.protein_assignment` for ProteoBench/vendor assignment and
+  optional `column_roles.fasta_accessions` for accession-safe FASTA joins.
+  Consumers never guess column names or cascade between these roles; AlphaDIA
+  1.10 deliberately declares only its gene-based protein assignment.
 - 2026-07-29: Support one or multiple exact sample identifiers through
   `raw_file_alias` and `raw_file_aliases`; add WOMBAT `A_1` through `B_3`
   aliases to the DDA ion and peptidoform module settings.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from anndata_proteomics.rules.anndata_io import read_stored_rule
 from anndata_proteomics.rules.schema import ParseRule
 
 # The feature axis is the level's identity: `var_names` is built from the rule's `axis.var_keys`
@@ -47,23 +48,21 @@ def resolve_targets(obj: Any) -> list[Any]:
 
 def resolve_roles(target: Any) -> tuple[ParseRule, ResolvedRoles]:
     """Resolve canonical scoring locations from the stored APB conversion rule."""
-    metadata = target.uns.get("anndata_proteomics") or {}
-    rule_json = metadata.get("rule_json")
-    if not isinstance(rule_json, str):
+    rule = read_stored_rule(target)
+    if rule is None:
         raise ValueError(
             "converted object has no string "
             "uns['anndata_proteomics']['rule_json']; rerun apb convert"
         )
-    rule = ParseRule.model_validate_json(rule_json)
-    if rule.column_roles is None:
+    proteins = rule.column_roles.protein_assignment
+    if proteins is None:
         raise ValueError(
-            "stored APB rule has no column_roles; rerun conversion with a rule "
-            "that declares protein_accessions"
+            "ProteoBench scoring requires column_roles.protein_assignment in the stored APB rule"
         )
-    proteins = rule.column_roles.protein_accessions
     if proteins not in target.var.columns:
         raise ValueError(
-            f"stored APB rule maps protein accessions to missing var column {proteins!r}"
+            "stored APB rule maps column_roles.protein_assignment to missing "
+            f"var column {proteins!r}"
         )
 
     return rule, ResolvedRoles(proteins=proteins)

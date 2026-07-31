@@ -103,7 +103,8 @@
         }
       },
       "column_roles": {
-        "protein_accessions": "Accession"
+        "protein_assignment": "Accession",
+        "fasta_accessions": "Accession"
       },
       "layers": [
         {

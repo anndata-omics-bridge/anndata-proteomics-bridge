@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, TypeGuard
 
@@ -29,8 +29,9 @@ from anndata_proteomics.fasta.config import (
     FastaConfig,
     ResolvedFastaConfig,
     matches_any,
+    resolve_fasta_config,
 )
-from anndata_proteomics.fasta.parser import FastaSource, iter_fasta
+from anndata_proteomics.fasta.parser import FastaSource, FastaSources, iter_fasta
 
 _GN_RE = re.compile(r" GN=(\S+) PE=")
 _UNIPROT_MIDDLE_RE = re.compile(r".+\|(.+)\|.*")
@@ -47,6 +48,21 @@ class CleavageRule:
 
     pattern: re.Pattern[str]
     after: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class FastaAnnotationConfig:
+    """Configuration for building a protein annotation table from FASTA."""
+
+    identifiers: FastaConfig = field(default_factory=FastaConfig)
+    is_uniprot: bool = True
+    cleavage: str | CleavageRule | None = None
+    min_length: int = 7
+    max_length: int = 30
+    include_sequence: bool = False
+
+
+DEFAULT_FASTA_ANNOTATION_CONFIG = FastaAnnotationConfig()
 
 
 # Enzyme → cleavage rule, keyed by the canonical display names emitted by
@@ -154,74 +170,37 @@ def uniprot_proteinname(fasta_id: str) -> str:
     return match.group(1) if match else fasta_id
 
 
-def fasta_to_dataframe(  # noqa: PLR0913 - stable public API
-    sources: FastaSource | Iterable[FastaSource],
-    *,
-    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
-    decoy_pattern: str | None = None,
-    contaminant_pattern: str | None = None,
-    is_uniprot: bool = True,
-    cleavage: str | CleavageRule | None = None,
-    min_length: int = 7,
-    max_length: int = 30,
-    include_sequence: bool = False,
+def fasta_to_dataframe(
+    sources: FastaSources,
+    config: FastaAnnotationConfig = DEFAULT_FASTA_ANNOTATION_CONFIG,
 ) -> pd.DataFrame:
     """Read one or more FASTA inputs into a protein-annotation DataFrame.
 
-    *cleavage* selects the protease rule for ``nr_peptides`` (an enzyme
-    name, a :class:`CleavageRule`, or ``None`` for trypsin).  Decoy and
-    contaminant patterns classify records; they never filter them.  ``None``
-    infers patterns from conservative candidates, while ``""`` explicitly
-    disables that classification.
+    Configuration controls identifier classification, accession parsing,
+    digestion, and whether the raw sequence is retained.
     """
-    frame, _ = fasta_to_dataframe_with_config(
-        sources,
-        fasta_config=fasta_config,
-        decoy_pattern=decoy_pattern,
-        contaminant_pattern=contaminant_pattern,
-        is_uniprot=is_uniprot,
-        cleavage=cleavage,
-        min_length=min_length,
-        max_length=max_length,
-        include_sequence=include_sequence,
-    )
+    frame, _ = fasta_to_dataframe_with_config(sources, config)
     return frame
 
 
-def fasta_to_dataframe_with_config(  # noqa: PLR0913 - stable public API
-    sources: FastaSource | Iterable[FastaSource],
-    *,
-    fasta_config: FastaConfig | ResolvedFastaConfig | None = None,
-    decoy_pattern: str | None = None,
-    contaminant_pattern: str | None = None,
-    is_uniprot: bool = True,
-    cleavage: str | CleavageRule | None = None,
-    min_length: int = 7,
-    max_length: int = 30,
-    include_sequence: bool = False,
+def fasta_to_dataframe_with_config(
+    sources: FastaSources,
+    config: FastaAnnotationConfig = DEFAULT_FASTA_ANNOTATION_CONFIG,
 ) -> tuple[pd.DataFrame, ResolvedFastaConfig]:
     """Build the annotation frame and return its resolved ID configuration."""
-    if fasta_config is not None and (decoy_pattern is not None or contaminant_pattern is not None):
-        raise ValueError("pass either fasta_config or decoy_pattern/contaminant_pattern, not both")
     records: list[tuple[str, str, str]] = []
     for source in _iter_sources(sources):
         for record in iter_fasta(source):
             fasta_id, fasta_header = parse_header_id(record.header)
             records.append((fasta_id, fasta_header, record.sequence))
 
-    resolved = (
-        fasta_config
-        if isinstance(fasta_config, ResolvedFastaConfig)
-        else _resolve_config(
-            (fasta_id for fasta_id, _, _ in records),
-            config=fasta_config,
-            decoy_pattern=decoy_pattern,
-            contaminant_pattern=contaminant_pattern,
-        )
+    resolved = resolve_fasta_config(
+        (fasta_id for fasta_id, _, _ in records),
+        config.identifiers,
     )
 
     if not records:
-        return _empty_frame(include_sequence=include_sequence), resolved
+        return _empty_frame(include_sequence=config.include_sequence), resolved
 
     frame = pd.DataFrame(
         [
@@ -237,55 +216,21 @@ def fasta_to_dataframe_with_config(  # noqa: PLR0913 - stable public API
     )
     frame = _add_annotation_columns(
         frame,
-        is_uniprot=is_uniprot,
-        cleavage=cleavage,
-        min_length=min_length,
-        max_length=max_length,
+        config,
     )
 
-    if not include_sequence:
+    if not config.include_sequence:
         frame = frame.drop(columns=["sequence"])
 
     return frame, resolved
 
 
-def _resolve_config(
-    fasta_ids: Iterable[str],
-    *,
-    config: FastaConfig | None,
-    decoy_pattern: str | None,
-    contaminant_pattern: str | None,
-) -> ResolvedFastaConfig:
-    """Resolve inferred or explicitly supplied FASTA identifier patterns."""
-    from anndata_proteomics.fasta.config import FastaConfigAccumulator
-
-    input_config = config or FastaConfig(
-        decoy_patterns=_single_pattern(decoy_pattern),
-        contaminant_patterns=_single_pattern(contaminant_pattern),
-    )
-    accumulator = FastaConfigAccumulator(input_config)
-    for fasta_id in fasta_ids:
-        accumulator.observe(fasta_id)
-    return accumulator.resolve()
-
-
-def _single_pattern(pattern: str | None) -> tuple[str, ...] | None:
-    """Convert a CLI-style optional regex to the typed configuration form."""
-    if pattern is None:
-        return None
-    return (pattern,) if pattern else ()
-
-
 def _add_annotation_columns(
     frame: pd.DataFrame,
-    *,
-    is_uniprot: bool,
-    cleavage: str | CleavageRule | None,
-    min_length: int,
-    max_length: int,
+    config: FastaAnnotationConfig,
 ) -> pd.DataFrame:
     """Add proteinname, optional gene_name, protein_length, and peptide counts."""
-    if is_uniprot:
+    if config.is_uniprot:
         frame["proteinname"] = frame["fasta.id"].map(uniprot_proteinname)
     else:
         frame["proteinname"] = frame["fasta.id"]
@@ -294,28 +239,28 @@ def _add_annotation_columns(
     if (gene_names != "").sum() > 1:
         frame["gene_name"] = gene_names
 
-    rule, _ = resolve_cleavage(cleavage)
+    rule, _ = resolve_cleavage(config.cleavage)
     frame["protein_length"] = frame["sequence"].map(len)
     frame["nr_peptides"] = frame["sequence"].map(
         lambda seq: count_peptides(
             str(seq),
             cleavage=rule,
-            min_length=min_length,
-            max_length=max_length,
+            min_length=config.min_length,
+            max_length=config.max_length,
         )
     )
     return frame
 
 
 def _is_text_stream(
-    source: FastaSource | Iterable[FastaSource],
+    source: FastaSources,
 ) -> TypeGuard[IO[str]]:
     """Return whether *source* is one open text stream."""
     return hasattr(source, "read")
 
 
 def _iter_sources(
-    sources: FastaSource | Iterable[FastaSource],
+    sources: FastaSources,
 ) -> Iterable[FastaSource]:
     if isinstance(sources, str | Path):
         yield sources
@@ -327,13 +272,13 @@ def _iter_sources(
 
 
 def materialize_sources(
-    sources: FastaSource | Iterable[FastaSource],
+    sources: FastaSources,
 ) -> list[FastaSource]:
     """Materialize source iterables once so scanning cannot erase provenance."""
     return list(_iter_sources(sources))
 
 
-def describe_sources(sources: FastaSource | Iterable[FastaSource]) -> list[str]:
+def describe_sources(sources: FastaSources) -> list[str]:
     """Human-readable list of FASTA sources, for provenance.
 
     Paths are recorded as strings; inline FASTA text (the parser's string-content

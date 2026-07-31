@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from anndata_proteomics.modifications.pipeline import apply_modifications
-from anndata_proteomics.rules.schema import SiteListModifications
+from anndata_proteomics.modifications.schema import SiteListModifications
 
 _MAP = [
     {"token": "Carbamidomethyl@C", "accession": "UNIMOD:4"},

@@ -42,6 +42,18 @@ class FastaConfig(BaseModel):
     decoy_candidates: tuple[str, ...] = DEFAULT_DECOY_CANDIDATES
     contaminant_candidates: tuple[str, ...] = DEFAULT_CONTAMINANT_CANDIDATES
 
+    @classmethod
+    def from_single_patterns(
+        cls,
+        decoy_pattern: str | None,
+        contaminant_pattern: str | None,
+    ) -> FastaConfig:
+        """Build a configuration from CLI-style single-pattern values."""
+        return cls(
+            decoy_patterns=_single_pattern(decoy_pattern),
+            contaminant_patterns=_single_pattern(contaminant_pattern),
+        )
+
     @field_validator(
         "decoy_patterns",
         "contaminant_patterns",
@@ -142,6 +154,12 @@ def resolve_fasta_config(
 def matches_any(value: str, patterns: tuple[str, ...]) -> bool:
     """Return whether *value* matches at least one compiled regex."""
     return any(regex.search(value) for regex in _compile_patterns(patterns))
+
+
+def _single_pattern(pattern: str | None) -> tuple[str, ...] | None:
+    if pattern is None:
+        return None
+    return (pattern,) if pattern else ()
 
 
 def _resolve_patterns(

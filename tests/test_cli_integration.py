@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from anndata_proteomics.readers.summary import store_quantification_summary
 from anndata_proteomics.rules.registry import find_rule
 from anndata_proteomics.test_data import find_param_file, find_test_data
 
@@ -85,7 +84,6 @@ def test_cli_summary_outputs_json(tmp_path: Path) -> None:
         "quantification_level": "protein",
         "software_name": "Synthetic",
     }
-    store_quantification_summary(obj)
     path = tmp_path / "result.h5ad"
     obj.write_h5ad(path)
 
@@ -144,9 +142,10 @@ def test_cli_convert_default_writes_h5mu(tmp_path: Path) -> None:
     assert out.exists()
     md = mudata.read_h5mu(out)
     assert len(md.mod) >= 2
-    assert "descriptive_summary" in md.uns["anndata_proteomics"]
+    assert "descriptive_summary" not in md.uns["anndata_proteomics"]
     assert all(
-        "descriptive_summary" in modality.uns["anndata_proteomics"] for modality in md.mod.values()
+        "descriptive_summary" not in modality.uns["anndata_proteomics"]
+        for modality in md.mod.values()
     )
 
 

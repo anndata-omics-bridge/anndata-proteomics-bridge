@@ -227,23 +227,34 @@ All computed columns may depend on earlier computed columns. `coalesce` and
 the same name. ProForma computed columns retain their reserved APB identifier names,
 not input-column aliases.
 
-`column_roles` identifies the APB output column that carries a downstream
-semantic role without repeating the vendor input name. Its currently supported
-field is `protein_accessions`, which must name a declared `var` column:
+`column_roles` identifies APB output columns that carry downstream semantics
+without repeating vendor input names. The two current roles are deliberately
+independent:
+
+- `protein_assignment` is the vendor-reported protein/gene assignment consumed
+  by ProteoBench. It may be a group label, accession list, or other identifier
+  understood by the benchmark mapper.
+- `fasta_accessions` is an accession-bearing column safe for FASTA joins.
+
+A rule may declare either or both roles, and every value must name a declared
+`var` column:
 
 ```json
 {
   "column_roles": {
-    "protein_accessions": "Protein_Ids"
+    "protein_assignment": "Protein_Ids",
+    "fasta_accessions": "Protein_Ids"
   }
 }
 ```
 
-Declare the role in the level that owns that column. Consumers resolve it from
-the stored effective rule and continue to use `X` as the quantitative matrix;
-they do not parse the vendor table again. Declare it in **every** level a vendor
-supports: ProteoBench scoring resolves species membership through this role, so a
-level without it cannot be scored.
+Declare each role in the level that owns that column. Consumers resolve only
+their specific role from the stored effective rule; they never guess column
+names or cascade from one role to the other. A level without
+`protein_assignment` cannot be scored by ProteoBench. A level without
+`fasta_accessions` can still undergo peptide membership validation, but
+accession-dependent protein annotation, leading-protein diagnostics, and MuLink
+protein edges require an explicit column override.
 
 ## Layers
 

@@ -138,6 +138,9 @@ def test_fragpipe_modification_and_workflow_variants() -> None:
     )
     assert "N-term M[Acetyl]" in variable
     assert "N-term[Acetyl]" in variable
+    assert fragpipe._lookup_mod_name(-17.026549) == "Gln->pyro-Glu"
+    assert fragpipe._lookup_mod_name(4.025107) == "Label:2H(4)"
+    assert fragpipe._lookup_mod_name(12.345678) is None
 
     parsed = fragpipe._parse_lines(["flag", "key=value # comment"])
     assert parsed[0].value is None
@@ -298,6 +301,8 @@ def test_peaks_sage_and_spectronaut_error_paths() -> None:
     }
     with pytest.raises(ValueError, match="unknown semi_enzymatic"):
         sage.extract_params(StringIO(json.dumps(sage_document)))
+    assert sage._lookup_mod_name(-17.026549) == "Gln->pyro-Glu"
+    assert sage._lookup_mod_name(12.345678) == "12.345678"
 
     assert spectronaut._homogenize_mods("") == ""
     assert spectronaut._value(["unrelated"], "Missing:") is None

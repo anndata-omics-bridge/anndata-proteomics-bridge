@@ -103,7 +103,7 @@ def _parse_mass(raw: str) -> float | None:
         return None
 
 
-def _match_entry(  # noqa: C901 - ordered matching policy
+def _match_entry(
     entries: Iterable[MapEntry],
     raw_token: str,
     adjacent_residue: str | None,
@@ -116,30 +116,69 @@ def _match_entry(  # noqa: C901 - ordered matching policy
     ``(mass_delta, target, position)``. For non-numeric tokens (e.g.
     ``"ox"``, ``"ac"``) the exact token string is used as the fallback.
     """
+    candidates = tuple(entries)
     parsed_mass = _parse_mass(raw_token)
     if parsed_mass is not None:
-        for entry in entries:
-            if entry.mass_delta is None:
-                continue
-            if not math.isclose(entry.mass_delta, parsed_mass, abs_tol=_MASS_TOLERANCE):
-                continue
-            if entry.position and entry.position != position:
-                continue
-            if not _target_matches(entry.target, adjacent_residue, position):
-                continue
-            return entry
-
+        match = _match_mass_entry(
+            candidates,
+            parsed_mass,
+            adjacent_residue,
+            position,
+        )
+        if match is not None:
+            return match
     cmp_token = raw_token if case_sensitive else raw_token.lower()
+    return _match_token_entry(
+        candidates,
+        cmp_token,
+        adjacent_residue,
+        position,
+        case_sensitive,
+    )
+
+
+def _match_mass_entry(
+    entries: tuple[MapEntry, ...],
+    parsed_mass: float,
+    adjacent_residue: str | None,
+    position: str,
+) -> MapEntry | None:
+    for entry in entries:
+        if entry.mass_delta is None:
+            continue
+        if not math.isclose(entry.mass_delta, parsed_mass, abs_tol=_MASS_TOLERANCE):
+            continue
+        if _entry_context_matches(entry, adjacent_residue, position):
+            return entry
+    return None
+
+
+def _match_token_entry(
+    entries: tuple[MapEntry, ...],
+    cmp_token: str,
+    adjacent_residue: str | None,
+    position: str,
+    case_sensitive: bool,
+) -> MapEntry | None:
     for entry in entries:
         entry_token = entry.token if case_sensitive else entry.token.lower()
         if entry_token != cmp_token:
             continue
-        if entry.position and entry.position != position:
-            continue
-        if not _target_matches(entry.target, adjacent_residue, position):
-            continue
-        return entry
+        if _entry_context_matches(entry, adjacent_residue, position):
+            return entry
     return None
+
+
+def _entry_context_matches(
+    entry: MapEntry,
+    adjacent_residue: str | None,
+    position: str,
+) -> bool:
+    return (not entry.position or entry.position == position) and _target_matches(
+        entry.target,
+        adjacent_residue,
+        position,
+    )
 
 
 @dataclass

@@ -15,7 +15,7 @@ allowed_miscleavages,2
 min_peptide_length,7
 max_peptide_length,2147483647
 fixed_mods,"C[Carbamidomethyl], U[Carbamidomethyl]"
-variable_mods,"M[Oxidation], X[Acetylation]"
+variable_mods,"M[Oxidation], X[Acetyl]"
 max_mods,2
 min_precursor_charge,1
 max_precursor_charge,12
